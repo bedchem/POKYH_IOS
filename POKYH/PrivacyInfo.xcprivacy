@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- POKYH sammelt keine Daten für Tracking und nutzt keine Tracking-Domains. -->
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+
+	<!-- Keine Datenerhebung durch Dritt-SDKs. Nutzerinhalte (Todos, Erinnerungen,
+	     Anmeldedaten) verbleiben gerätelokal bzw. werden ausschließlich an die
+	     vom Nutzer gewählten Dienste (WebUntis der Schule, POKYH-Backend) gesendet. -->
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+
+	<!-- Required-Reason-APIs: Begründung der genutzten geschützten APIs. -->
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<dict>
+			<!-- UserDefaults: nur App-eigene Einstellungen (Theme, Konto-Metadaten,
+			     Standard-Konto). Grund CA92.1 = Zugriff auf vom selben App-Container
+			     gespeicherte Informationen. -->
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>CA92.1</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

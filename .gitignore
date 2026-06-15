@@ -1,0 +1,97 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# POKYH iOS — .gitignore
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Claude / AI-Tooling ──────────────────────────────────────────────────────
+.claude/
+**/.claude/
+CLAUDE.md
+.cursor/
+.aider*
+.continue/
+
+# ── macOS ────────────────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.Spotlight-V100
+.Trashes
+
+# ── Xcode: User-spezifisch ───────────────────────────────────────────────────
+xcuserdata/
+*.xcuserstate
+*.xcuserdatad/
+*.xcscmblueprint
+*.xccheckout
+*.moved-aside
+
+# ── Xcode: Build / Artefakte ─────────────────────────────────────────────────
+build/
+DerivedData/
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+*.app
+timeline.xctimeline
+playground.xcworkspace
+
+# ── Swift Package Manager ────────────────────────────────────────────────────
+.build/
+.swiftpm/
+Packages/
+Package.pins
+Package.resolved
+*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/
+
+# ── CocoaPods / Carthage (falls jemals genutzt) ──────────────────────────────
+Pods/
+Carthage/Build/
+
+# ── Fastlane / CI ────────────────────────────────────────────────────────────
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output
+
+# ── Secrets / lokale Konfiguration (NICHT committen) ─────────────────────────
+*.env
+.env.local
+Secrets.xcconfig
+POKYH/Secrets.swift
+*.p12
+*.mobileprovision
+*.cer
+*.certSigningRequest
+*.pem
+*.key
+
+# ── Profiling / Crash-Logs ───────────────────────────────────────────────────
+*.profraw
+*.crash
+*.xcresult/
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WebUntis-API-Referenz (nur Doku — Pfade liegen zentral in POKYH/Config.swift)
+# Basis: https://lbs-brixen.webuntis.com/WebUntis
+#
+#   POST /jsonrpc.do?school=lbs-brixen   (authenticate, getKlassen, getStudents,
+#                                         getCurrentSchoolyear, getSchoolyears)
+#   GET  /api/token/new
+#   GET  /api/rest/view/v1/timetable/entries
+#   GET  /api/classreg/grade/grading/list
+#   GET  /api/classreg/grade/grading/lesson
+#   GET  /api/classreg/absences/students
+#   GET  /api/classreg/classregevents
+#   GET  /api/rest/view/v1/messages
+#   GET  /api/rest/view/v1/messages/sent
+#   GET  /api/rest/view/v1/messages/drafts
+#   GET  /api/rest/view/v1/messages/{id}
+#   POST /api/rest/view/v1/messages/{id}/markasread
+#   GET  /api/rest/view/v1/app/data
+#   GET  /api/app/data
+#   GET  /api/rest/view/v1/users/me/data
+#   GET  /api/rest/view/v2/app/data
+# ─────────────────────────────────────────────────────────────────────────────
