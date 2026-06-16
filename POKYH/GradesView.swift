@@ -13,9 +13,11 @@ struct GradesView: View {
         case name = "Name", avgDesc = "Schnitt ↓", avgAsc = "Schnitt ↑", recent = "Letzte Note"
     }
 
+    /// Gesamtschnitt = flacher Mittelwert ÜBER ALLE Einzelnoten (jede Note gleich
+    /// gewichtet), exakt wie im Frontend — NICHT der Mittelwert der Fach-Schnitte.
     private var overallAverage: Double {
-        let avgs = subjects.map { $0.average }.filter { $0 > 0 }
-        return GradeMath.averageOf(avgs)
+        let vals = subjects.flatMap { $0.grades.map { $0.markDisplayValue } }.filter { $0 > 0 }
+        return GradeMath.averageOf(vals)
     }
 
     private struct RecentItem: Identifiable { let id: Int; let subject: String; let value: Double; let date: Int }
