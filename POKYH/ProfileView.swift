@@ -9,6 +9,8 @@ struct ProfileView: View {
     @State private var renameText = ""
     @State private var showConnectionStatus = false
     @State private var confirmClearData = false
+    @State private var switchingTo: String?
+    @State private var switchError: String?
 
     var body: some View {
         List {
@@ -62,10 +64,16 @@ struct ProfileView: View {
                     HStack(spacing: 12) {
                         Button {
                             Task {
+                                switchingTo = acc.username
                                 await app.switchAccount(username: acc.username)
-                                // Nur schließen, wenn KEIN Passwort-Sheet geöffnet wurde —
-                                // sonst würde das Schließen von Profil dessen Sheet mitreißen.
-                                if !app.showAddAccount { dismiss() }
+                                switchingTo = nil
+                                let switched = app.session?.username == acc.username
+                                if switched {
+                                    dismiss()
+                                } else if !app.showAddAccount, let e = app.error {
+                                    switchError = e
+                                    app.error = nil
+                                }
                             }
                         } label: {
                             HStack(spacing: 12) {
@@ -81,12 +89,17 @@ struct ProfileView: View {
                                         .font(.caption2).foregroundStyle(Palette.textSecondary)
                                 }
                                 Spacer()
-                                if acc.username == app.session?.username {
+                                if acc.username == switchingTo {
+                                    ProgressView().controlSize(.small)
+                                        .transition(.scale.combined(with: .opacity))
+                                } else if acc.username == app.session?.username {
                                     Image(systemName: "checkmark.circle.fill").foregroundStyle(Palette.accent)
+                                        .transition(.scale.combined(with: .opacity))
                                 }
                             }
                         }
                         .buttonStyle(.plain)
+                        .disabled(switchingTo != nil)
 
                         // 3-Punkte-Menü: Standard · Aktualisieren · Umbenennen · Abmelden · Entfernen
                         Menu {
@@ -122,6 +135,7 @@ struct ProfileView: View {
                             Image(systemName: "ellipsis.circle").font(.title3).foregroundStyle(Palette.textSecondary)
                                 .padding(.leading, 4).contentShape(Rectangle())
                         }
+                        .disabled(switchingTo != nil)
                     }
                 }
                 if app.accounts.count > 1 {
@@ -206,6 +220,15 @@ struct ProfileView: View {
         } message: {
             Text("Alle gespeicherten Konten, Anmeldedaten, der Offline-Stundenplan, der Noten-Cache und sämtliche App-Einstellungen werden entfernt. Du musst dich danach neu anmelden.")
         }
+        .alert("Fehler beim Kontowechsel", isPresented: Binding(
+            get: { switchError != nil },
+            set: { if !$0 { switchError = nil } }
+        )) {
+            Button("OK", role: .cancel) { switchError = nil }
+        } message: {
+            if let e = switchError { Text(e) }
+        }
+        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: switchingTo)
         .alert("Konto umbenennen", isPresented: Binding(
             get: { renameTarget != nil },
             set: { if !$0 { renameTarget = nil } }

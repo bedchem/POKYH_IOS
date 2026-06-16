@@ -183,9 +183,10 @@ final class AppState: ObservableObject {
         guard store.hasPassword(username) else {
             prefillUsername = username; showAddAccount = true; return
         }
+        busy = true; statusText = "Bestätige Identität…"
         if Biometric.available {
             let ok = await Biometric.authenticate(reason: "Kontowechsel zu \(username) bestätigen.")
-            guard ok else { return }
+            guard ok else { busy = false; statusText = ""; return }
         }
         await loginSaved(username: username)
     }
