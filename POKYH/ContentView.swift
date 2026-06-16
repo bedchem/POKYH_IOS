@@ -8,6 +8,13 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject var app: AppState
 
+    /// Tatsächlich angewandtes Schema — wird verzögert (unter der Fade-Blende)
+    /// umgeschaltet, damit Hell⇄Dunkel weich überblendet statt hart springt.
+    @State private var appliedScheme: ColorScheme?
+    @State private var themeFade = false
+
+    private static let fadeDuration = 0.22
+
     var body: some View {
         Group {
             switch app.phase {
@@ -22,10 +29,29 @@ struct ContentView: View {
                     .transition(.opacity)
             }
         }
+        // Weiche Überblendung beim Wechsel des Erscheinungsbilds.
+        .overlay {
+            if themeFade {
+                Color(.systemBackground).ignoresSafeArea().allowsHitTesting(false)
+            }
+        }
         .animation(.spring(response: 0.45, dampingFraction: 0.85), value: app.phase)
         .animation(.easeInOut(duration: 0.25), value: app.busy)
         .tint(Palette.accent)
-        .preferredColorScheme(app.colorScheme)
+        .preferredColorScheme(appliedScheme)
+        .onAppear { if appliedScheme == nil { appliedScheme = app.colorScheme } }
+        .onChange(of: app.themeMode) { _, _ in crossfadeTheme() }
+    }
+
+    /// Blende einblenden → Schema unter der Blende wechseln → Blende ausblenden.
+    private func crossfadeTheme() {
+        let target = app.colorScheme
+        guard target != appliedScheme else { return }
+        withAnimation(.easeInOut(duration: Self.fadeDuration)) { themeFade = true }
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.fadeDuration) {
+            appliedScheme = target
+            withAnimation(.easeInOut(duration: Self.fadeDuration)) { themeFade = false }
+        }
     }
 }
 

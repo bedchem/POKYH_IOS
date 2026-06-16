@@ -123,6 +123,8 @@ struct TimetableView: View {
     @State private var mode: Mode = .week
     @State private var selectedDay = 0
     @State private var detail: MergedSlot?
+    @State private var shareItem: ShareItem?
+    @State private var exporting = false
 
     enum Mode: String, CaseIterable { case week = "Woche", day = "Tag" }
 
@@ -163,6 +165,38 @@ struct TimetableView: View {
             withAnimation(.snappy(duration: 0.3)) { weekOffset = 0; selectInitialDay() }
         }
         .sheet(item: $detail) { LessonDetailView(slot: $0) }
+        .sheet(item: $shareItem) { ShareSheet(items: [$0.url]) }
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Menu {
+                    Button { exportWeek() } label: {
+                        Label("Diese Woche exportieren", systemImage: "calendar")
+                    }
+                    Button { Task { await exportExams() } } label: {
+                        Label("Prüfungen exportieren", systemImage: "graduationcap")
+                    }
+                } label: {
+                    Image(systemName: "square.and.arrow.up")
+                }
+                .disabled(exporting)
+            }
+        }
+    }
+
+    // ── .ics-Export ─────────────────────────────────────────────────────────
+    private func share(_ entries: [TimetableEntry], name: String) {
+        guard !entries.isEmpty else { return }
+        let ics = ICSExport.makeCalendar(entries, calendarName: name)
+        if let url = ICSExport.writeTempFile(ics, name: name) { shareItem = ShareItem(url: url) }
+    }
+    private func exportWeek() {
+        share((0..<6).flatMap { entriesFor($0) }, name: "POKYH Stundenplan")
+    }
+    private func exportExams() async {
+        guard let s = app.session else { return }
+        exporting = true; defer { exporting = false }
+        let exams = (try? await UntisClient.shared.upcomingExams(s)) ?? []
+        share(exams, name: "POKYH Prüfungen")
     }
 
     /// Tagesansicht: horizontaler Swipe → Tag wechseln (clean, federnd).
@@ -324,6 +358,10 @@ struct TimetableView: View {
         loading = true; error = nil
         do {
             entries = try await UntisClient.shared.timetable(date: DateFmt.isoString(monday), s)
+            // Aktuelle Woche des STANDARD-Kontos → Widget/Live-Activity aktualisieren.
+            if weekOffset == 0, app.isDefaultAccountActive {
+                WidgetBridge.publish(entries); app.refreshLiveActivity(from: entries)
+            }
         } catch let e as AppError where e.message == "session_expired" {
             app.handleSessionExpired()
         } catch {

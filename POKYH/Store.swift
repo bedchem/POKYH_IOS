@@ -1,5 +1,8 @@
 import SwiftUI
 import Combine
+#if canImport(WidgetKit)
+import WidgetKit
+#endif
 
 /// Zentraler App-Zustand: Phasen (Sperre / Login / angemeldet), Mehrbenutzer,
 /// Face-ID-Entsperrung. Passwörter liegen im Keychain, nicht im Klartext.
@@ -185,6 +188,49 @@ final class AppState: ObservableObject {
 
     func accountHasPassword(_ username: String) -> Bool { store.hasPassword(username) }
 
+    /// Widgets/Live Activity zeigen die Daten des **Standard-Kontos**. Ist kein
+    /// Standard gesetzt, zählt das aktive Konto (Einzelnutzer-Fall).
+    var isDefaultAccountActive: Bool {
+        guard let active = session?.username else { return false }
+        return store.defaultUsername == nil || store.defaultUsername == active
+    }
+
+    /// Live Activity (laufende/nächste Stunde) anhand des Stundenplans aktualisieren.
+    func refreshLiveActivity(from entries: [TimetableEntry]) {
+        guard let s = session else { return }
+        LiveActivityManager.refresh(from: entries, className: s.klasseName)
+    }
+
+    /// Lokalen Spitznamen für ein Konto setzen/zurücksetzen (leer → zurücksetzen).
+    func setNickname(_ nickname: String?, for username: String) {
+        store.setNickname(nickname, for: username)
+        accounts = store.accounts
+    }
+
+    /// Konto neu laden: WebUntis-Re-Login, um Name/Klasse zu aktualisieren.
+    /// - Aktives Konto → volle Sitzung + Backend-Status werden erneuert.
+    /// - Anderes Konto → nur Metadaten (Klasse) im Hintergrund, aktive Sitzung bleibt
+    ///   unberührt (eigene ephemere Cookies pro Sitzung).
+    /// Ohne gespeichertes Passwort → Passwort-Neueingabe anbieten.
+    func refreshAccount(username: String) async {
+        guard store.hasPassword(username), let password = store.password(for: username) else {
+            prefillUsername = username; showAddAccount = true; return
+        }
+        if session?.username == username {
+            // performLogin(save: true) erneuert Sitzung + aktualisiert Anzeigenamen/Keychain.
+            await performLogin(username: username, password: password, save: true)
+        } else {
+            busy = true; statusText = "Aktualisiere \(username)…"
+            defer { busy = false; statusText = "" }
+            if let s = try? await UntisClient.shared.login(username: username, password: password) {
+                store.updateDisplayName(s.klasseName.isEmpty ? s.username : s.klasseName, for: username)
+                accounts = store.accounts
+            } else {
+                error = "Aktualisieren von \(username) fehlgeschlagen."
+            }
+        }
+    }
+
     /// Abmelden: nur das Passwort entfernen — Konto bleibt gespeichert.
     func signOutAccount(username: String) {
         store.signOut(username)
@@ -209,6 +255,36 @@ final class AppState: ObservableObject {
     func logout() {
         session = nil
         phase = accounts.isEmpty ? .login : .lock
+    }
+
+    /// „Cache & Daten löschen": entfernt ALLES Gespeicherte/Gecachte vom Gerät —
+    /// Anmeldedaten (Keychain), Offline-Stundenplan/Noten, geteilte Widget-Snapshots,
+    /// In-Memory-Caches und alle App-Einstellungen. Danach: zurück zum Login.
+    func clearAllData() {
+        // 1. In-Memory-Caches
+        UntisClient.shared.clearCaches()
+        BackendClient.shared.clearCaches()
+        // 2. Keychain (alle Passwörter + Master-Key)
+        Keychain.purgeAll()
+        // 3. Offline-Disk-Cache + geteilte Snapshots (App Group)
+        DiskCache.purge()
+        SharedStore.purgeAll()
+        // 4. Alle eigenen UserDefaults-Schlüssel (kein Hardcoding einzelner Keys)
+        let defaults = UserDefaults.standard
+        for key in defaults.dictionaryRepresentation().keys where key.hasPrefix("pokyh_") {
+            defaults.removeObject(forKey: key)
+        }
+        // 5. Live Activity beenden + Widgets leeren
+        LiveActivityManager.endAll()
+        #if canImport(WidgetKit)
+        WidgetCenter.shared.reloadAllTimelines()
+        #endif
+        // 6. Zustand zurücksetzen → Login
+        session = nil
+        accounts = []
+        backendStatus = .unknown
+        themeMode = .system
+        phase = .login
     }
 
     func handleSessionExpired() {
@@ -253,6 +329,11 @@ final class AppState: ObservableObject {
 
     // ── Benachrichtigungen synchronisieren (Nachrichten + Erinnerungen) ───────
     private var lastNotifSync = Date.distantPast
+    // Eigener, längerer Throttle für die teureren Abrufe (Noten/Stundenplan):
+    // Noten lädt pro Fach – das ist zu schwer für den 60-s-Takt der Nachrichten.
+    private var lastHeavySync = Date.distantPast
+    private let heavySyncInterval: TimeInterval = 1800   // 30 min
+
     func syncNotifications() async {
         guard let s = session else { return }
         // Throttle (Performance): höchstens alle 60 s.
@@ -261,10 +342,30 @@ final class AppState: ObservableObject {
 
         if let inbox = try? await UntisClient.shared.messages(folder: .inbox, s) {
             NotificationManager.shared.checkNewMessages(inbox)
+            if isDefaultAccountActive { WidgetBridge.publishMessages(inbox) }   // nur Standard-Konto
         }
         if let token = s.apiToken, let classId = s.classId,
            let reminders = try? await BackendClient.shared.reminders(classId: classId, token: token) {
             NotificationManager.shared.scheduleReminders(reminders)
+        }
+
+        // Teurere Checks seltener: neue Noten + Stundenausfälle.
+        if Date().timeIntervalSince(lastHeavySync) > heavySyncInterval {
+            lastHeavySync = Date()
+            await syncGradeAndTimetableAlerts(s)
+        }
+    }
+
+    /// Neue Noten und Stundenausfälle erkennen → lokale Benachrichtigungen.
+    /// Nur für Schülerkonten sinnvoll (Eltern/Lehrer haben keinen MY_TIMETABLE-Notenkontext).
+    private func syncGradeAndTimetableAlerts(_ s: UserSession) async {
+        if s.isStudent, let subjects = try? await UntisClient.shared.grades(year: nil, s) {
+            NotificationManager.shared.checkNewGrades(subjects)
+            if isDefaultAccountActive { WidgetBridge.publishGrades(subjects) }   // nur Standard-Konto
+        }
+        // Stundenplan ab heute (Client liefert Mo–Sa) → kommende Ausfälle.
+        if let entries = try? await UntisClient.shared.timetable(date: SchoolDates.todayISO(), s) {
+            NotificationManager.shared.checkTimetableChanges(entries)
         }
     }
 }

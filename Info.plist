@@ -10,5 +10,7 @@
 	<array>
 		<string>dev.plattnericus.POKYH.refresh</string>
 	</array>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
 </dict>
 </plist>

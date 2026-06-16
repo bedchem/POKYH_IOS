@@ -553,12 +553,19 @@ final class UntisClient {
         guard let d = DateFmt.iso.date(from: date) else { throw AppError(message: "Ungültiges Datum") }
         let end = DateFmt.isoString(Calendar.current.date(byAdding: .day, value: 5, to: d)!)
         let url = "\(base)/api/rest/view/v1/timetable/entries?start=\(date)&end=\(end)&format=1&resourceType=STUDENT&resources=\(s.studentId)&periodTypes=&timetableType=MY_TIMETABLE&layout=START_TIME"
-        let (data, http) = try await get(url, s)
-        if isHtmlOrAuthError(data, http) { throw AppError.sessionExpired }
-        guard http.statusCode == 200 else { throw AppError(message: "Stundenplan nicht ladbar (HTTP \(http.statusCode)).") }
-        let entries = Self.parseTimetable(JSON.parse(data))
-        timetableCache.set(key, entries)
-        return entries
+        do {
+            let (data, http) = try await get(url, s)
+            if isHtmlOrAuthError(data, http) { throw AppError.sessionExpired }
+            guard http.statusCode == 200 else { throw AppError(message: "Stundenplan nicht ladbar (HTTP \(http.statusCode)).") }
+            let entries = Self.parseTimetable(JSON.parse(data))
+            timetableCache.set(key, entries)
+            DiskCache.save(entries, key: "tt-\(key)")   // Offline-Fallback persistieren
+            return entries
+        } catch let netErr as URLError {
+            // Nur bei echten Netzwerkfehlern offline ausweichen (Auth-Fehler nicht).
+            if let offline = DiskCache.load([TimetableEntry].self, key: "tt-\(key)") { return offline }
+            throw netErr
+        }
     }
 
     static func parseTimetable(_ json: JSON) -> [TimetableEntry] {
@@ -625,39 +632,46 @@ final class UntisClient {
     func grades(year: Int?, _ s: UserSession) async throws -> [SubjectGrades] {
         let cacheKey = "\(s.studentId)-\(year ?? 0)"
         if let cached = gradesCache.get(cacheKey) { return cached }
-        guard let schoolyearId = try await schoolyearId(year: year, s) else {
-            throw AppError(message: "Schuljahr nicht gefunden.")
-        }
-        if schoolyearId == -1 { throw AppError.sessionExpired }
+        do {
+            guard let schoolyearId = try await schoolyearId(year: year, s) else {
+                throw AppError(message: "Schuljahr nicht gefunden.")
+            }
+            if schoolyearId == -1 { throw AppError.sessionExpired }
 
-        let listURL = "\(base)/api/classreg/grade/grading/list?studentId=\(s.studentId)&schoolyearId=\(schoolyearId)"
-        let (data, http) = try await get(listURL, s)
-        if isHtmlOrAuthError(data, http) { throw AppError.sessionExpired }
-        guard http.statusCode == 200 else { throw AppError(message: "Noten nicht ladbar (HTTP \(http.statusCode)).") }
+            let listURL = "\(base)/api/classreg/grade/grading/list?studentId=\(s.studentId)&schoolyearId=\(schoolyearId)"
+            let (data, http) = try await get(listURL, s)
+            if isHtmlOrAuthError(data, http) { throw AppError.sessionExpired }
+            guard http.statusCode == 200 else { throw AppError(message: "Noten nicht ladbar (HTTP \(http.statusCode)).") }
 
-        let listJSON = JSON.parse(data)
-        var lessons = listJSON.data.lessons.array
-        if lessons.isEmpty { lessons = listJSON.data.lesson.array }
-        if lessons.isEmpty { return [] }
+            let listJSON = JSON.parse(data)
+            var lessons = listJSON.data.lessons.array
+            if lessons.isEmpty { lessons = listJSON.data.lesson.array }
+            if lessons.isEmpty { return [] }
 
-        var subjects: [SubjectGrades] = []
-        try await withThrowingTaskGroup(of: SubjectGrades?.self) { group in
-            for lesson in lessons {
-                let lessonId = lesson.id.int ?? 0
-                let subjectName = lesson.subjects.string ?? lesson.subject.string ?? ""
-                let teacherName = lesson.teachers.string ?? lesson.teacher.string ?? ""
-                group.addTask { [self] in
-                    try? await gradesForLesson(lessonId: lessonId, subjectName: subjectName, teacherName: teacherName, s)
+            var subjects: [SubjectGrades] = []
+            try await withThrowingTaskGroup(of: SubjectGrades?.self) { group in
+                for lesson in lessons {
+                    let lessonId = lesson.id.int ?? 0
+                    let subjectName = lesson.subjects.string ?? lesson.subject.string ?? ""
+                    let teacherName = lesson.teachers.string ?? lesson.teacher.string ?? ""
+                    group.addTask { [self] in
+                        try? await gradesForLesson(lessonId: lessonId, subjectName: subjectName, teacherName: teacherName, s)
+                    }
+                }
+                for try await result in group {
+                    if let r = result { subjects.append(r) }
                 }
             }
-            for try await result in group {
-                if let r = result { subjects.append(r) }
-            }
+            let result = subjects.filter { !$0.subjectName.isEmpty && !$0.grades.isEmpty }
+                .sorted { $0.subjectName.localizedCaseInsensitiveCompare($1.subjectName) == .orderedAscending }
+            gradesCache.set(cacheKey, result)
+            DiskCache.save(result, key: "grades-\(cacheKey)")   // Offline-Fallback
+            return result
+        } catch let netErr as URLError {
+            // Nur bei echten Netzwerkfehlern offline ausweichen (Auth-Fehler nicht).
+            if let offline = DiskCache.load([SubjectGrades].self, key: "grades-\(cacheKey)") { return offline }
+            throw netErr
         }
-        let result = subjects.filter { !$0.subjectName.isEmpty && !$0.grades.isEmpty }
-            .sorted { $0.subjectName.localizedCaseInsensitiveCompare($1.subjectName) == .orderedAscending }
-        gradesCache.set(cacheKey, result)
-        return result
     }
 
     private func gradesForLesson(lessonId: Int, subjectName: String, teacherName: String, _ s: UserSession) async throws -> SubjectGrades? {

@@ -153,6 +153,10 @@ struct GradesView: View {
         loading = true; error = nil
         do {
             subjects = try await UntisClient.shared.grades(year: year == SchoolDates.currentSchoolYear ? nil : year, s)
+            // Aktuelles Schuljahr des STANDARD-Kontos → Noten-Widget aktualisieren.
+            if year == SchoolDates.currentSchoolYear, app.isDefaultAccountActive {
+                WidgetBridge.publishGrades(subjects)
+            }
         } catch let e as AppError where e.message == "session_expired" {
             app.handleSessionExpired()
         } catch {

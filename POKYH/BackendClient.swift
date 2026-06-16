@@ -190,6 +190,9 @@ final class BackendClient {
     private let dishCache = TTLCache<String, [Dish]>(ttl: 300)
     private let dishKey = "dishes"
 
+    /// Leert alle In-Memory-Caches dieses Clients (z. B. „Cache leeren").
+    func clearCaches() { dishCache.removeAll() }
+
     func dishes(force: Bool = false) async throws -> [Dish] {
         if !force, let cached = dishCache.get(dishKey) { return cached }
         guard let url = URL(string: "\(base)\(Config.Routes.dishes)") else { throw AppError(message: "Ungültige URL") }

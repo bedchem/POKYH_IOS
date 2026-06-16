@@ -35,12 +35,19 @@ struct UserSession: Codable, Equatable {
 struct SavedAccount: Codable, Equatable, Identifiable {
     var username: String           // dient als ID & Keychain-Schlüssel
     var displayName: String        // Klassenname o. Benutzername
+    var nickname: String?          // optionaler, lokal vergebener Spitzname
     var id: String { username }
+
+    /// Primär anzuzeigender Name: Spitzname falls vorhanden, sonst Benutzername.
+    var title: String {
+        if let n = nickname?.trimmingCharacters(in: .whitespacesAndNewlines), !n.isEmpty { return n }
+        return username
+    }
 }
 
 // ── Stundenplan ────────────────────────────────────────────────────────────
 
-struct TimetableEntry: Identifiable, Equatable {
+struct TimetableEntry: Identifiable, Equatable, Codable {
     var id: Int
     var lessonId: Int
     var date: Int          // YYYYMMDD
@@ -66,7 +73,7 @@ struct TimetableEntry: Identifiable, Equatable {
 
 // ── Noten ──────────────────────────────────────────────────────────────────
 
-struct GradeEntry: Identifiable, Equatable {
+struct GradeEntry: Identifiable, Equatable, Codable {
     var id: Int
     var text: String
     var date: Int
@@ -76,7 +83,7 @@ struct GradeEntry: Identifiable, Equatable {
     var examType: String
 }
 
-struct SubjectGrades: Identifiable, Equatable {
+struct SubjectGrades: Identifiable, Equatable, Codable {
     var id: Int { lessonId }
     var lessonId: Int
     var subjectName: String

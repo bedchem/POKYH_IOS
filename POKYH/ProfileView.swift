@@ -5,7 +5,10 @@ struct ProfileView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var confirmLogout = false
     @State private var accountToRemove: SavedAccount?
+    @State private var renameTarget: SavedAccount?
+    @State private var renameText = ""
     @State private var showConnectionStatus = false
+    @State private var confirmClearData = false
 
     var body: some View {
         List {
@@ -66,14 +69,16 @@ struct ProfileView: View {
                             }
                         } label: {
                             HStack(spacing: 12) {
-                                InitialAvatar(name: acc.username, size: 34)
+                                InitialAvatar(name: acc.title, size: 34)
                                 VStack(alignment: .leading, spacing: 1) {
                                     HStack(spacing: 5) {
-                                        Text(acc.username).foregroundStyle(Palette.textPrimary)
+                                        Text(acc.title).foregroundStyle(Palette.textPrimary)
                                         if acc.username == app.defaultUsername { badge("Standard", Palette.accent) }
                                         if !app.accountHasPassword(acc.username) { badge("Passwort nötig", Palette.orange) }
                                     }
-                                    Text(acc.displayName).font(.caption2).foregroundStyle(Palette.textSecondary)
+                                    // Bei vergebenem Spitznamen zusätzlich den echten Benutzernamen zeigen.
+                                    Text(acc.nickname?.isEmpty == false ? "\(acc.username) · \(acc.displayName)" : acc.displayName)
+                                        .font(.caption2).foregroundStyle(Palette.textSecondary)
                                 }
                                 Spacer()
                                 if acc.username == app.session?.username {
@@ -83,12 +88,27 @@ struct ProfileView: View {
                         }
                         .buttonStyle(.plain)
 
-                        // 3-Punkte-Menü: Standard · Abmelden · Account entfernen
+                        // 3-Punkte-Menü: Standard · Aktualisieren · Umbenennen · Abmelden · Entfernen
                         Menu {
-                            if acc.username != app.defaultUsername {
+                            if acc.username == app.defaultUsername {
+                                Button { app.defaultUsername = nil } label: {
+                                    Label("Als Standard entfernen", systemImage: "star.slash")
+                                }
+                            } else {
                                 Button { app.defaultUsername = acc.username } label: {
                                     Label("Als Standard festlegen", systemImage: "star")
                                 }
+                            }
+                            Button {
+                                Task { await app.refreshAccount(username: acc.username) }
+                            } label: {
+                                Label("Konto aktualisieren", systemImage: "arrow.clockwise")
+                            }
+                            Button {
+                                renameText = acc.nickname ?? ""
+                                renameTarget = acc
+                            } label: {
+                                Label("Umbenennen", systemImage: "pencil")
                             }
                             if app.accountHasPassword(acc.username) {
                                 Button { app.signOutAccount(username: acc.username) } label: {
@@ -132,6 +152,17 @@ struct ProfileView: View {
             .listRowBackground(Palette.card)
 
             Section {
+                Button(role: .destructive) {
+                    confirmClearData = true
+                } label: {
+                    Label("Cache & Daten löschen", systemImage: "trash")
+                }
+            } footer: {
+                Text("Löscht alle gespeicherten Konten, den Offline-Stundenplan, Noten-Cache und alle App-Daten von diesem Gerät.")
+            }
+            .listRowBackground(Palette.card)
+
+            Section {
                 Text("POKYH · Nicht offiziell mit der LBS Brixen oder WebUntis verbunden.")
                     .font(.caption2).foregroundStyle(Palette.textTertiary)
             }
@@ -168,6 +199,32 @@ struct ProfileView: View {
             Button("Abbrechen", role: .cancel) { accountToRemove = nil }
         } message: {
             Text("Die gespeicherten Anmeldedaten von \(accountToRemove?.username ?? "") werden vom Gerät gelöscht.")
+        }
+        .confirmationDialog("Cache & alle Daten löschen?", isPresented: $confirmClearData, titleVisibility: .visible) {
+            Button("Alles löschen", role: .destructive) { app.clearAllData(); dismiss() }
+            Button("Abbrechen", role: .cancel) {}
+        } message: {
+            Text("Alle gespeicherten Konten, Anmeldedaten, der Offline-Stundenplan, der Noten-Cache und sämtliche App-Einstellungen werden entfernt. Du musst dich danach neu anmelden.")
+        }
+        .alert("Konto umbenennen", isPresented: Binding(
+            get: { renameTarget != nil },
+            set: { if !$0 { renameTarget = nil } }
+        )) {
+            TextField("Spitzname", text: $renameText)
+                .textInputAutocapitalization(.words)
+            Button("Speichern") {
+                if let t = renameTarget { app.setNickname(renameText, for: t.username) }
+                renameTarget = nil
+            }
+            if renameTarget?.nickname?.isEmpty == false {
+                Button("Spitzname entfernen", role: .destructive) {
+                    if let t = renameTarget { app.setNickname(nil, for: t.username) }
+                    renameTarget = nil
+                }
+            }
+            Button("Abbrechen", role: .cancel) { renameTarget = nil }
+        } message: {
+            Text("Vergib einen eigenen Namen für \(renameTarget?.username ?? "") (nur lokal sichtbar).")
         }
         .sheet(isPresented: $app.showAddAccount) {
             NavigationStack { LoginView(isAdditional: true) }

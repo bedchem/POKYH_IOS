@@ -180,6 +180,13 @@ final class CredentialStore {
     }
 
     func save(_ account: SavedAccount, password: String) {
+        // Vorhandenen Spitznamen erhalten (z. B. bei „Konto aktualisieren"/Re-Login),
+        // falls der neue Datensatz selbst keinen mitbringt.
+        var account = account
+        if account.nickname == nil,
+           let existing = accounts.first(where: { $0.username == account.username })?.nickname {
+            account.nickname = existing
+        }
         var list = accounts.filter { $0.username != account.username }
         list.append(account)
         persist(list)
@@ -195,6 +202,23 @@ final class CredentialStore {
 
     /// Abmelden: nur das gespeicherte Passwort entfernen, Konto bleibt in der Liste.
     func signOut(_ username: String) { Keychain.delete(username: username) }
+
+    /// Lokalen Spitznamen setzen/entfernen (leer → entfernen). Berührt keine Credentials.
+    func setNickname(_ nickname: String?, for username: String) {
+        var list = accounts
+        guard let idx = list.firstIndex(where: { $0.username == username }) else { return }
+        let trimmed = nickname?.trimmingCharacters(in: .whitespacesAndNewlines)
+        list[idx].nickname = (trimmed?.isEmpty == false) ? trimmed : nil
+        persist(list)
+    }
+
+    /// Anzeigenamen (Klasse) eines Kontos aktualisieren — z. B. nach „Konto aktualisieren".
+    func updateDisplayName(_ displayName: String, for username: String) {
+        var list = accounts
+        guard let idx = list.firstIndex(where: { $0.username == username }) else { return }
+        list[idx].displayName = displayName
+        persist(list)
+    }
 
     func remove(_ username: String) {
         persist(accounts.filter { $0.username != username })

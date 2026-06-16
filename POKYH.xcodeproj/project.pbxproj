@@ -6,19 +6,79 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		2A9FCC56AAF745060DEEF1EB /* POKYHWidgetBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = A005FB93D44E4B0A904EDE97 /* POKYHWidgetBundle.swift */; };
+		3CD708458601A57884BB94F0 /* POKYHWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = A239909565EC022BC229023B /* POKYHWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		52C23DECAD6EE19C403653C6 /* TodayScheduleWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1EEE7493E88633C8417B123 /* TodayScheduleWidget.swift */; };
+		5482621942BBBD8FCFCA0A5E /* SharedKit.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7366A8ADC9CC27478993264B /* SharedKit.swift */; };
+		5D7664DB874F624113C9E428 /* OverviewWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31DF7AE94C895F1A2B4E85CB /* OverviewWidget.swift */; };
+		800C6410FFA1D9B7D8380589 /* SharedKit.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7366A8ADC9CC27478993264B /* SharedKit.swift */; };
+		8615CA4E9EE822F3A0D34701 /* NextLessonWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = E18559D47B25EE5C862F920A /* NextLessonWidget.swift */; };
+		8BB1402E578EFC9CE215B87C /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 0EC46C538929D32357D4C096 /* PrivacyInfo.xcprivacy */; };
+		9B3FBA00034A5890D3F62972 /* LessonLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FD0CF265352DA2986231418 /* LessonLiveActivity.swift */; };
+		C16250CD65DB4F55E434F1C6 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 6C209605D555946F0B563F68 /* Foundation.framework */; };
+		C7AB72BD64932599CD3536F7 /* MessagesWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F2DD8E81AA965ED1BD84D24 /* MessagesWidget.swift */; };
+		F77998505DB2E04640752A42 /* GradesWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B9FF29AEE2E9FFA293FDF6B /* GradesWidget.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		DE71F4E4F81B383D3A2E2CC0 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = C7DDD8682FDB3FFB003E6EEA /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 21173AA3C1B7A381CC9806A2;
+			remoteInfo = POKYHWidgetExtension;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		83F63CE891CA126A3C65D6BB /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				3CD708458601A57884BB94F0 /* POKYHWidgetExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		0EC46C538929D32357D4C096 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; includeInIndex = 1; name = PrivacyInfo.xcprivacy; path = POKYHWidget/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		31DF7AE94C895F1A2B4E85CB /* OverviewWidget.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = OverviewWidget.swift; path = POKYHWidget/OverviewWidget.swift; sourceTree = "<group>"; };
+		3B9FF29AEE2E9FFA293FDF6B /* GradesWidget.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GradesWidget.swift; path = POKYHWidget/GradesWidget.swift; sourceTree = "<group>"; };
+		6C209605D555946F0B563F68 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
+		7366A8ADC9CC27478993264B /* SharedKit.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SharedKit.swift; path = Shared/SharedKit.swift; sourceTree = "<group>"; };
+		7F2DD8E81AA965ED1BD84D24 /* MessagesWidget.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MessagesWidget.swift; path = POKYHWidget/MessagesWidget.swift; sourceTree = "<group>"; };
+		7FD0CF265352DA2986231418 /* LessonLiveActivity.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = LessonLiveActivity.swift; path = POKYHWidget/LessonLiveActivity.swift; sourceTree = "<group>"; };
+		A005FB93D44E4B0A904EDE97 /* POKYHWidgetBundle.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = POKYHWidgetBundle.swift; path = POKYHWidget/POKYHWidgetBundle.swift; sourceTree = "<group>"; };
+		A239909565EC022BC229023B /* POKYHWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = POKYHWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		C7DDD8702FDB3FFB003E6EEA /* POKYH.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = POKYH.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		E18559D47B25EE5C862F920A /* NextLessonWidget.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = NextLessonWidget.swift; path = POKYHWidget/NextLessonWidget.swift; sourceTree = "<group>"; };
+		F1EEE7493E88633C8417B123 /* TodayScheduleWidget.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TodayScheduleWidget.swift; path = POKYHWidget/TodayScheduleWidget.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		C7DDD8722FDB3FFB003E6EEA /* POKYH */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = POKYH;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		7D5AA4A035321034586C8328 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C16250CD65DB4F55E434F1C6 /* Foundation.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		C7DDD86D2FDB3FFB003E6EEA /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -29,11 +89,45 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		0B945E6E98001ACC294FDC6E /* POKYHWidget */ = {
+			isa = PBXGroup;
+			children = (
+				A005FB93D44E4B0A904EDE97 /* POKYHWidgetBundle.swift */,
+				E18559D47B25EE5C862F920A /* NextLessonWidget.swift */,
+				7FD0CF265352DA2986231418 /* LessonLiveActivity.swift */,
+				3B9FF29AEE2E9FFA293FDF6B /* GradesWidget.swift */,
+				7F2DD8E81AA965ED1BD84D24 /* MessagesWidget.swift */,
+				31DF7AE94C895F1A2B4E85CB /* OverviewWidget.swift */,
+				F1EEE7493E88633C8417B123 /* TodayScheduleWidget.swift */,
+				0EC46C538929D32357D4C096 /* PrivacyInfo.xcprivacy */,
+			);
+			name = POKYHWidget;
+			sourceTree = SOURCE_ROOT;
+		};
+		3DA216521F5B50156116EAE5 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				7366A8ADC9CC27478993264B /* SharedKit.swift */,
+			);
+			name = Shared;
+			sourceTree = SOURCE_ROOT;
+		};
+		A5D50B816BAC724AB98B2182 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				CB2DB1B8FFCA18098C524F04 /* iOS */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		C7DDD8672FDB3FFB003E6EEA = {
 			isa = PBXGroup;
 			children = (
 				C7DDD8722FDB3FFB003E6EEA /* POKYH */,
 				C7DDD8712FDB3FFB003E6EEA /* Products */,
+				A5D50B816BAC724AB98B2182 /* Frameworks */,
+				3DA216521F5B50156116EAE5 /* Shared */,
+				0B945E6E98001ACC294FDC6E /* POKYHWidget */,
 			);
 			sourceTree = "<group>";
 		};
@@ -41,13 +135,39 @@
 			isa = PBXGroup;
 			children = (
 				C7DDD8702FDB3FFB003E6EEA /* POKYH.app */,
+				A239909565EC022BC229023B /* POKYHWidgetExtension.appex */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		CB2DB1B8FFCA18098C524F04 /* iOS */ = {
+			isa = PBXGroup;
+			children = (
+				6C209605D555946F0B563F68 /* Foundation.framework */,
+			);
+			name = iOS;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		21173AA3C1B7A381CC9806A2 /* POKYHWidgetExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 514BA84130677B99A87EAB64 /* Build configuration list for PBXNativeTarget "POKYHWidgetExtension" */;
+			buildPhases = (
+				6CB6669C7ADE7B38CF8C1BFC /* Sources */,
+				7D5AA4A035321034586C8328 /* Frameworks */,
+				506D041A225AC5B7947807ED /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = POKYHWidgetExtension;
+			productName = POKYHWidgetExtension;
+			productReference = A239909565EC022BC229023B /* POKYHWidgetExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		C7DDD86F2FDB3FFB003E6EEA /* POKYH */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = C7DDD87B2FDB3FFC003E6EEA /* Build configuration list for PBXNativeTarget "POKYH" */;
@@ -55,17 +175,17 @@
 				C7DDD86C2FDB3FFB003E6EEA /* Sources */,
 				C7DDD86D2FDB3FFB003E6EEA /* Frameworks */,
 				C7DDD86E2FDB3FFB003E6EEA /* Resources */,
+				83F63CE891CA126A3C65D6BB /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				4534AD2B28FA8F1DA3852F92 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				C7DDD8722FDB3FFB003E6EEA /* POKYH */,
 			);
 			name = POKYH;
-			packageProductDependencies = (
-			);
 			productName = POKYH;
 			productReference = C7DDD8702FDB3FFB003E6EEA /* POKYH.app */;
 			productType = "com.apple.product-type.application";
@@ -100,11 +220,20 @@
 			projectRoot = "";
 			targets = (
 				C7DDD86F2FDB3FFB003E6EEA /* POKYH */,
+				21173AA3C1B7A381CC9806A2 /* POKYHWidgetExtension */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		506D041A225AC5B7947807ED /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				8BB1402E578EFC9CE215B87C /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		C7DDD86E2FDB3FFB003E6EEA /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -115,16 +244,68 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		6CB6669C7ADE7B38CF8C1BFC /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				800C6410FFA1D9B7D8380589 /* SharedKit.swift in Sources */,
+				2A9FCC56AAF745060DEEF1EB /* POKYHWidgetBundle.swift in Sources */,
+				8615CA4E9EE822F3A0D34701 /* NextLessonWidget.swift in Sources */,
+				9B3FBA00034A5890D3F62972 /* LessonLiveActivity.swift in Sources */,
+				F77998505DB2E04640752A42 /* GradesWidget.swift in Sources */,
+				C7AB72BD64932599CD3536F7 /* MessagesWidget.swift in Sources */,
+				5D7664DB874F624113C9E428 /* OverviewWidget.swift in Sources */,
+				52C23DECAD6EE19C403653C6 /* TodayScheduleWidget.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		C7DDD86C2FDB3FFB003E6EEA /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				5482621942BBBD8FCFCA0A5E /* SharedKit.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		4534AD2B28FA8F1DA3852F92 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = POKYHWidgetExtension;
+			target = 21173AA3C1B7A381CC9806A2 /* POKYHWidgetExtension */;
+			targetProxy = DE71F4E4F81B383D3A2E2CC0 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
+		B01A5423AB41430E6AFB4A9A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = POKYHWidget/POKYHWidget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = X4223DUK8A;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = POKYHWidget/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.plattnericus.POKYH.POKYHWidget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
 		C7DDD8792FDB3FFC003E6EEA /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -246,6 +427,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = POKYH.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = X4223DUK8A;
@@ -292,6 +474,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = POKYH.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = X4223DUK8A;
@@ -333,9 +516,46 @@
 			};
 			name = Release;
 		};
+		EEFF32329014BC2361C0ABA6 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = POKYHWidget/POKYHWidget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = X4223DUK8A;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = POKYHWidget/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.plattnericus.POKYH.POKYHWidget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		514BA84130677B99A87EAB64 /* Build configuration list for PBXNativeTarget "POKYHWidgetExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				EEFF32329014BC2361C0ABA6 /* Release */,
+				B01A5423AB41430E6AFB4A9A /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		C7DDD86B2FDB3FFB003E6EEA /* Build configuration list for PBXProject "POKYH" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

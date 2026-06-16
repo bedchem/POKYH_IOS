@@ -211,7 +211,13 @@ struct TrendChart: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("Notenverlauf", systemImage: "chart.xyaxis.line").font(.caption.bold()).foregroundStyle(Palette.textSecondary)
+            HStack(spacing: 8) {
+                Label("Notenverlauf", systemImage: "chart.xyaxis.line").font(.caption.bold()).foregroundStyle(Palette.textSecondary)
+                Spacer()
+                legendDot(Palette.accent.opacity(0.6), "Noten")
+                legendDot(Palette.grade(cumulativeAverages.last ?? 0), "Ø")
+                legendDot(Palette.orange, "Trend \(trendArrow)")
+            }
 
             HStack(alignment: .top, spacing: 8) {
                 // Y-Achse (Note)
@@ -225,9 +231,11 @@ struct TrendChart: View {
 
                 GeometryReader { geo in
                     let w = geo.size.width, h = geo.size.height
-                    let pts = points(in: CGSize(width: w, height: h))
-                    let avg = values.isEmpty ? 0 : values.reduce(0, +) / Double(values.count)
-                    let avgY = h - CGFloat((min(10, max(1, avg)) - 1) / 9) * h
+                    let gradePts = points(values, in: CGSize(width: w, height: h))
+                    let cumAvgs = cumulativeAverages
+                    let avgPts = points(cumAvgs, in: CGSize(width: w, height: h))
+                    let finalAvg = cumAvgs.last ?? 0
+                    let avgColor = Palette.grade(finalAvg)
                     ZStack {
                         // Hilfslinien je Note
                         ForEach(yTicks, id: \.self) { t in
@@ -236,21 +244,36 @@ struct TrendChart: View {
                                 .stroke((t == 6 ? Palette.tint : Palette.separator).opacity(t == 6 ? 0.5 : 0.4),
                                         style: StrokeStyle(lineWidth: t == 6 ? 1 : 0.5, dash: t == 6 ? [4] : []))
                         }
-                        // Durchschnitts-Linie (Stich quer durch)
-                        Path { p in p.move(to: CGPoint(x: 0, y: avgY)); p.addLine(to: CGPoint(x: w, y: avgY)) }
-                            .stroke(Palette.grade(avg), style: StrokeStyle(lineWidth: 1.5, dash: [6, 3]))
-                        Text("Ø \(Fmt.num(avg))")
-                            .font(.system(size: 9, weight: .bold)).foregroundStyle(.white)
-                            .padding(.horizontal, 5).padding(.vertical, 1.5)
-                            .background(Palette.grade(avg), in: Capsule())
-                            .position(x: w - 24, y: max(8, avgY - 9))
+                        // Einzelnoten – feine Linie + Punkte (die „Kurse")
                         Path { p in
-                            guard let first = pts.first else { return }
-                            p.move(to: first); for pt in pts.dropFirst() { p.addLine(to: pt) }
+                            guard let first = gradePts.first else { return }
+                            p.move(to: first); for pt in gradePts.dropFirst() { p.addLine(to: pt) }
                         }
-                        .stroke(Palette.accent, style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
-                        ForEach(Array(pts.enumerated()), id: \.offset) { _, pt in
-                            Circle().fill(Palette.accent).frame(width: 6, height: 6).position(pt)
+                        .stroke(Palette.accent.opacity(0.45), style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+                        ForEach(Array(gradePts.enumerated()), id: \.offset) { _, pt in
+                            Circle().fill(Palette.accent).frame(width: 5, height: 5).position(pt)
+                        }
+                        // Kumulativer Durchschnitt (laufender Mittelwert – wie ein Moving Average)
+                        Path { p in
+                            guard let first = avgPts.first else { return }
+                            p.move(to: first); for pt in avgPts.dropFirst() { p.addLine(to: pt) }
+                        }
+                        .stroke(avgColor, style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+                        // Trend-„Stich": dünne lineare Regression – zeigt, ob es steigt/sinkt.
+                        if let r = regression {
+                            let y0 = yFor(r.intercept, h)
+                            let y1 = yFor(r.slope * Double(values.count - 1) + r.intercept, h)
+                            Path { p in p.move(to: CGPoint(x: 0, y: y0)); p.addLine(to: CGPoint(x: w, y: y1)) }
+                                .stroke(Palette.orange.opacity(0.85), style: StrokeStyle(lineWidth: 1.2, dash: [5, 3]))
+                        }
+                        // Endpunkt + Label = aktueller Gesamtschnitt
+                        if let last = avgPts.last {
+                            Circle().fill(avgColor).frame(width: 7, height: 7).position(last)
+                            Text("Ø \(Fmt.num(finalAvg))")
+                                .font(.system(size: 9, weight: .bold)).foregroundStyle(.white)
+                                .padding(.horizontal, 5).padding(.vertical, 1.5)
+                                .background(avgColor, in: Capsule())
+                                .position(x: min(w - 22, last.x), y: max(9, last.y - 12))
                         }
                     }
                 }
@@ -268,12 +291,60 @@ struct TrendChart: View {
         .padding(16).cardSurface()
     }
 
-    private func points(in size: CGSize) -> [CGPoint] {
-        guard values.count > 1 else { return [] }
-        return values.enumerated().map { idx, v in
-            let x = CGFloat(idx) / CGFloat(values.count - 1) * size.width
+    /// Laufender (kumulativer) Mittelwert: an Position i der Schnitt aller Noten bis i.
+    /// Eigene eingegebene Noten sind in `values` bereits enthalten.
+    private var cumulativeAverages: [Double] {
+        var sum = 0.0
+        return values.enumerated().map { i, v in sum += v; return sum / Double(i + 1) }
+    }
+
+    /// Mappt eine Wertreihe gleichmäßig über die Breite (Y = Note 1…10).
+    private func points(_ vals: [Double], in size: CGSize) -> [CGPoint] {
+        guard !vals.isEmpty else { return [] }
+        guard vals.count > 1 else {
+            let y = size.height - CGFloat((min(10, max(1, vals[0])) - 1) / 9) * size.height
+            return [CGPoint(x: size.width / 2, y: y)]
+        }
+        return vals.enumerated().map { idx, v in
+            let x = CGFloat(idx) / CGFloat(vals.count - 1) * size.width
             let y = size.height - CGFloat((min(10, max(1, v)) - 1) / 9) * size.height
             return CGPoint(x: x, y: y)
+        }
+    }
+
+    /// Lineare Regression über die Noten (x = Index, y = Note) für die Trendlinie.
+    private var regression: (slope: Double, intercept: Double)? {
+        let n = values.count
+        guard n >= 2 else { return nil }
+        let meanX = Double(n - 1) / 2
+        let meanY = values.reduce(0, +) / Double(n)
+        var num = 0.0, den = 0.0
+        for i in 0..<n {
+            let dx = Double(i) - meanX
+            num += dx * (values[i] - meanY); den += dx * dx
+        }
+        guard den != 0 else { return nil }
+        let slope = num / den
+        return (slope, meanY - slope * meanX)
+    }
+
+    /// Trendrichtung als Pfeil für die Legende.
+    private var trendArrow: String {
+        guard let r = regression else { return "→" }
+        if r.slope > 0.05 { return "↗" }
+        if r.slope < -0.05 { return "↘" }
+        return "→"
+    }
+
+    /// Note → Y-Position (Skala 1…10), geklemmt.
+    private func yFor(_ v: Double, _ h: CGFloat) -> CGFloat {
+        h - CGFloat((min(10, max(1, v)) - 1) / 9) * h
+    }
+
+    private func legendDot(_ color: Color, _ text: String) -> some View {
+        HStack(spacing: 3) {
+            Circle().fill(color).frame(width: 6, height: 6)
+            Text(text).font(.system(size: 9)).foregroundStyle(Palette.textTertiary)
         }
     }
 }
