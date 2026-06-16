@@ -139,10 +139,12 @@ final class UntisClient {
             s.imageUrl = appData.user.person.imageUrl.string ?? appData.data.user.person.imageUrl.string
         }
 
-        // Letzte Quelle für Schüler: die Klasse steckt nur im Stundenplan (LBS Brixen:
+        // Letzte Quelle: die Klasse steckt nur im Stundenplan (LBS Brixen:
         // authenticate=0, getStudents gesperrt, app/data ohne Klasse). Klassen-Name aus
         // dem Stundenplan ziehen → via getKlassen auf die numerische ID mappen. Gecacht.
-        if s.klasseId <= 0, isStudentType {
+        // Gilt auch für Eltern: s.studentId ist dann das Kind, dessen Stundenplan die
+        // Klasse liefert — sonst bleiben Elternkonten ohne auflösbare klasseId.
+        if s.klasseId <= 0, (isStudentType || s.isParent), s.studentId > 0 {
             if let cached = Self.cachedKlasse(username: s.username) {
                 s.klasseId = cached.id
                 if s.klasseName.isEmpty { s.klasseName = cached.name }
