@@ -1,0 +1,43 @@
+{
+  "name": "POKYH Source",
+  "subtitle": "Native Schulapp für die LBS Brixen",
+  "description": "Offizielle AltStore-Quelle für POKYH — die native SwiftUI-Schulapp für die Landesberufsschule Brixen (Südtirol). Stundenplan, Noten mit Notenrechner, Mensa, Abwesenheiten, Nachrichten, Todos und mehr.",
+  "iconURL": "https://raw.githubusercontent.com/bedchem/POKYH_IOS/main/altstore/icon.png",
+  "headerURL": "https://raw.githubusercontent.com/bedchem/POKYH_IOS/main/altstore/icon.png",
+  "website": "https://github.com/bedchem/POKYH_IOS",
+  "tintColor": "#1E66F5",
+  "featuredApps": [
+    "dev.plattnericus.POKYH"
+  ],
+  "apps": [
+    {
+      "name": "POKYH",
+      "bundleIdentifier": "dev.plattnericus.POKYH",
+      "developerName": "Felix Plattner",
+      "subtitle": "Native Schulapp für die LBS Brixen",
+      "localizedDescription": "POKYH ist eine native SwiftUI-Schulapp für die Landesberufsschule Brixen (Südtirol).\n\nFeatures:\n• Stundenplan — Wochenraster und Tagesansicht mit Prüfungen, Vertretungen und Entfällen\n• Noten — Fachübersicht, Gesamtschnitt, Notenrechner, Zielnote-Rechner und Verlaufs-Diagramm\n• Mensa — Speiseplan mit Nährwerten, Allergenen, Sterne-Bewertungen und Kommentaren\n• Abwesenheiten, Nachrichten, Todos, Erinnerungen und Klassenbuch\n\nNicht offiziell mit der LBS Brixen oder WebUntis verbunden.",
+      "iconURL": "https://raw.githubusercontent.com/bedchem/POKYH_IOS/main/altstore/icon.png",
+      "tintColor": "#1E66F5",
+      "category": "utilities",
+      "versions": [
+        {
+          "version": "1.0",
+          "buildVersion": "1",
+          "marketingVersion": "1.0 (1)",
+          "date": "2026-06-16T00:00:00Z",
+          "localizedDescription": "Erste Veröffentlichung im AltStore.",
+          "downloadURL": "https://github.com/bedchem/POKYH_IOS/releases/download/v1.0/POKYH.ipa",
+          "size": 1161178,
+          "minOSVersion": "26.0"
+        }
+      ],
+      "appPermissions": {
+        "entitlements": [],
+        "privacy": {
+          "NSFaceIDUsageDescription": "POKYH nutzt Face ID, um dich sicher und schnell anzumelden."
+        }
+      }
+    }
+  ],
+  "news": []
+}
