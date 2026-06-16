@@ -23,8 +23,11 @@ final class BackendClient {
     }
 
     /// Server-zu-Server-Login nach erfolgreichem WebUntis-Login (kein Passwort nötig).
-    /// Das Backend legt bei gültiger klasseId automatisch ein Konto an.
-    func loginWithUntis(username: String, klasseId: Int, klasseName: String) async -> UntisLoginResult {
+    /// Das Backend legt bei gültiger klasseId automatisch ein Konto an. Bei
+    /// `role: "parent"` wird ein Elternkonto erstellt (eigene Todos, sieht nur den
+    /// Klassennamen, keine Erinnerungen, unsichtbares Mitglied). Für Eltern ist die
+    /// klasseId die des Kindes (in UntisClient aufgelöst).
+    func loginWithUntis(username: String, klasseId: Int, klasseName: String, role: String = "student") async -> UntisLoginResult {
         // Das Backend verlangt klasseId > 0 — die klasseId wird in UntisClient aus
         // mehreren Quellen aufgelöst.
         guard klasseId > 0 else { return .noClass }
@@ -35,7 +38,7 @@ final class BackendClient {
         req.setValue(Config.serverKey, forHTTPHeaderField: "X-Server-Key")
         req.setValue(Config.apiKey, forHTTPHeaderField: "X-API-Key")
         req.httpBody = try? JSONSerialization.data(withJSONObject: [
-            "username": username, "klasseId": klasseId, "klasseName": klasseName,
+            "username": username, "klasseId": klasseId, "klasseName": klasseName, "role": role,
         ])
         guard let (data, resp) = try? await session.data(for: req),
               let http = resp as? HTTPURLResponse else { return .failed("Keine Verbindung") }

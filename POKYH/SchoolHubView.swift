@@ -20,8 +20,10 @@ struct SchoolHubView: View {
         var list: [HubItem] = [
             HubItem(title: "Noten", subtitle: "Alle Fächer & Bewertungen", icon: "chart.bar.fill", accent: Palette.accent, destination: nil, tab: .noten),
         ]
+        // Eltern-/Erziehungsberechtigtenkonten haben eigene Todos und sehen die
+        // Klasse, aber KEINE Klassen-Erinnerungen.
+        list.append(HubItem(title: "Todos", subtitle: "Persönliche Aufgabenliste", icon: "checklist", accent: Palette.accentSoft, destination: AnyView(TodosView()), tab: nil))
         if !app.isParent {
-            list.append(HubItem(title: "Todos", subtitle: "Persönliche Aufgabenliste", icon: "checklist", accent: Palette.accentSoft, destination: AnyView(TodosView()), tab: nil))
             list.append(HubItem(title: "Erinnerungen", subtitle: "Hausaufgaben & Klassen-Erinnerungen", icon: "bell.fill", accent: Palette.tint, destination: AnyView(RemindersView()), tab: nil))
         }
         list.append(HubItem(title: "Abwesenheiten", subtitle: "Fehlstunden & Entschuldigungen", icon: "person.fill.xmark", accent: Palette.orange, destination: AnyView(AbsencesView()), tab: nil))

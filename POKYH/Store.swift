@@ -131,11 +131,15 @@ final class AppState: ObservableObject {
         do {
             var s = try await UntisClient.shared.login(username: username, password: password)
             statusText = "Lade Konto…"
-            // POKYH-Konto NUR für Schülerkonten beziehen/anlegen (kein Eltern-/Lehrer-/
-            // Adminkonto). Das Backend legt bei gültiger klasseId automatisch ein Konto an.
-            if s.isStudent {
+            // POKYH-Konto für Schüler- UND Elternkonten beziehen/anlegen (kein
+            // Lehrer-/Adminkonto). Eltern bekommen ein Elternkonto (role=parent):
+            // eigene Todos, sehen nur den Klassennamen, keine Erinnerungen,
+            // unsichtbares Mitglied. Die klasseId ist bei Eltern die des Kindes
+            // (in UntisClient aufgelöst). Das Backend legt das Konto automatisch an.
+            if s.isStudent || s.isParent {
+                let role = s.isParent ? "parent" : "student"
                 switch await BackendClient.shared.loginWithUntis(
-                    username: s.username, klasseId: s.klasseId, klasseName: s.klasseName) {
+                    username: s.username, klasseId: s.klasseId, klasseName: s.klasseName, role: role) {
                 case .ok(let token, let refresh):
                     s.apiToken = token
                     s.apiRefresh = refresh

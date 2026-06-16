@@ -250,6 +250,8 @@ struct ApiUser: Codable, Equatable {
     var webuntisKlasseName: String?
     var classId: String?
     var isAdmin: Bool
+    /// Account-Rolle: "student" (Standard) oder "parent" (Elternkonto).
+    var role: String?
 }
 
 // ── Fehler ─────────────────────────────────────────────────────────────────
