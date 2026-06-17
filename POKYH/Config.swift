@@ -8,6 +8,20 @@ enum Config {
     /// Muss exakt mit `BGTaskSchedulerPermittedIdentifiers` in der Info.plist übereinstimmen.
     static let bgRefreshId = "dev.plattnericus.POKYH.refresh"
 
+    // ── Rechtliches / Support (App-Store-Pflicht: erreichbare Datenschutz-URL) ──
+    // Diese Seiten MÜSSEN online erreichbar sein (sonst App-Store-Ablehnung) und die
+    // Datenschutz-URL muss zusätzlich in App Store Connect hinterlegt werden.
+    static let privacyURL = "https://pokyh.com/datenschutz"
+    static let termsURL   = "https://pokyh.com/nutzungsbedingungen"
+    static let supportEmail = "support@pokyh.com"
+
+    /// App-Version + Build aus dem Bundle (für die „Über"-Sektion).
+    static var appVersion: String {
+        let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
+        let b = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
+        return "\(v) (\(b))"
+    }
+
     // ── POKYH Backend ──────────────────────────────────────────────────────
     static let backendURL = "https://api.pokyh.com"
     static var apiKey: String { Secrets.apiKey }

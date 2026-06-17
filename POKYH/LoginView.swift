@@ -112,7 +112,7 @@ struct LoginView: View {
         guard !username.isEmpty, !password.isEmpty else { return }
         focus = nil
         await app.loginNew(username: username, password: password,
-                           save: saveCredentials && app.biometricAvailable)
+                           save: saveCredentials)
         if isAdditional && app.session != nil { dismiss() }
     }
 }

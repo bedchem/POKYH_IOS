@@ -125,6 +125,9 @@ final class AppState: ObservableObject {
     }
 
     private func performLogin(username: String, password: String, save: Bool) async {
+        // Wurde der Login aus dem „Konto hinzufügen“/„Passwort nötig“-Sheet gestartet?
+        // (Dann müssen wir den Sheet-Wechsel sorgfältig sequenzieren – siehe unten.)
+        let viaSheet = showAddAccount
         busy = true; error = nil
         statusText = "Verbinde mit WebUntis…"
         defer { busy = false; statusText = "" }
@@ -156,7 +159,8 @@ final class AppState: ObservableObject {
             } else {
                 backendStatus = .notStudent
             }
-            session = s
+            // Konto + Passwort sichern, BEVOR die Session getauscht wird, damit es
+            // auch dann lokal gespeichert ist, wenn der View-Wechsel dazwischenkommt.
             if save {
                 let account = SavedAccount(
                     username: s.username,
@@ -165,6 +169,19 @@ final class AppState: ObservableObject {
             }
             store.lastActive = s.username
             accounts = store.accounts
+
+            if viaSheet {
+                // Bereits eingeloggt + Login lief über ein Sheet (Konto hinzufügen /
+                // Passwort-Neueingabe): ERST das Sheet schließen und die Dismiss-
+                // Animation abwarten, DANN die Session tauschen. Sonst kollidiert der
+                // View-Identitätswechsel (ContentView: `RootTabView().id(username)`)
+                // mit der noch laufenden Sheet-Animation → das Modal hängt auf echten
+                // Geräten („nichts passiert / lässt sich nicht schließen“).
+                showAddAccount = false
+                busy = false; statusText = ""
+                try? await Task.sleep(for: .milliseconds(420))
+            }
+            session = s
             phase = .authed
             showAddAccount = false
             onAuthenticated()

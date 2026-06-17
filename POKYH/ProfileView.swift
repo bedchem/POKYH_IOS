@@ -99,6 +99,26 @@ struct ProfileView: View {
             }
             .listRowBackground(Palette.card)
 
+            Section("Über & Rechtliches") {
+                if let url = URL(string: Config.privacyURL) {
+                    Link(destination: url) {
+                        Label("Datenschutzerklärung", systemImage: "hand.raised.fill")
+                    }
+                }
+                if let url = URL(string: Config.termsURL) {
+                    Link(destination: url) {
+                        Label("Nutzungsbedingungen", systemImage: "doc.text.fill")
+                    }
+                }
+                if let url = URL(string: "mailto:\(Config.supportEmail)") {
+                    Link(destination: url) {
+                        Label("Support kontaktieren", systemImage: "envelope.fill")
+                    }
+                }
+                row("Version", Config.appVersion)
+            }
+            .listRowBackground(Palette.card)
+
             Section {
                 Text("POKYH · Nicht offiziell mit der LBS Brixen oder WebUntis verbunden.")
                     .font(.caption2).foregroundStyle(Palette.textTertiary)
