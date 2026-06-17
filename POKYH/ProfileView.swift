@@ -12,6 +12,24 @@ struct ProfileView: View {
     @State private var switchingTo: String?
     @State private var switchError: String?
 
+    /// Konten sortiert: das Standard-Konto steht IMMER ganz oben, danach das
+    /// aktuell aktive Konto, dann alphabetisch nach Anzeigename. Ändert sich das
+    /// Standard- oder aktive Konto, sortiert sich die Liste animiert um.
+    private var sortedAccounts: [SavedAccount] {
+        app.accounts.sorted { a, b in
+            let aDefault = a.username == app.defaultUsername
+            let bDefault = b.username == app.defaultUsername
+            if aDefault != bDefault { return aDefault }
+            let aActive = a.username == app.session?.username
+            let bActive = b.username == app.session?.username
+            if aActive != bActive { return aActive }
+            return a.title.localizedCaseInsensitiveCompare(b.title) == .orderedAscending
+        }
+    }
+
+    /// Sanfte, leicht federnde Animation für Umsortierung & Wechsel ("gasp"-Feel).
+    private var switchSpring: Animation { .spring(response: 0.46, dampingFraction: 0.72) }
+
     var body: some View {
         List {
             if let s = app.session {
@@ -59,102 +77,7 @@ struct ProfileView: View {
             }
             .listRowBackground(Palette.card)
 
-            Section("Konten") {
-                ForEach(app.accounts) { acc in
-                    HStack(spacing: 12) {
-                        Button {
-                            Task {
-                                switchingTo = acc.username
-                                await app.switchAccount(username: acc.username)
-                                switchingTo = nil
-                                let switched = app.session?.username == acc.username
-                                if switched {
-                                    dismiss()
-                                } else if !app.showAddAccount, let e = app.error {
-                                    switchError = e
-                                    app.error = nil
-                                }
-                            }
-                        } label: {
-                            HStack(spacing: 12) {
-                                InitialAvatar(name: acc.title, size: 34)
-                                VStack(alignment: .leading, spacing: 1) {
-                                    HStack(spacing: 5) {
-                                        Text(acc.title).foregroundStyle(Palette.textPrimary)
-                                        if acc.username == app.defaultUsername { badge("Standard", Palette.accent) }
-                                        if !app.accountHasPassword(acc.username) { badge("Passwort nötig", Palette.orange) }
-                                    }
-                                    // Bei vergebenem Spitznamen zusätzlich den echten Benutzernamen zeigen.
-                                    Text(acc.nickname?.isEmpty == false ? "\(acc.username) · \(acc.displayName)" : acc.displayName)
-                                        .font(.caption2).foregroundStyle(Palette.textSecondary)
-                                }
-                                Spacer()
-                                if acc.username == switchingTo {
-                                    ProgressView().controlSize(.small)
-                                        .transition(.scale.combined(with: .opacity))
-                                } else if acc.username == app.session?.username {
-                                    Image(systemName: "checkmark.circle.fill").foregroundStyle(Palette.accent)
-                                        .transition(.scale.combined(with: .opacity))
-                                }
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(switchingTo != nil)
-
-                        // 3-Punkte-Menü: Standard · Aktualisieren · Umbenennen · Abmelden · Entfernen
-                        Menu {
-                            if acc.username == app.defaultUsername {
-                                Button { app.defaultUsername = nil } label: {
-                                    Label("Als Standard entfernen", systemImage: "star.slash")
-                                }
-                            } else {
-                                Button { app.defaultUsername = acc.username } label: {
-                                    Label("Als Standard festlegen", systemImage: "star")
-                                }
-                            }
-                            Button {
-                                Task { await app.refreshAccount(username: acc.username) }
-                            } label: {
-                                Label("Konto aktualisieren", systemImage: "arrow.clockwise")
-                            }
-                            Button {
-                                renameText = acc.nickname ?? ""
-                                renameTarget = acc
-                            } label: {
-                                Label("Umbenennen", systemImage: "pencil")
-                            }
-                            if app.accountHasPassword(acc.username) {
-                                Button { app.signOutAccount(username: acc.username) } label: {
-                                    Label("Abmelden", systemImage: "rectangle.portrait.and.arrow.right")
-                                }
-                            }
-                            Button(role: .destructive) { accountToRemove = acc } label: {
-                                Label("Account entfernen", systemImage: "trash")
-                            }
-                        } label: {
-                            Image(systemName: "ellipsis.circle").font(.title3).foregroundStyle(Palette.textSecondary)
-                                .padding(.leading, 4).contentShape(Rectangle())
-                        }
-                        .disabled(switchingTo != nil)
-                    }
-                }
-                if app.accounts.count > 1 {
-                    Picker(selection: Binding(
-                        get: { app.defaultUsername ?? "" },
-                        set: { app.defaultUsername = $0 }
-                    )) {
-                        ForEach(app.accounts) { acc in Text(acc.username).tag(acc.username) }
-                    } label: {
-                        Label("Standard-Konto", systemImage: "star")
-                    }
-                }
-                Button {
-                    app.showAddAccount = true
-                } label: {
-                    Label("Konto hinzufügen", systemImage: "person.badge.plus")
-                }
-            }
-            .listRowBackground(Palette.card)
+            accountsSection
 
             Section {
                 Button(role: .destructive) {
@@ -229,6 +152,11 @@ struct ProfileView: View {
             if let e = switchError { Text(e) }
         }
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: switchingTo)
+        .animation(switchSpring, value: app.session?.username)
+        .animation(switchSpring, value: app.defaultUsername)
+        .animation(switchSpring, value: app.accounts)
+        .sensoryFeedback(.success, trigger: app.session?.username)
+        .sensoryFeedback(.selection, trigger: app.defaultUsername)
         .alert("Konto umbenennen", isPresented: Binding(
             get: { renameTarget != nil },
             set: { if !$0 { renameTarget = nil } }
@@ -262,6 +190,148 @@ struct ProfileView: View {
             Text(label).foregroundStyle(Palette.textSecondary)
             Spacer()
             Text(value)
+        }
+    }
+
+    // ── Konto-Zeile (in Sub-Views aufgeteilt, sonst Compiler-Timeout) ─────────
+
+    private var accountsSection: some View {
+        Section("Konten") {
+            ForEach(sortedAccounts) { acc in
+                accountRow(acc)
+                    .listRowBackground(acc.username == app.session?.username
+                                       ? Palette.accent.opacity(0.10) : Palette.card)
+            }
+            Button {
+                app.showAddAccount = true
+            } label: {
+                Label("Konto hinzufügen", systemImage: "person.badge.plus")
+            }
+            .listRowBackground(Palette.card)
+        }
+    }
+
+    @ViewBuilder
+    private func accountRow(_ acc: SavedAccount) -> some View {
+        HStack(spacing: 12) {
+            Button {
+                Task {
+                    withAnimation(switchSpring) { switchingTo = acc.username }
+                    await app.switchAccount(username: acc.username)
+                    withAnimation(switchSpring) { switchingTo = nil }
+                    let switched = app.session?.username == acc.username
+                    if switched {
+                        dismiss()
+                    } else if !app.showAddAccount, let e = app.error {
+                        switchError = e
+                        app.error = nil
+                    }
+                }
+            } label: {
+                accountLabel(acc)
+            }
+            .buttonStyle(.plain)
+            .disabled(switchingTo != nil)
+
+            accountMenu(acc)
+                .disabled(switchingTo != nil)
+        }
+    }
+
+    @ViewBuilder
+    private func accountLabel(_ acc: SavedAccount) -> some View {
+        let isActive = acc.username == app.session?.username
+        let isDefault = acc.username == app.defaultUsername
+        let isSwitching = acc.username == switchingTo
+        let secondary = acc.nickname?.isEmpty == false
+            ? "\(acc.username) · \(acc.displayName)" : acc.displayName
+
+        HStack(spacing: 12) {
+            ZStack {
+                // Aktives Konto bekommt einen Akzent-Ring.
+                Circle()
+                    .stroke(Palette.accent, lineWidth: 2.5)
+                    .frame(width: 42, height: 42)
+                    .opacity(isActive ? 1 : 0)
+                    .scaleEffect(isActive ? 1 : 0.7)
+                InitialAvatar(name: acc.title, size: 34)
+                    .scaleEffect(isSwitching ? 1.12 : 1)
+            }
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 5) {
+                    Text(acc.title)
+                        .foregroundStyle(Palette.textPrimary)
+                        .fontWeight(isActive ? .semibold : .regular)
+                    if isDefault { defaultBadge }
+                    if !app.accountHasPassword(acc.username) { badge("Passwort nötig", Palette.orange) }
+                }
+                Text(secondary)
+                    .font(.caption2).foregroundStyle(Palette.textSecondary)
+            }
+            Spacer()
+            accountTrailing(isActive: isActive, isSwitching: isSwitching)
+        }
+    }
+
+    @ViewBuilder
+    private func accountTrailing(isActive: Bool, isSwitching: Bool) -> some View {
+        if isSwitching {
+            ProgressView().controlSize(.small)
+                .transition(.scale.combined(with: .opacity))
+        } else if isActive {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(Palette.accent)
+                .font(.title3)
+                .symbolEffect(.bounce, value: app.session?.username)
+                .transition(.scale.combined(with: .opacity))
+        }
+    }
+
+    private var defaultBadge: some View {
+        HStack(spacing: 2) {
+            Image(systemName: "star.fill").font(.system(size: 7, weight: .bold))
+            Text("Standard").font(.system(size: 9, weight: .bold))
+        }
+        .padding(.horizontal, 5).padding(.vertical, 1)
+        .background(Palette.accent.opacity(0.2), in: Capsule())
+        .foregroundStyle(Palette.accent)
+        .transition(.scale.combined(with: .opacity))
+    }
+
+    @ViewBuilder
+    private func accountMenu(_ acc: SavedAccount) -> some View {
+        Menu {
+            if acc.username == app.defaultUsername {
+                Button { withAnimation(switchSpring) { app.defaultUsername = nil } } label: {
+                    Label("Als Standard entfernen", systemImage: "star.slash")
+                }
+            } else {
+                Button { withAnimation(switchSpring) { app.defaultUsername = acc.username } } label: {
+                    Label("Als Standard festlegen", systemImage: "star")
+                }
+            }
+            Button {
+                Task { await app.refreshAccount(username: acc.username) }
+            } label: {
+                Label("Konto aktualisieren", systemImage: "arrow.clockwise")
+            }
+            Button {
+                renameText = acc.nickname ?? ""
+                renameTarget = acc
+            } label: {
+                Label("Umbenennen", systemImage: "pencil")
+            }
+            if app.accountHasPassword(acc.username) {
+                Button { app.signOutAccount(username: acc.username) } label: {
+                    Label("Abmelden", systemImage: "rectangle.portrait.and.arrow.right")
+                }
+            }
+            Button(role: .destructive) { accountToRemove = acc } label: {
+                Label("Account entfernen", systemImage: "trash")
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle").font(.title3).foregroundStyle(Palette.textSecondary)
+                .padding(.leading, 4).contentShape(Rectangle())
         }
     }
 
