@@ -227,7 +227,7 @@ struct ProfileToolbar: ViewModifier {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showProfile = true } label: {
                         if let s = app.session {
-                            AvatarView(url: s.imageUrl, name: s.personName ?? s.username, size: 28)
+                            AvatarView(url: s.imageUrl, name: s.personName ?? s.username, size: 28, colorSeed: s.username)
                         } else {
                             Image(systemName: "person.crop.circle")
                         }
@@ -262,12 +262,22 @@ extension View {
 }
 
 /// Avatar-Kreis mit Initiale.
+///
+/// `colorSeed` (z. B. der Benutzername) → persistierte Zufallsfarbe (Profil).
+/// Ohne Seed → namensbasierte Hash-Farbe (z. B. Nachrichten-Sender im Chat).
 struct InitialAvatar: View {
     let name: String
     var size: CGFloat = 40
+    var colorSeed: String? = nil
+
+    private var color: Color {
+        if let seed = colorSeed, !seed.isEmpty { return Palette.color(for: seed) }
+        return Palette.sender(name)
+    }
+
     var body: some View {
         Circle()
-            .fill(LinearGradient(colors: [Palette.sender(name), Palette.sender(name).opacity(0.7)],
+            .fill(LinearGradient(colors: [color, color.opacity(0.7)],
                                  startPoint: .topLeading, endPoint: .bottomTrailing))
             .frame(width: size, height: size)
             .overlay(
@@ -278,25 +288,36 @@ struct InitialAvatar: View {
     }
 }
 
-/// Profilbild (WebUntis) mit Initial-Fallback, während/ohne Bild.
+/// Profilbild mit lokalem Cache (sofort sichtbar / offline) und Initial-Fallback.
+/// Der farbige Initial-Avatar dient als Platzhalter, bis das Bild geladen ist;
+/// das Bild blendet dezent ein.
 struct AvatarView: View {
     let url: String?
     let name: String
     var size: CGFloat = 40
+    var colorSeed: String? = nil
+
+    @State private var image: UIImage?
+
     var body: some View {
-        if let url, let u = URL(string: url) {
-            AsyncImage(url: u) { phase in
-                switch phase {
-                case .success(let img):
-                    img.resizable().scaledToFill()
-                default:
-                    InitialAvatar(name: name, size: size)
-                }
+        ZStack {
+            InitialAvatar(name: name, size: size, colorSeed: colorSeed)
+                .opacity(image == nil ? 1 : 0)
+            if let image {
+                Image(uiImage: image)
+                    .resizable().scaledToFill()
+                    .frame(width: size, height: size)
+                    .clipShape(Circle())
+                    .transition(.opacity)
             }
-            .frame(width: size, height: size)
-            .clipShape(Circle())
-        } else {
-            InitialAvatar(name: name, size: size)
+        }
+        .frame(width: size, height: size)
+        .task(id: url) {
+            image = nil
+            guard let url, let u = URL(string: url) else { return }
+            if let loaded = await ImageCache.image(for: u) {
+                withAnimation(.easeOut(duration: 0.25)) { image = loaded }
+            }
         }
     }
 }

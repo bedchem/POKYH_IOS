@@ -244,11 +244,16 @@ struct HomeView: View {
 
     // ── Laden (unabhängig, parallel) ────────────────────────────────────────
     private func loadAll(force: Bool = false) async {
-        async let a: () = loadToday()
-        async let b: () = loadGrades()
+        // Mensa kommt aus dem Backend → immer; Stundenplan/Noten/Prüfungen nur mit
+        // verknüpftem WebUntis-Konto.
         async let c: () = loadMensa()
-        async let d: () = loadExams()
-        _ = await (a, b, c, d)
+        if app.session?.hasUntis ?? false {
+            async let a: () = loadToday()
+            async let b: () = loadGrades()
+            async let d: () = loadExams()
+            _ = await (a, b, d)
+        }
+        _ = await c
     }
 
     private func loadExams() async {

@@ -56,12 +56,17 @@ final class AppState: ObservableObject {
     @Published var session: UserSession?
     @Published var accounts: [SavedAccount]
     @Published var busy = false
+    /// Offline-Modus aktiv (gecachte Daten, Login kam nicht durch).
+    @Published var isOffline = false
     @Published var statusText = ""
     @Published var error: String?
     @Published var showAddAccount = false
     @Published var prefillUsername: String?   // vorausgefüllter Benutzername bei Passwort-Neueingabe
     @Published var selectedTab: AppTab = .home
     @Published var backendStatus: BackendStatus = .unknown
+    /// Biometrie-Status (Face ID / Touch ID). Wird off-main ermittelt (siehe init),
+    /// startet mit einem günstigen Default → kein Hänger beim ersten Render.
+    @Published var biometricInfo = Biometric.Info(available: false, typeName: "Code", symbol: "lock.fill")
     /// Erhöht sich, wenn der Stundenplan-Tab angetippt wird → Ansicht springt auf „heute".
     @Published var timetableHomeSignal = 0
     @Published var themeMode: ThemeMode {
@@ -75,6 +80,13 @@ final class AppState: ObservableObject {
         phase = store.accounts.isEmpty ? .login : .lock
         let raw = UserDefaults.standard.string(forKey: "pokyh_theme") ?? ThemeMode.system.rawValue
         themeMode = ThemeMode(rawValue: raw) ?? .system
+        // Biometrie-Status (erster `canEvaluatePolicy`-Aufruf ist teuer, ~300 ms!)
+        // KOMPLETT off-main ermitteln und reaktiv nachreichen → kein Main-Thread-Hänger
+        // beim ersten Render (Views lesen `biometricInfo`, nie `Biometric.info` direkt).
+        Task.detached(priority: .userInitiated) {
+            let info = Biometric.info
+            await MainActor.run { self.biometricInfo = info }
+        }
     }
 
     var colorScheme: ColorScheme? {
@@ -86,7 +98,7 @@ final class AppState: ObservableObject {
     }
 
     var isParent: Bool { session?.isParent ?? false }
-    var biometricAvailable: Bool { Biometric.available }
+    var biometricAvailable: Bool { biometricInfo.available }
 
     // ── Standard-Konto (Einstellungen) ───────────────────────────────────────
     var defaultUsername: String? {
@@ -115,7 +127,7 @@ final class AppState: ObservableObject {
             showAddAccount = true
             return
         }
-        await performLogin(username: username, password: password, save: false)
+        await performLogin(username: username, password: password, save: false, allowOffline: true)
     }
 
     // ── Neuer / manueller Login ──────────────────────────────────────────────
@@ -124,21 +136,95 @@ final class AppState: ObservableObject {
         await performLogin(username: username, password: password, save: save)
     }
 
-    private func performLogin(username: String, password: String, save: Bool) async {
+    /// Zeit, nach der ohne Login-Antwort (kein Internet) in den Offline-Modus
+    /// gewechselt wird — sofern ein wiederkehrendes Konto + Cache vorliegt.
+    private static let offlineTimeout: Double = 5
+
+    private enum LoginOutcome { case done(UserSession), timedOut, failed(Error) }
+    private enum RaceResult: Sendable { case finished, timedOut }
+
+    private func performLogin(username: String, password: String, save: Bool, allowOffline: Bool = false) async {
         // Wurde der Login aus dem „Konto hinzufügen“/„Passwort nötig“-Sheet gestartet?
-        // (Dann müssen wir den Sheet-Wechsel sorgfältig sequenzieren – siehe unten.)
+        // (Dann müssen wir den Sheet-Wechsel sorgfältig sequenzieren – siehe finalize.)
         let viaSheet = showAddAccount
         busy = true; error = nil
         statusText = "Verbinde mit WebUntis…"
-        defer { busy = false; statusText = "" }
+
+        // Offline-Fallback nur für wiederkehrende Konten mit vorhandenem Cache.
+        let snap: UserSession? = allowOffline ? Self.offlineCandidate(username: username) : nil
+        let loginTask = Task { try await self.buildSession(username: username, password: password) }
+
+        // Ohne Offline-Option: normal auf das Ergebnis warten. Mit Option: 5-s-Rennen.
+        let outcome: LoginOutcome
+        if snap == nil {
+            do { outcome = .done(try await loginTask.value) }
+            catch { outcome = .failed(error) }
+        } else {
+            switch await Self.race(loginTask, timeout: Self.offlineTimeout) {
+            case .finished:
+                // Login ist durch → Ergebnis (Sitzung oder Fehler) abholen.
+                do { outcome = .done(try await loginTask.value) }
+                catch { outcome = .failed(error) }
+            case .timedOut:
+                outcome = .timedOut
+            }
+        }
+
+        switch outcome {
+        case .done(let s):
+            await finalize(s, save: save, password: password, viaSheet: viaSheet)
+            busy = false; statusText = ""
+        case .timedOut:
+            // Kein Internet rechtzeitig → Offline-Modus aus dem Snapshot, Login läuft
+            // im Hintergrund weiter und „upgradet" die Sitzung bei Erfolg.
+            guard let snap else { busy = false; statusText = ""; return }
+            enterOffline(snap, viaSheet: viaSheet)
+            Task { [weak self] in
+                if let s = try? await loginTask.value {
+                    await self?.upgradeFromBackground(s, save: save, password: password)
+                }
+            }
+        case .failed(let e):
+            // Schneller Netzwerkfehler (z. B. Flugmodus) + Cache → ebenfalls offline.
+            if let snap, e is URLError {
+                enterOffline(snap, viaSheet: viaSheet)
+            } else {
+                self.error = (e as? AppError)?.message ?? e.localizedDescription
+            }
+            busy = false; statusText = ""
+        }
+    }
+
+    /// Eigentlicher Netzwerk-Login: WebUntis → Fallback POKYH-Backend → Backend-Konto
+    /// beziehen. Baut die fertige Sitzung inkl. Tokens und setzt `backendStatus`.
+    private func buildSession(username: String, password: String) async throws -> UserSession {
+        var s: UserSession
+        var backendOnly = false
         do {
-            var s = try await UntisClient.shared.login(username: username, password: password)
-            statusText = "Lade Konto…"
-            // POKYH-Konto für Schüler- UND Elternkonten beziehen/anlegen (kein
-            // Lehrer-/Adminkonto). Eltern bekommen ein Elternkonto (role=parent):
-            // eigene Todos, sehen nur den Klassennamen, keine Erinnerungen,
-            // unsichtbares Mitglied. Die klasseId ist bei Eltern die des Kindes
-            // (in UntisClient aufgelöst). Das Backend legt das Konto automatisch an.
+            s = try await UntisClient.shared.login(username: username, password: password)
+        } catch let untisError {
+            // Kein (funktionierendes) WebUntis-Konto? → direkter POKYH-Backend-Login
+            // als Fallback (gleiche Zugangsdaten). Das Backend kennt reine POKYH-Konten.
+            do {
+                let backend = try await BackendClient.shared.login(
+                    username: username, password: password)
+                s = Self.backendOnlySession(from: backend)
+                backendStatus = .connected
+                backendOnly = true
+            } catch {
+                // Beide fehlgeschlagen. Die Backend-Meldung ist für ein POKYH-Konto
+                // aussagekräftiger (z. B. „Ungültige Zugangsdaten"); bei einem reinen
+                // Netzwerkfehler den ursprünglichen WebUntis-Fehler durchreichen.
+                throw (error is URLError) ? untisError : error
+            }
+        }
+        // POKYH-Konto für Schüler- UND Elternkonten beziehen/anlegen (kein
+        // Lehrer-/Adminkonto). Eltern bekommen ein Elternkonto (role=parent):
+        // eigene Todos, sehen nur den Klassennamen, keine Erinnerungen,
+        // unsichtbares Mitglied. Die klasseId ist bei Eltern die des Kindes
+        // (in UntisClient aufgelöst). Das Backend legt das Konto automatisch an.
+        // Reine Backend-Konten (Fallback) haben ihre Tokens bereits.
+        if !backendOnly {
             if s.isStudent || s.isParent {
                 let role = s.isParent ? "parent" : "student"
                 switch await BackendClient.shared.loginWithUntis(
@@ -159,36 +245,137 @@ final class AppState: ObservableObject {
             } else {
                 backendStatus = .notStudent
             }
-            // Konto + Passwort sichern, BEVOR die Session getauscht wird, damit es
-            // auch dann lokal gespeichert ist, wenn der View-Wechsel dazwischenkommt.
-            if save {
-                let account = SavedAccount(
-                    username: s.username,
-                    displayName: s.klasseName.isEmpty ? s.username : s.klasseName)
-                store.save(account, password: password)
-            }
-            store.lastActive = s.username
-            accounts = store.accounts
-
-            if viaSheet {
-                // Bereits eingeloggt + Login lief über ein Sheet (Konto hinzufügen /
-                // Passwort-Neueingabe): ERST das Sheet schließen und die Dismiss-
-                // Animation abwarten, DANN die Session tauschen. Sonst kollidiert der
-                // View-Identitätswechsel (ContentView: `RootTabView().id(username)`)
-                // mit der noch laufenden Sheet-Animation → das Modal hängt auf echten
-                // Geräten („nichts passiert / lässt sich nicht schließen“).
-                showAddAccount = false
-                busy = false; statusText = ""
-                try? await Task.sleep(for: .milliseconds(420))
-            }
-            session = s
-            phase = .authed
-            showAddAccount = false
-            onAuthenticated()
-        } catch {
-            self.error = (error as? AppError)?.message ?? error.localizedDescription
-            if phase == .lock { /* bleibe im Sperrbildschirm */ }
         }
+        return s
+    }
+
+    /// Abschluss eines erfolgreichen Online-Logins: Konto sichern, Offline-Snapshot
+    /// persistieren, Sitzung übernehmen (mit sorgfältiger Sheet-Sequenzierung).
+    private func finalize(_ s: UserSession, save: Bool, password: String, viaSheet: Bool) async {
+        // Konto + Passwort sichern, BEVOR die Session getauscht wird, damit es
+        // auch dann lokal gespeichert ist, wenn der View-Wechsel dazwischenkommt.
+        if save {
+            let account = SavedAccount(
+                username: s.username,
+                displayName: s.klasseName.isEmpty ? s.username : s.klasseName,
+                imageUrl: s.imageUrl)
+            store.save(account, password: password)
+        }
+        store.lastActive = s.username
+        // Profilbild auch beim stillen Login (save:false) nachtragen → Konten-Liste
+        // & Sperrbildschirm zeigen das gecachte Bild.
+        store.updateImageUrl(s.imageUrl, for: s.username)
+        accounts = store.accounts
+        // Token-losen Snapshot für späteren Offline-Restore ablegen.
+        if s.hasUntis { DiskCache.save(Self.offlineSnapshot(s), key: Self.sessionKey(s.username)) }
+
+        if viaSheet {
+            // Bereits eingeloggt + Login lief über ein Sheet (Konto hinzufügen /
+            // Passwort-Neueingabe): ERST das Sheet schließen und die Dismiss-
+            // Animation abwarten, DANN die Session tauschen. Sonst kollidiert der
+            // View-Identitätswechsel (ContentView: `RootTabView().id(username)`)
+            // mit der noch laufenden Sheet-Animation → das Modal hängt auf echten
+            // Geräten („nichts passiert / lässt sich nicht schließen“).
+            showAddAccount = false
+            busy = false; statusText = ""
+            try? await Task.sleep(for: .milliseconds(420))
+        }
+        session = s
+        phase = .authed
+        showAddAccount = false
+        isOffline = false
+        onAuthenticated()
+    }
+
+    /// Wechselt in den Offline-Modus: gecachte (token-lose) Sitzung anzeigen.
+    private func enterOffline(_ snap: UserSession, viaSheet: Bool) {
+        busy = false; statusText = ""
+        if viaSheet { showAddAccount = false }
+        session = snap
+        phase = .authed
+        isOffline = true
+        store.lastActive = snap.username
+    }
+
+    /// Hintergrund-Login nach Offline-Restore erfolgreich → Sitzung „upgraden".
+    private func upgradeFromBackground(_ s: UserSession, save: Bool, password: String) async {
+        guard session?.username == s.username else { return }   // Konto noch aktiv?
+        if save {
+            let account = SavedAccount(
+                username: s.username,
+                displayName: s.klasseName.isEmpty ? s.username : s.klasseName,
+                imageUrl: s.imageUrl)
+            store.save(account, password: password)
+            accounts = store.accounts
+        }
+        if s.hasUntis { DiskCache.save(Self.offlineSnapshot(s), key: Self.sessionKey(s.username)) }
+        withAnimation(.easeInOut(duration: 0.3)) {
+            session = s
+            isOffline = false
+        }
+        onAuthenticated()
+    }
+
+    // ── Offline-Helfer ────────────────────────────────────────────────────────
+
+    private static func sessionKey(_ username: String) -> String {
+        "session-\(username.lowercased())"
+    }
+
+    /// Liefert einen Offline-Snapshot nur, wenn ein WebUntis-Konto gecacht ist
+    /// (`studentId > 0` → Stundenplan-Cache kann gelesen werden).
+    private static func offlineCandidate(username: String) -> UserSession? {
+        guard let snap = DiskCache.load(UserSession.self, key: sessionKey(username)),
+              snap.studentId > 0 else { return nil }
+        return snap
+    }
+
+    /// Rennen: ist der Login durch oder läuft die Zeit ab? Der Login-Task läuft bei
+    /// Timeout weiter (nur die Warte-Tasks werden abgebrochen).
+    private static func race(_ task: Task<UserSession, Error>, timeout: Double) async -> RaceResult {
+        await withTaskGroup(of: RaceResult.self) { group in
+            group.addTask {
+                _ = try? await task.value
+                return .finished
+            }
+            group.addTask {
+                try? await Task.sleep(for: .seconds(timeout))
+                return .timedOut
+            }
+            let first = await group.next() ?? .timedOut
+            group.cancelAll()
+            return first
+        }
+    }
+
+    /// Baut eine reine POKYH-Backend-Sitzung (kein WebUntis): nur API-Tokens +
+    /// Stammdaten, WebUntis-Felder bleiben neutral → `hasUntis == false`.
+    private static func backendOnlySession(
+        from backend: (token: String, refresh: String, user: ApiUser)) -> UserSession {
+        var s = UserSession(
+            sessionId: "", bearerToken: "", studentId: 0,
+            klasseId: 0, klasseName: backend.user.webuntisKlasseName ?? "",
+            username: backend.user.username,
+            personName: nil, personType: nil,
+            isParent: backend.user.role == "parent")
+        s.apiToken = backend.token
+        s.apiRefresh = backend.refresh
+        s.stableUid = backend.user.stableUid
+        s.classId = backend.user.classId
+        return s
+    }
+
+    /// Token-loser Sitzungs-Snapshot für den Offline-Restore. Enthält NUR
+    /// nicht-sensible Anzeige-/Cache-Schlüssel-Felder — niemals Tokens/Cookies.
+    /// Die kommen beim echten Re-Login zurück; offline brauchen wir nur die
+    /// Cache-Keys (`studentId`) + Anzeigedaten.
+    private static func offlineSnapshot(_ s: UserSession) -> UserSession {
+        UserSession(
+            sessionId: "", bearerToken: "", studentId: s.studentId,
+            klasseId: s.klasseId, klasseName: s.klasseName, username: s.username,
+            personName: s.personName, personType: s.personType, isParent: s.isParent,
+            apiToken: nil, apiRefresh: nil, stableUid: nil, classId: nil,
+            imageUrl: s.imageUrl)
     }
 
     // ── Kontowechsel / -verwaltung ───────────────────────────────────────────
@@ -201,7 +388,7 @@ final class AppState: ObservableObject {
             prefillUsername = username; showAddAccount = true; return
         }
         busy = true; statusText = "Bestätige Identität…"
-        if Biometric.available {
+        if biometricInfo.available {
             let ok = await Biometric.authenticate(reason: "Kontowechsel zu \(username) bestätigen.")
             guard ok else { busy = false; statusText = ""; return }
         }
@@ -259,6 +446,7 @@ final class AppState: ObservableObject {
         accounts = store.accounts
         if session?.username == username {
             session = nil
+            isOffline = false
             phase = accounts.isEmpty ? .login : .lock
         }
         objectWillChange.send()
@@ -270,12 +458,14 @@ final class AppState: ObservableObject {
         accounts = store.accounts
         if session?.username == username {
             session = nil
+            isOffline = false
             phase = accounts.isEmpty ? .login : .lock
         }
     }
 
     func logout() {
         session = nil
+        isOffline = false
         phase = accounts.isEmpty ? .login : .lock
     }
 
@@ -286,6 +476,7 @@ final class AppState: ObservableObject {
         // 1. In-Memory-Caches
         UntisClient.shared.clearCaches()
         BackendClient.shared.clearCaches()
+        ImageCache.purge()
         // 2. Keychain (alle Passwörter + Master-Key)
         Keychain.purgeAll()
         // 3. Offline-Disk-Cache + geteilte Snapshots (App Group)
@@ -303,6 +494,7 @@ final class AppState: ObservableObject {
         #endif
         // 6. Zustand zurücksetzen → Login
         session = nil
+        isOffline = false
         accounts = []
         backendStatus = .unknown
         themeMode = .system
@@ -311,6 +503,7 @@ final class AppState: ObservableObject {
 
     func handleSessionExpired() {
         session = nil
+        isOffline = false
         phase = accounts.isEmpty ? .login : .lock
     }
 

@@ -20,6 +20,11 @@ struct UserSession: Codable, Equatable {
     /// Profilbild-URL aus den WebUntis-App-Daten (`user.person.imageUrl`).
     var imageUrl: String?
 
+    /// Hat diese Sitzung ein verknüpftes WebUntis-Konto (Stundenplan/Noten)?
+    /// Reine POKYH-Backend-Konten (Login-Fallback) haben `studentId == 0`. Gilt auch
+    /// für die token-lose Offline-Sitzung (Stundenplan kommt dann aus dem Cache).
+    var hasUntis: Bool { studentId > 0 }
+
     /// WebUntis-`personType` 5 = Schüler. Eltern werden ausgeschlossen.
     /// Fällt `personType` weg, gilt ein eigener Klassenkontext (klasseId > 0,
     /// kein Elternteil) als Schüler-Indiz.
@@ -36,6 +41,7 @@ struct SavedAccount: Codable, Equatable, Identifiable {
     var username: String           // dient als ID & Keychain-Schlüssel
     var displayName: String        // Klassenname o. Benutzername
     var nickname: String?          // optionaler, lokal vergebener Spitzname
+    var imageUrl: String?          // Profilbild-URL (WebUntis) für die Konten-Liste
     var id: String { username }
 
     /// Primär anzuzeigender Name: Spitzname falls vorhanden, sonst Benutzername.

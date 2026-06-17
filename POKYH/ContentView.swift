@@ -29,6 +29,14 @@ struct ContentView: View {
                     .transition(.opacity)
             }
         }
+        // Offline-Hinweis (gecachte Daten) — dezent von oben einfliegend.
+        .overlay(alignment: .top) {
+            if app.isOffline && app.phase == .authed {
+                OfflineBanner()
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .animation(.spring(response: 0.5, dampingFraction: 0.82), value: app.isOffline)
         // Weiche Überblendung beim Wechsel des Erscheinungsbilds.
         .overlay {
             if themeFade {
@@ -68,6 +76,22 @@ struct SwitchingOverlay: View {
             .padding(26)
             .glassEffect(.regular, in: .rect(cornerRadius: 20))
         }
+    }
+}
+
+/// Schlanker Offline-Hinweis am oberen Rand.
+struct OfflineBanner: View {
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "wifi.slash")
+            Text("Offline – zeige gespeicherte Daten")
+                .font(.footnote.weight(.semibold))
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 14).padding(.vertical, 8)
+        .background(Palette.warning, in: Capsule())
+        .shadow(color: .black.opacity(0.18), radius: 8, y: 3)
+        .padding(.top, 8)
     }
 }
 

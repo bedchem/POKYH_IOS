@@ -42,7 +42,7 @@ struct LoginView: View {
 
                         if app.biometricAvailable {
                             Toggle(isOn: $saveCredentials) {
-                                Label("Mit \(Biometric.typeName) speichern", systemImage: Biometric.symbol)
+                                Label("Mit \(app.biometricInfo.typeName) speichern", systemImage: app.biometricInfo.symbol)
                                     .font(.subheadline)
                             }
                             .tint(Palette.accent)
@@ -77,6 +77,7 @@ struct LoginView: View {
                         .multilineTextAlignment(.center)
                     Spacer()
                 }
+                .centeredForm()
             }
         }
         .animation(.easeInOut, value: app.error)

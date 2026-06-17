@@ -67,6 +67,13 @@ enum Palette {
         return Color(hue: hue, saturation: 0.60, brightness: 0.55)
     }
 
+    /// Avatar-Farbe für ein **Benutzerprofil**: beim ersten Mal echt zufällig
+    /// gewürfelt, lokal persistiert (pro stabilem Identifier) und danach immer
+    /// gleich. Look identisch zu `sender` (gleiche Sättigung/Helligkeit).
+    static func color(for identifier: String) -> Color {
+        Color(hue: AvatarColorStore.hue(for: identifier), saturation: 0.60, brightness: 0.55)
+    }
+
     static func grade(_ value: Double) -> Color {
         func lerp(_ a: Double, _ b: Double, _ t: Double) -> Double { a + (b - a) * max(0, min(1, t)) }
         func mix(_ c1: (Double, Double, Double), _ c2: (Double, Double, Double), _ t: Double) -> Color {
@@ -78,6 +85,23 @@ enum Palette {
         // ab 6: hellgrün (6) → dunkelgrün (10); unter 6: normalrot (knapp unter 6) → dunkelrot (1)
         if value >= 6.0 { return mix(greenLight, greenDark, (value - 6.0) / (10 - 6.0)) }
         return mix(redNormal, redDark, (6.0 - value) / (6.0 - 1))
+    }
+}
+
+/// Persistiert die einmalig zufällig gewählte Farbe (Hue) je Profil-Identifier.
+/// Speicher: `UserDefaults` unter einem `pokyh_`-Schlüssel → wird von
+/// `clearAllData()` automatisch mit aufgeräumt (kein Hardcoding einzelner Keys).
+enum AvatarColorStore {
+    private static let key = "pokyh_avatar_hues"
+
+    static func hue(for identifier: String) -> Double {
+        let id = identifier.lowercased()
+        var map = (UserDefaults.standard.dictionary(forKey: key) as? [String: Double]) ?? [:]
+        if let h = map[id] { return h }
+        let h = Double.random(in: 0..<1)
+        map[id] = h
+        UserDefaults.standard.set(map, forKey: key)
+        return h
     }
 }
 
@@ -219,9 +243,35 @@ extension View {
             .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(Palette.border, lineWidth: 0.5))
     }
 
-    /// App-Hintergrund (`--app-bg`).
+    /// Zentriert schmale Inhalte (Login-/Sperr-Formular) und begrenzt sie auf eine
+    /// angenehme Breite — auf dem iPhone wirkungslos (Breite > Display), auf iPad
+    /// zentriert. `maxWidth` ist eine Layout-Größe, kein Gerät-Hardcoding.
+    func centeredForm(_ maxWidth: CGFloat = 480) -> some View {
+        self.frame(maxWidth: maxWidth).frame(maxWidth: .infinity)
+    }
+
+    /// App-Hintergrund (`--app-bg`) + responsive Breite (iPad/regular size class:
+    /// Inhalt auf eine lesbare Breite begrenzen und zentrieren, Hintergrund bleibt
+    /// vollflächig). Auf dem iPhone (compact) unverändert.
     func appBackground() -> some View {
-        self.background(Palette.bg.ignoresSafeArea())
+        self.modifier(ReadableContent()).background(Palette.bg.ignoresSafeArea())
+    }
+}
+
+/// Begrenzt Inhalte auf eine angenehm lesbare Breite und zentriert sie — nur in
+/// der „regular" horizontalen Größenklasse (iPad, breite Fenster). So wirkt die
+/// App auf großen Displays nicht gestreckt. Kein Geräte-Check / kein Hardcoding
+/// von Modellen — rein an der Größenklasse orientiert.
+struct ReadableContent: ViewModifier {
+    /// Obergrenze der Inhaltsbreite (über iPhone-Breite → auf dem iPhone wirkungslos).
+    static let maxWidth: CGFloat = 760
+    @Environment(\.horizontalSizeClass) private var hSize
+    func body(content: Content) -> some View {
+        if hSize == .regular {
+            content.frame(maxWidth: Self.maxWidth).frame(maxWidth: .infinity)
+        } else {
+            content
+        }
     }
 }
 

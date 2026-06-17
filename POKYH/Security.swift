@@ -183,10 +183,11 @@ final class CredentialStore {
         // Vorhandenen Spitznamen erhalten (z. B. bei „Konto aktualisieren"/Re-Login),
         // falls der neue Datensatz selbst keinen mitbringt.
         var account = account
-        if account.nickname == nil,
-           let existing = accounts.first(where: { $0.username == account.username })?.nickname {
-            account.nickname = existing
-        }
+        let existing = accounts.first(where: { $0.username == account.username })
+        if account.nickname == nil { account.nickname = existing?.nickname }
+        // Profilbild erhalten, falls der neue Datensatz keins mitbringt (z. B. Re-Login
+        // ohne aufgelöstes Bild) → die Konten-Liste behält das zuletzt bekannte Bild.
+        if account.imageUrl == nil { account.imageUrl = existing?.imageUrl }
         var list = accounts.filter { $0.username != account.username }
         list.append(account)
         persist(list)
@@ -217,6 +218,17 @@ final class CredentialStore {
         var list = accounts
         guard let idx = list.firstIndex(where: { $0.username == username }) else { return }
         list[idx].displayName = displayName
+        persist(list)
+    }
+
+    /// Profilbild-URL eines gespeicherten Kontos aktualisieren (auch beim stillen
+    /// Re-Login, damit die Konten-Liste das Bild zeigt). No-op, wenn unverändert.
+    func updateImageUrl(_ imageUrl: String?, for username: String) {
+        guard let imageUrl, !imageUrl.isEmpty else { return }
+        var list = accounts
+        guard let idx = list.firstIndex(where: { $0.username == username }),
+              list[idx].imageUrl != imageUrl else { return }
+        list[idx].imageUrl = imageUrl
         persist(list)
     }
 

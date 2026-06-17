@@ -90,15 +90,17 @@ final class UntisClient {
             personName: nil, personType: personType, isParent: false
         )
 
-        // 2. Bearer-Token
-        s.bearerToken = (try? await fetchToken(s)) ?? ""
-
-        // 3. Klassenname + 4. Schüler-Liste.
+        // 2.–4. Bearer-Token, Klassenname und Schüler-Liste PARALLEL holen.
+        // Keiner der drei braucht den Bearer-Token: das Token-Endpoint sowie
+        // getKlassen/getStudents (JSON-RPC) authentifizieren über den JSESSIONID-
+        // Cookie. Parallel statt sequenziell → ein Roundtrip statt drei (schneller).
         // Wichtig: unveränderliche Kopie für die nebenläufigen Tasks (kein Data Race —
         // `s` darf erst NACH dem Await mutiert werden).
         let snapshot = s
+        async let tokenTask = fetchToken(snapshot)
         async let klassen = fetchKlassen(snapshot, klasseId: klasseId)
         async let students = fetchStudents(snapshot)
+        s.bearerToken = (try? await tokenTask) ?? ""
         let klasseName = (try? await klassen) ?? ""
         let studentList = (try? await students) ?? []
         s.klasseName = klasseName
@@ -526,6 +528,7 @@ final class UntisClient {
     /// Kommende Prüfungen/Schularbeiten (ab heute, ~40 Tage), gecacht.
     func upcomingExams(_ s: UserSession) async throws -> [TimetableEntry] {
         if let cached = examsCache.get(s.studentId) { return cached }
+        if s.bearerToken.isEmpty { return [] }   // Offline: keine Prüfungs-Abfrage
         let start = DateFmt.isoString(Date())
         let end = DateFmt.isoString(Calendar.current.date(byAdding: .day, value: 40, to: Date())!)
         let url = "\(base)\(Config.Routes.timetable)?start=\(start)&end=\(end)&format=1&resourceType=STUDENT&resources=\(s.studentId)&periodTypes=&timetableType=MY_TIMETABLE&layout=START_TIME"
@@ -545,12 +548,22 @@ final class UntisClient {
     /// Synchroner Cache-Peek (kein Netzwerk) — erlaubt der UI, eine bereits
     /// vorgeladene Woche sofort und ohne Spinner-Flash anzuzeigen.
     func cachedTimetable(date: String, _ s: UserSession) -> [TimetableEntry]? {
-        timetableCache.get("\(s.studentId)-\(date)")
+        let key = "\(s.studentId)-\(date)"
+        if let mem = timetableCache.get(key) { return mem }
+        // Offline (token-los): persistierten Stundenplan sofort ohne Spinner zeigen.
+        if s.bearerToken.isEmpty { return DiskCache.load([TimetableEntry].self, key: "tt-\(key)") }
+        return nil
     }
 
     func timetable(date: String, _ s: UserSession) async throws -> [TimetableEntry] {
         let key = "\(s.studentId)-\(date)"
         if let cached = timetableCache.get(key) { return cached }
+        // Token-lose (Offline-)Sitzung: KEIN Netzwerk — eine Anfrage ohne Bearer
+        // liefert eine Auth-/HTML-Antwort und würde abmelden. Stattdessen direkt den
+        // zuvor geladenen, persistierten Stundenplan zeigen (die Fächer der Woche).
+        if s.bearerToken.isEmpty {
+            return DiskCache.load([TimetableEntry].self, key: "tt-\(key)") ?? []
+        }
         // Ende = Start + 5 Tage (Mo–Sa)
         guard let d = DateFmt.iso.date(from: date) else { throw AppError(message: "Ungültiges Datum") }
         let end = DateFmt.isoString(Calendar.current.date(byAdding: .day, value: 5, to: d)!)
@@ -634,6 +647,10 @@ final class UntisClient {
     func grades(year: Int?, _ s: UserSession) async throws -> [SubjectGrades] {
         let cacheKey = "\(s.studentId)-\(year ?? 0)"
         if let cached = gradesCache.get(cacheKey) { return cached }
+        // Token-lose (Offline-)Sitzung: direkt die persistierten Noten zeigen.
+        if s.bearerToken.isEmpty {
+            return DiskCache.load([SubjectGrades].self, key: "grades-\(cacheKey)") ?? []
+        }
         do {
             guard let schoolyearId = try await schoolyearId(year: year, s) else {
                 throw AppError(message: "Schuljahr nicht gefunden.")
@@ -749,6 +766,7 @@ final class UntisClient {
     // ── Abwesenheiten ────────────────────────────────────────────────────────
 
     func absences(startDate: String, endDate: String, _ s: UserSession) async throws -> [AbsenceEntry] {
+        if s.bearerToken.isEmpty { return [] }   // kein WebUntis (offline/Backend-only)
         let pageSize = 100
         let baseURL = "\(base)/api/classreg/absences/students?studentId=\(s.studentId)&startDate=\(startDate)&endDate=\(endDate)&excuseStatusId=-1&limit=\(pageSize)&pageSize=\(pageSize)"
         var all: [JSON] = []
@@ -813,6 +831,7 @@ final class UntisClient {
     // ── Nachrichten ────────────────────────────────────────────────────────
 
     func messages(folder: MessageFolder, _ s: UserSession) async throws -> [MessagePreview] {
+        if s.bearerToken.isEmpty { return [] }   // kein WebUntis (offline/Backend-only)
         let path: String
         switch folder {
         case .inbox: path = "/api/rest/view/v1/messages"
@@ -899,6 +918,7 @@ final class UntisClient {
     // ── Klassenbuch ──────────────────────────────────────────────────────────
 
     func classregEvents(year: Int?, _ s: UserSession) async throws -> [ClassregEvent] {
+        if s.bearerToken.isEmpty { return [] }   // kein WebUntis (offline/Backend-only)
         let y = year ?? SchoolDates.currentSchoolYear
         let url = "\(base)/api/classreg/classregevents?startDate=\(y)0908&endDate=\(y + 1)0612&studentId=\(s.studentId)"
         let (data, http) = try await get(url, s)

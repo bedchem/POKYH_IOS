@@ -35,7 +35,7 @@ struct ProfileView: View {
             if let s = app.session {
                 Section {
                     HStack(spacing: 14) {
-                        AvatarView(url: s.imageUrl, name: s.personName ?? s.username, size: 56)
+                        AvatarView(url: s.imageUrl, name: s.personName ?? s.username, size: 56, colorSeed: s.username)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(s.personName ?? s.username).font(.headline)
                             Text(s.isParent ? "Erziehungsberechtigt" : "Schüler/in")
@@ -274,7 +274,7 @@ struct ProfileView: View {
                     .frame(width: 42, height: 42)
                     .opacity(isActive ? 1 : 0)
                     .scaleEffect(isActive ? 1 : 0.7)
-                InitialAvatar(name: acc.title, size: 34)
+                AvatarView(url: acc.imageUrl, name: acc.title, size: 34, colorSeed: acc.username)
                     .scaleEffect(isSwitching ? 1.12 : 1)
             }
             VStack(alignment: .leading, spacing: 1) {
@@ -291,6 +291,7 @@ struct ProfileView: View {
             Spacer()
             accountTrailing(isActive: isActive, isSwitching: isSwitching)
         }
+        .contentShape(Rectangle())   // ganze Zeile (inkl. Lücke) antippbar
     }
 
     @ViewBuilder

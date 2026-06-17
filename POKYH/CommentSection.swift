@@ -50,7 +50,7 @@ struct CommentSection: View {
 
     private func commentRow(_ c: ApiComment) -> some View {
         HStack(alignment: .top, spacing: 10) {
-            InitialAvatar(name: c.username, size: 32)
+            InitialAvatar(name: c.username, size: 32, colorSeed: c.username)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(c.username).font(.caption.weight(.semibold)).foregroundStyle(Palette.textPrimary)

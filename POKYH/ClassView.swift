@@ -36,7 +36,7 @@ struct ClassView: View {
                             Text("\(c.members.count) Mitglieder").font(.headline)
                             ForEach(c.members) { m in
                                 HStack(spacing: 12) {
-                                    InitialAvatar(name: m.username, size: 36)
+                                    InitialAvatar(name: m.username, size: 36, colorSeed: m.username)
                                     Text(m.username)
                                     Spacer()
                                 }

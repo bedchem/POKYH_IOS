@@ -63,6 +63,7 @@ struct LockView: View {
                 .fadeIn(delay: 0.2)
             }
             .padding(.horizontal, 24)
+            .centeredForm()
         }
         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: app.busy)
         .animation(.easeInOut, value: showFallback)
@@ -76,8 +77,8 @@ struct LockView: View {
 
     private var statusText: String {
         if app.busy { return app.statusText.isEmpty ? "Anmelden…" : app.statusText }
-        if showFallback { return "\(Biometric.typeName) fehlgeschlagen.\nWähle ein Konto oder melde dich mit Passwort an." }
-        return "Mit \(Biometric.typeName) entsperren"
+        if showFallback { return "\(app.biometricInfo.typeName) fehlgeschlagen.\nWähle ein Konto oder melde dich mit Passwort an." }
+        return "Mit \(app.biometricInfo.typeName) entsperren"
     }
 
     private func attemptUnlock(_ username: String? = nil) async {
@@ -88,7 +89,7 @@ struct LockView: View {
     private var unlockButton: some View {
         Button { Task { await attemptUnlock() } } label: {
             HStack(spacing: 10) {
-                Image(systemName: Biometric.symbol).font(.title3)
+                Image(systemName: app.biometricInfo.symbol).font(.title3)
                 Text(showFallback ? "Erneut versuchen" : "Entsperren").font(.headline)
             }
             .frame(maxWidth: .infinity).frame(height: 56).padding(.horizontal, 24)
@@ -102,7 +103,7 @@ struct LockView: View {
             ForEach(app.accounts) { acc in
                 Button { Task { await attemptUnlock(acc.username) } } label: {
                     HStack(spacing: 12) {
-                        InitialAvatar(name: acc.username, size: 34)
+                        AvatarView(url: acc.imageUrl, name: acc.username, size: 34, colorSeed: acc.username)
                         VStack(alignment: .leading, spacing: 1) {
                             HStack(spacing: 5) {
                                 Text(acc.username).font(.subheadline.weight(.semibold)).foregroundStyle(Palette.textPrimary)
@@ -115,7 +116,7 @@ struct LockView: View {
                             Text(acc.displayName).font(.caption2).foregroundStyle(Palette.textSecondary)
                         }
                         Spacer()
-                        Image(systemName: Biometric.symbol).font(.caption).foregroundStyle(Palette.textTertiary)
+                        Image(systemName: app.biometricInfo.symbol).font(.caption).foregroundStyle(Palette.textTertiary)
                     }
                     .padding(.horizontal, 14).padding(.vertical, 10)
                 }

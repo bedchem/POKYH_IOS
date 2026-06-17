@@ -46,7 +46,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		0EC46C538929D32357D4C096 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; includeInIndex = 1; name = PrivacyInfo.xcprivacy; path = POKYHWidget/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		0EC46C538929D32357D4C096 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xml; name = PrivacyInfo.xcprivacy; path = POKYHWidget/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		31DF7AE94C895F1A2B4E85CB /* OverviewWidget.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = OverviewWidget.swift; path = POKYHWidget/OverviewWidget.swift; sourceTree = "<group>"; };
 		3B9FF29AEE2E9FFA293FDF6B /* GradesWidget.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GradesWidget.swift; path = POKYHWidget/GradesWidget.swift; sourceTree = "<group>"; };
 		6C209605D555946F0B563F68 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
@@ -63,8 +63,6 @@
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		C7DDD8722FDB3FFB003E6EEA /* POKYH */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = POKYH;
 			sourceTree = "<group>";
 		};
