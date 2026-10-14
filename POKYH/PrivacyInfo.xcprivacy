@@ -13,7 +13,7 @@
 	     vom Nutzer gewählten Dienste (WebUntis der Schule, POKYH-Backend) gesendet.
 	     Einzige Erhebung: die Nutzungsstatistik (UsageReporter.swift) — Vordergrundzeit
 	     und Anzahl geöffneter Tabs pro Besuch, an das eigene POKYH-Backend, dem Konto
-	     zugeordnet, nur für zusammengefasste Statistiken, kein Tracking. -->
+	     zugeordnet, für Statistiken und den Support (wer welche Plattform/Version nutzt), kein Tracking. -->
 	<key>NSPrivacyCollectedDataTypes</key>
 	<array>
 		<dict>
