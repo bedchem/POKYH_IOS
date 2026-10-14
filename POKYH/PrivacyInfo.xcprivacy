@@ -10,9 +10,25 @@
 
 	<!-- Keine Datenerhebung durch Dritt-SDKs. Nutzerinhalte (Todos, Erinnerungen,
 	     Anmeldedaten) verbleiben gerätelokal bzw. werden ausschließlich an die
-	     vom Nutzer gewählten Dienste (WebUntis der Schule, POKYH-Backend) gesendet. -->
+	     vom Nutzer gewählten Dienste (WebUntis der Schule, POKYH-Backend) gesendet.
+	     Einzige Erhebung: die Nutzungsstatistik (UsageReporter.swift) — Vordergrundzeit
+	     und Anzahl geöffneter Tabs pro Besuch, an das eigene POKYH-Backend, dem Konto
+	     zugeordnet, nur für zusammengefasste Statistiken, kein Tracking. -->
 	<key>NSPrivacyCollectedDataTypes</key>
-	<array/>
+	<array>
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeProductInteraction</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAnalytics</string>
+			</array>
+		</dict>
+	</array>
 
 	<!-- Required-Reason-APIs: Begründung der genutzten geschützten APIs. -->
 	<key>NSPrivacyAccessedAPITypes</key>

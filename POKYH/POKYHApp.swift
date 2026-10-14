@@ -24,14 +24,21 @@ struct POKYHApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(app)
+                .onAppear {
+                    // Nutzungsstatistik (Vordergrundzeit) — liest nur das angemeldete Konto.
+                    UsageReporter.shared.attach(app)
+                    UsageReporter.shared.appBecameActive()
+                }
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
             case .background:
+                UsageReporter.shared.appEnteredBackground()
                 app.appDidEnterBackground()
                 BackgroundRefresh.schedule()   // periodischen Abruf nachlegen
             case .active:
                 app.appDidBecomeActive()        // Auto-Sperre nach langer Inaktivität
+                UsageReporter.shared.appBecameActive()
             default:
                 break
             }

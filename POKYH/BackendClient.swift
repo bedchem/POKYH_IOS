@@ -136,6 +136,22 @@ final class BackendClient {
         _ = try await request("/users/\(username.urlEncoded)/todos/\(id)", method: "DELETE", token: token)
     }
 
+    // ── Nutzungsstatistik ────────────────────────────────────────────────────
+
+    /// Ein Heartbeat für die Nutzungsstatistik im Admin-Panel (siehe `UsageReporter`):
+    /// Vordergrund-Sekunden und geöffnete Tabs seit dem letzten Ping. Best effort —
+    /// ein Fehler wird verschluckt, er darf die App nie stören.
+    func usagePing(sessionId: String, activeSeconds: Int, screens: Int, appVersion: String, token: String) async {
+        _ = try? await request("/usage/ping", method: "POST", token: token, body: [
+            "sessionId": sessionId,
+            "device": "ios",
+            "client": "app",
+            "appVersion": appVersion,
+            "activeSeconds": activeSeconds,
+            "screens": screens,
+        ])
+    }
+
     // ── Klasse / Erinnerungen ────────────────────────────────────────────────
 
     func myClass(token: String) async throws -> ApiClass? {

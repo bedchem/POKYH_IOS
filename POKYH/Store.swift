@@ -62,7 +62,9 @@ final class AppState: ObservableObject {
     @Published var error: String?
     @Published var showAddAccount = false
     @Published var prefillUsername: String?   // vorausgefüllter Benutzername bei Passwort-Neueingabe
-    @Published var selectedTab: AppTab = .home
+    @Published var selectedTab: AppTab = .home {
+        didSet { if selectedTab != oldValue { UsageReporter.shared.noteScreen() } }
+    }
     @Published var backendStatus: BackendStatus = .unknown
     /// Biometrie-Status (Face ID / Touch ID). Wird off-main ermittelt (siehe init),
     /// startet mit einem günstigen Default → kein Hänger beim ersten Render.
