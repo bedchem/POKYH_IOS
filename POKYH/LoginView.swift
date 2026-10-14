@@ -75,6 +75,17 @@ struct LoginView: View {
                     Text("Melde dich mit deinem WebUntis-Konto an.")
                         .font(.caption).foregroundStyle(Palette.textTertiary)
                         .multilineTextAlignment(.center)
+                    // Die Datenschutzerklärung dort, wo Daten erhoben werden (Art. 13 DSGVO).
+                    VStack(spacing: 4) {
+                        Text("Wie POKYH mit deinen Daten umgeht, steht in der Datenschutzerklärung.")
+                            .font(.caption).foregroundStyle(Palette.textTertiary)
+                            .multilineTextAlignment(.center)
+                        if let url = URL(string: Config.privacyURL) {
+                            Link("Datenschutzerklärung lesen", destination: url)
+                                .font(.caption.weight(.semibold))
+                        }
+                    }
+                    .padding(.horizontal, 24)
                     Spacer()
                 }
                 .centeredForm()

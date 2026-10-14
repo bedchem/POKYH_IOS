@@ -11,7 +11,7 @@ enum Config {
     // ── Rechtliches / Support (App-Store-Pflicht: erreichbare Datenschutz-URL) ──
     // Diese Seiten MÜSSEN online erreichbar sein (sonst App-Store-Ablehnung) und die
     // Datenschutz-URL muss zusätzlich in App Store Connect hinterlegt werden.
-    static let privacyURL = "https://pokyh.com/datenschutz"
+    static let privacyURL = "https://pokyh.com/legal?view=datenschutz"
     static let termsURL   = "https://pokyh.com/nutzungsbedingungen"
     static let supportEmail = "support@pokyh.com"
 
