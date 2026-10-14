@@ -6,15 +6,18 @@ import UIKit
 ///
 /// - Nur angemeldet; ohne POKYH-Konto wird nichts gesendet.
 /// - Pro Besuch eine zufällige ID, nur im Speicher — keine Geräte-ID, nichts auf der Platte.
-/// - Etwa einmal pro Minute im Vordergrund ein Ping mit den Vordergrund-Sekunden und den
-///   geöffneten Tabs seit dem letzten, und ein letzter beim Wechsel in den Hintergrund.
+/// - Sofort beim Öffnen bzw. bei der Anmeldung, dann alle 30 Sekunden im Vordergrund ein Ping
+///   mit den Vordergrund-Sekunden und den geöffneten Tabs seit dem letzten, und ein letzter
+///   beim Wechsel in den Hintergrund.
 /// - War die App länger als 30 Minuten im Hintergrund, beginnt ein neuer Besuch.
 @MainActor
 final class UsageReporter {
     static let shared = UsageReporter()
 
-    private let pingInterval: TimeInterval = 60
+    private let pingInterval: TimeInterval = 30
     private let newVisitAfter: TimeInterval = 30 * 60
+    /// Wie oft im Vordergrund nach einer frischen Anmeldung geschaut wird (billig).
+    private let signInCheckInterval: TimeInterval = 1
 
     /// Liefert das angemeldete Konto; ohne Konto wird nicht gemessen.
     private weak var state: AppState?
@@ -26,6 +29,7 @@ final class UsageReporter {
     private var pendingSeconds: TimeInterval = 0
     private var pendingScreens = 0
     private var timer: Timer?
+    private var signInTimer: Timer?
 
     private init() {}
 
@@ -43,12 +47,25 @@ final class UsageReporter {
         timer = Timer.scheduledTimer(withTimeInterval: pingInterval, repeats: true) { _ in
             Task { @MainActor in UsageReporter.shared.send(final: false) }
         }
+        // Eine Anmeldung (oder ein Kontowechsel) beginnt den Besuch sofort, nicht erst mit
+        // dem nächsten Ping — so erscheint sie gleich im Admin-Panel.
+        signInTimer?.invalidate()
+        signInTimer = Timer.scheduledTimer(withTimeInterval: signInCheckInterval, repeats: true) { _ in
+            Task { @MainActor in UsageReporter.shared.startVisitIfSignedIn() }
+        }
+        send(final: false)
+    }
+
+    private func startVisitIfSignedIn() {
+        guard let account, visitId == nil || visitUid != account.uid else { return }
         send(final: false)
     }
 
     func appEnteredBackground() {
         timer?.invalidate()
         timer = nil
+        signInTimer?.invalidate()
+        signInTimer = nil
         send(final: true)
         foregroundSince = nil
         backgroundedAt = Date()
