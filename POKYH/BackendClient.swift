@@ -152,6 +152,31 @@ final class BackendClient {
         ])
     }
 
+    // ── Datenschutzerklärung (siehe PrivacyNotice.swift) ─────────────────────
+
+    struct PrivacyNotice { let version: String }
+    struct PrivacyStatus { let acknowledgedVersion: String? }
+
+    /// Die aktuelle Version von der Website, die den Text hält. `nil` ohne Netz.
+    func currentPrivacyNotice() async -> PrivacyNotice? {
+        guard let url = URL(string: Config.privacyNoticeURL),
+              let answer = try? await session.data(from: url),
+              (answer.1 as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+        let j = JSON.parse(answer.0)
+        guard let version = j.version.string, !version.isEmpty else { return nil }
+        return PrivacyNotice(version: version)
+    }
+
+    /// Welche Fassung dieses Konto bestätigt hat. `nil` ohne Antwort (dann nichts zeigen).
+    func privacyStatus(token: String) async -> PrivacyStatus? {
+        guard let data = try? await request("/privacy/status", token: token) else { return nil }
+        return PrivacyStatus(acknowledgedVersion: JSON.parse(data).acknowledgedVersion.string)
+    }
+
+    func acknowledgePrivacy(version: String, token: String) async -> Bool {
+        (try? await request("/privacy/acknowledge", method: "POST", token: token, body: ["version": version])) != nil
+    }
+
     // ── Klasse / Erinnerungen ────────────────────────────────────────────────
 
     func myClass(token: String) async throws -> ApiClass? {

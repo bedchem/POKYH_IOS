@@ -13,7 +13,10 @@
 	     vom Nutzer gewählten Dienste (WebUntis der Schule, POKYH-Backend) gesendet.
 	     Einzige Erhebung: die Nutzungsstatistik (UsageReporter.swift) — Vordergrundzeit
 	     und Anzahl geöffneter Tabs pro Besuch, an das eigene POKYH-Backend, dem Konto
-	     zugeordnet, für Statistiken und den Support (wer welche Plattform/Version nutzt), kein Tracking. -->
+	     zugeordnet, für Statistiken und den Support (wer welche Plattform/Version nutzt), kein Tracking.
+	     Dazu die App-Besucher-Statistik: das Backend speichert beim Öffnen der App die
+	     IP-Adresse des Heartbeats und das daraus ermittelte Land (ggf. Region/Stadt) 30 Tage
+	     lang — für Reichweite und Missbrauchserkennung, kein Tracking. -->
 	<key>NSPrivacyCollectedDataTypes</key>
 	<array>
 		<dict>
@@ -26,6 +29,19 @@
 			<key>NSPrivacyCollectedDataTypePurposes</key>
 			<array>
 				<string>NSPrivacyCollectedDataTypePurposeAnalytics</string>
+			</array>
+		</dict>
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeCoarseLocation</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAnalytics</string>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
 			</array>
 		</dict>
 	</array>

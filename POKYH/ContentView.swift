@@ -37,6 +37,15 @@ struct ContentView: View {
             }
         }
         .animation(.spring(response: 0.5, dampingFraction: 0.82), value: app.isOffline)
+        // Datenschutzerklärung: nach der ersten Anmeldung bzw. „aktualisiert" — als Banner
+        // oben, nur angemeldet, bis „Verstanden".
+        .overlay(alignment: .top) {
+            if let notice = app.privacyNotice, app.phase == .authed {
+                PrivacyNoticeBanner(notice: notice)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .animation(.spring(response: 0.5, dampingFraction: 0.82), value: app.privacyNotice)
         // Weiche Überblendung beim Wechsel des Erscheinungsbilds.
         .overlay {
             if themeFade {

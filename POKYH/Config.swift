@@ -12,6 +12,8 @@ enum Config {
     // Diese Seiten MÜSSEN online erreichbar sein (sonst App-Store-Ablehnung) und die
     // Datenschutz-URL muss zusätzlich in App Store Connect hinterlegt werden.
     static let privacyURL = "https://pokyh.com/legal?view=datenschutz"
+    /// Aktuelle Version der Datenschutzerklärung (PrivacyNotice.swift).
+    static let privacyNoticeURL = "https://pokyh.com/api/privacy-notice"
     static let termsURL   = "https://pokyh.com/nutzungsbedingungen"
     static let supportEmail = "support@pokyh.com"
 

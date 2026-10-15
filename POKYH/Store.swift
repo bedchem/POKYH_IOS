@@ -53,7 +53,12 @@ final class AppState: ObservableObject {
     enum Phase { case lock, login, authed }
 
     @Published var phase: Phase
-    @Published var session: UserSession?
+    @Published var session: UserSession? {
+        // Ein anderes Konto (oder abgemeldet): dessen Hinweis gilt nicht mehr.
+        didSet { if session?.username != privacyNotice?.username { privacyNotice = nil } }
+    }
+    /// Die Datenschutzerklärung, die gerade bestätigt werden soll (siehe PrivacyNotice.swift).
+    @Published var privacyNotice: PrivacyNoticePrompt?
     @Published var accounts: [SavedAccount]
     @Published var busy = false
     /// Offline-Modus aktiv (gecachte Daten, Login kam nicht durch).
@@ -135,7 +140,7 @@ final class AppState: ObservableObject {
     // ── Neuer / manueller Login ──────────────────────────────────────────────
 
     func loginNew(username: String, password: String, save: Bool) async {
-        await performLogin(username: username, password: password, save: save)
+        await performLogin(username: username, password: password, save: save, fresh: true)
     }
 
     /// Zeit, nach der ohne Login-Antwort (kein Internet) in den Offline-Modus
@@ -145,7 +150,8 @@ final class AppState: ObservableObject {
     private enum LoginOutcome { case done(UserSession), timedOut, failed(Error) }
     private enum RaceResult: Sendable { case finished, timedOut }
 
-    private func performLogin(username: String, password: String, save: Bool, allowOffline: Bool = false) async {
+    /// `fresh`: Zugangsdaten gerade eingegeben, nicht aus dem Schlüsselbund (erste Anmeldung).
+    private func performLogin(username: String, password: String, save: Bool, allowOffline: Bool = false, fresh: Bool = false) async {
         // Wurde der Login aus dem „Konto hinzufügen“/„Passwort nötig“-Sheet gestartet?
         // (Dann müssen wir den Sheet-Wechsel sorgfältig sequenzieren – siehe finalize.)
         let viaSheet = showAddAccount
@@ -174,7 +180,7 @@ final class AppState: ObservableObject {
 
         switch outcome {
         case .done(let s):
-            await finalize(s, save: save, password: password, viaSheet: viaSheet)
+            await finalize(s, save: save, password: password, viaSheet: viaSheet, fresh: fresh)
             busy = false; statusText = ""
         case .timedOut:
             // Kein Internet rechtzeitig → Offline-Modus aus dem Snapshot, Login läuft
@@ -253,7 +259,7 @@ final class AppState: ObservableObject {
 
     /// Abschluss eines erfolgreichen Online-Logins: Konto sichern, Offline-Snapshot
     /// persistieren, Sitzung übernehmen (mit sorgfältiger Sheet-Sequenzierung).
-    private func finalize(_ s: UserSession, save: Bool, password: String, viaSheet: Bool) async {
+    private func finalize(_ s: UserSession, save: Bool, password: String, viaSheet: Bool, fresh: Bool) async {
         // Konto + Passwort sichern, BEVOR die Session getauscht wird, damit es
         // auch dann lokal gespeichert ist, wenn der View-Wechsel dazwischenkommt.
         if save {
@@ -287,6 +293,7 @@ final class AppState: ObservableObject {
         showAddAccount = false
         isOffline = false
         onAuthenticated()
+        Task { await checkPrivacyNotice(fresh: fresh) }
     }
 
     /// Wechselt in den Offline-Modus: gecachte (token-lose) Sitzung anzeigen.
@@ -316,6 +323,7 @@ final class AppState: ObservableObject {
             isOffline = false
         }
         onAuthenticated()
+        Task { await checkPrivacyNotice(fresh: false) }
     }
 
     // ── Offline-Helfer ────────────────────────────────────────────────────────
