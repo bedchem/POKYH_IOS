@@ -81,3 +81,32 @@ private struct ReplyHandler: @unchecked Sendable {
         self.call = call
     }
 }
+
+/// What the rest of the app calls: sign-in and sign-out in AppState end up on the watch.
+@MainActor
+enum WatchSync {
+    private static let accounts = AccountStore(store: KeychainStore(service: AppConfig.current.appBundleID))
+    private static let link = WatchLink(store: accounts)
+
+    static func start() {
+        link.activate()
+    }
+
+    static func signedIn(username: String, displayName: String, password: String) {
+        let school = PokyhCore.School(
+            loginName: Config.school,
+            server: Bundle.main.object(forInfoDictionaryKey: "POKYHDefaultUntisServer") as? String ?? "",
+            name: Bundle.main.object(forInfoDictionaryKey: "POKYHDefaultSchoolName") as? String ?? Config.school
+        )
+        let account = StoredAccount(username: username, displayName: displayName, school: school, secret: password)
+        try? accounts.save(account)
+        link.signedIn(account)
+    }
+
+    /// Only if it's the account the watch has; switching between saved accounts doesn't count.
+    static func signedOut(username: String? = nil) {
+        if let username, accounts.load()?.username != username { return }
+        try? accounts.clear()
+        link.signedOut()
+    }
+}

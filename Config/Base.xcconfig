@@ -12,7 +12,12 @@ POKYH_BACKGROUND_TASK = $(POKYH_BUNDLE_ID).refresh
 // "//" starts a comment in xcconfig, hence the $() in the middle.
 POKYH_BACKEND_URL = https:/$()/api.pokyh.com
 POKYH_WEBSITE_URL = https:/$()/pokyh.com
-POKYH_SUPPORT_EMAIL = contact@pokyh.com
+POKYH_SUPPORT_EMAIL = support@pokyh.com
+
+// The school the app signs in to until the school search is on iOS.
+POKYH_DEFAULT_SCHOOL = lbs-brixen
+POKYH_DEFAULT_UNTIS_SERVER = lbs-brixen.webuntis.com
+POKYH_DEFAULT_SCHOOL_NAME = LBS Brixen
 
 // Filled in by Secrets.xcconfig.
 POKYH_API_KEY =

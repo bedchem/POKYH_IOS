@@ -39,6 +39,12 @@
 	<string>$(POKYH_BACKEND_URL)</string>
 	<key>POKYHBackgroundTask</key>
 	<string>$(POKYH_BACKGROUND_TASK)</string>
+	<key>POKYHDefaultSchool</key>
+	<string>$(POKYH_DEFAULT_SCHOOL)</string>
+	<key>POKYHDefaultSchoolName</key>
+	<string>$(POKYH_DEFAULT_SCHOOL_NAME)</string>
+	<key>POKYHDefaultUntisServer</key>
+	<string>$(POKYH_DEFAULT_UNTIS_SERVER)</string>
 	<key>POKYHKeychainGroup</key>
 	<string>$(POKYH_KEYCHAIN_GROUP)</string>
 	<key>POKYHServerKey</key>

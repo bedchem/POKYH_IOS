@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- POKYH sammelt keine Daten für Tracking und nutzt keine Tracking-Domains. -->
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+
+	<!-- Keine Datenerhebung durch Dritt-SDKs. Nutzerinhalte (Todos, Erinnerungen,
+	     Anmeldedaten) verbleiben gerätelokal bzw. werden ausschließlich an die
+	     vom Nutzer gewählten Dienste (WebUntis der Schule, POKYH-Backend) gesendet.
+	     Einzige Erhebung: die Nutzungsstatistik (UsageReporter.swift) — Vordergrundzeit
+	     und Anzahl geöffneter Tabs pro Besuch, an das eigene POKYH-Backend, dem Konto
+	     zugeordnet, für Statistiken und den Support (wer welche Plattform/Version nutzt), kein Tracking.
+	     Dazu die App-Besucher-Statistik: das Backend speichert beim Öffnen der App die
+	     IP-Adresse des Heartbeats und das daraus ermittelte Land (ggf. Region/Stadt) 30 Tage
+	     lang — für Reichweite und Missbrauchserkennung, kein Tracking. -->
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array>
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeProductInteraction</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAnalytics</string>
+			</array>
+		</dict>
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeCoarseLocation</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAnalytics</string>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+	</array>
+
+	<!-- Required-Reason-APIs: Begründung der genutzten geschützten APIs. -->
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<dict>
+			<!-- UserDefaults: nur App-eigene Einstellungen (Theme, Konto-Metadaten,
+			     Standard-Konto). Grund CA92.1 = Zugriff auf vom selben App-Container
+			     gespeicherte Informationen. -->
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>CA92.1</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

@@ -7,28 +7,78 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0440D0B8E5F835303139C17E /* Crypto.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD94457031D3AE583E573711 /* Crypto.swift */; };
+		0D364601D444CB93AA678E4E /* DiskCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4104B5589EF5AE43F4AA0AC2 /* DiskCache.swift */; };
+		16302DE620A04CC296C8C79B /* ClassView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFA3531750F37C1CCCEB5999 /* ClassView.swift */; };
 		18E95C6D7007CD448039E053 /* POKYHApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B8E1F1197BBE45BBDA07E27 /* POKYHApp.swift */; };
 		1C262F0513E7030D82AD02B4 /* PokyhCore in Frameworks */ = {isa = PBXBuildFile; productRef = 00974F003D43EE9B3F3E1E9B /* PokyhCore */; };
 		1F4FFB2BBD6333B0825DE5B8 /* POKYHWatchWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = C02C15B4B0C62510189889A8 /* POKYHWatchWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		2096BA3B5C48D8C592AA663E /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA3BBFA4074F7DC0DDFC8DA2 /* Models.swift */; };
+		258CBAA8373B26121122C63B /* Security.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47E46E0EBFC11695851E623E /* Security.swift */; };
+		29CDC4F876664803042F3DE9 /* Cache.swift in Sources */ = {isa = PBXBuildFile; fileRef = B75B7C4739D3CB4C069C2F57 /* Cache.swift */; };
+		2A94E022D5B1A29F0EDA35D9 /* PrivacyNotice.swift in Sources */ = {isa = PBXBuildFile; fileRef = AACB0CBF7C256350071B89D6 /* PrivacyNotice.swift */; };
+		2C9F54AFA84C5A9997164AC5 /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D66E7931474A73F3994014F /* LoginView.swift */; };
+		309CA5F1A7C7A5CFB20C0D2C /* RemindersView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2B5F08F57F7C5A6F9F991D0 /* RemindersView.swift */; };
 		35FD9E9D26DFCEBEB0B0B4B3 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 138284BCEE8C2E4997D6D31A /* SwiftUI.framework */; };
+		3CBC3AD2F36EE5E8B0C0C2ED /* TodayScheduleWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ADEAEE65F207ED978C2B78C /* TodayScheduleWidget.swift */; };
+		4137BAAD7198FDF507A28E6D /* NextLessonWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7EB236FAC0D855B630B91D64 /* NextLessonWidget.swift */; };
+		4871B933DECD174EB303CA78 /* LessonLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D211009097448BE20A67419 /* LessonLiveActivity.swift */; };
 		4B242D83C4AC7434CBB9CD6F /* PokyhDesign in Frameworks */ = {isa = PBXBuildFile; productRef = FB9A73FB023537F43F8183CC /* PokyhDesign */; };
 		4BF56390559479D2AE241545 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = E7B6F3A89A0290D0B8D019AC /* Assets.xcassets */; };
+		4F2B790AA7C82AF7F3BEA88E /* GradesWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 830D16C174DDBE4C608A332D /* GradesWidget.swift */; };
 		502BF811C60F5A1F5BC0EA8F /* WatchLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A67C65CFD7137A7E67A7A29 /* WatchLink.swift */; };
+		51C8FD20CCF8D807358FBE72 /* OverviewWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3CA33D736BD10F7C82661D0 /* OverviewWidget.swift */; };
+		53090F114DDAA279A7CE0225 /* GradesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87CAD3F19B7A1553B4371E56 /* GradesView.swift */; };
 		54221973AE1B6B03D5F9B187 /* PokyhDesign in Frameworks */ = {isa = PBXBuildFile; productRef = 12BA219DBFD94A6123322645 /* PokyhDesign */; };
-		571E79A91FC7B47153B28C1B /* WidgetsBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 703CD77CDE40395847111661 /* WidgetsBundle.swift */; };
+		548A75D6D19219EBAC7BA7CB /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = E14E4F36E4F3E864D2B16B64 /* PrivacyInfo.xcprivacy */; };
 		5A4B615D38291272586211C3 /* PokyhDesign in Frameworks */ = {isa = PBXBuildFile; productRef = 611C7F86F7C07B6849B3B08C /* PokyhDesign */; };
+		5D0A936BB8933D9DD3135A87 /* LiveActivityManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91B623D1932F26DE97A6EA64 /* LiveActivityManager.swift */; };
+		60A3DAFA7B0A4A930C460A36 /* MessagesWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A60736CF68AC5A4B87E6119 /* MessagesWidget.swift */; };
+		66094A2C4413B520F5910F2B /* UIComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8F2F70D29CE7500C3435CB0 /* UIComponents.swift */; };
+		698E89FE8C5CC9EC1A2502BA /* SharedKit.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4FB6F899C5834EF3CD9AD47 /* SharedKit.swift */; };
+		716DD4C31F67E1B8323EA72E /* UntisClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = C30576B2FBDA53BDA092CDD8 /* UntisClient.swift */; };
+		7A5B43366FA0305E6D7E6BAF /* RootTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E532D4CB471A9445BA531E6A /* RootTabView.swift */; };
+		7BAF56FD8582907A955C72CD /* ImageCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ED5F62FCC953CC2EB5A676E /* ImageCache.swift */; };
+		7F66BFE564FF93B974575A00 /* CommentSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F948362F734D8D10CFEC596 /* CommentSection.swift */; };
 		8614850B3E2ABE8DB44E6819 /* PokyhDesign in Frameworks */ = {isa = PBXBuildFile; productRef = CF32FC30E74961433AECF8C3 /* PokyhDesign */; };
 		8A083F106EDD49DE0ABBA40C /* WatchWidgetsBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = B19FA6C1BA82F54AD3AC3626 /* WatchWidgetsBundle.swift */; };
+		8AF2A19D24D44777A9EFC4D1 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2098E21C6163356040E6DA00 /* Theme.swift */; };
+		8B74641BC9A33408DAB31365 /* BackendClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36E60D06E6BD735BBF715F67 /* BackendClient.swift */; };
 		8E96DCC1843ED4B4704B710C /* PokyhCore in Frameworks */ = {isa = PBXBuildFile; productRef = 7C049CBBBCDFC48BEE8FE94F /* PokyhCore */; };
+		96B618210F056D129DC4388F /* ICSExport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7096DD3F08136FBACD321C8F /* ICSExport.swift */; };
+		9A1CC64AC47D2A0A5093816B /* ProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8ABE32F38E18F8F371D8D2D8 /* ProfileView.swift */; };
+		A2185F70214014233C7AEF7F /* TimetableView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9305591D188CF40D2D59119 /* TimetableView.swift */; };
+		A8838209FC294592BEB799D2 /* SchoolHubView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 295049F8C53D3B9647243EBD /* SchoolHubView.swift */; };
 		AB9DF364CB729DF821C9146D /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F01FDC7D24E93DB3087D8361 /* WidgetKit.framework */; };
+		AC46D19197F0CD4B0F5AD84A /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CD55719B3D1A4FEF120A7D7 /* HomeView.swift */; };
+		AECB7F2F92E5A28DE2EF0E14 /* JSON.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26A5A6FD4632BE2D5152457B /* JSON.swift */; };
 		AFCD238DA7F925587585E672 /* POKYHWatch.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = C4229A96A430D9EF85F368AF /* POKYHWatch.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		B0AAA3D208D03C6FD3987FD5 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 0DDCD7171E2D6313CA1C9529 /* PrivacyInfo.xcprivacy */; };
 		B3E42BA4F0211F878E52A7A7 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 138284BCEE8C2E4997D6D31A /* SwiftUI.framework */; };
 		B6F377E0B1148E2A0634C7A4 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AA09AE18D8F6D53CCBB8E194 /* Assets.xcassets */; };
 		B994199EEEE23B33366D1958 /* PokyhCore in Frameworks */ = {isa = PBXBuildFile; productRef = 836E82BBFADB5CDC5C0F8047 /* PokyhCore */; };
+		BCB8D006687F2AE3711F7CDA /* POKYHWidgetBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 442EBF6595C5618B8EF573F4 /* POKYHWidgetBundle.swift */; };
+		C291D53FB5E6BFFC7BB04B88 /* Background.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BEF6AB952F1BDB634C2CB4D /* Background.swift */; };
+		C3942C6FB342737B2A152D80 /* DateHelpers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 333291FD93CD3E4D4C508225 /* DateHelpers.swift */; };
+		C696BDDE379A8F476ED18FFB /* MensaView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C1B6D6920742BC3CA3DCCAD /* MensaView.swift */; };
 		C9E425E3CF9C891AC1EF6224 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F01FDC7D24E93DB3087D8361 /* WidgetKit.framework */; };
+		CF26250A3744D9EFEC411323 /* MessagesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2CC0B25C4A8169F5B361398 /* MessagesView.swift */; };
+		D258C795767D4D798D66D81B /* LockView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D673189980C353C0F98F905 /* LockView.swift */; };
+		D69C6CD2DBDB08AE155B8349 /* WidgetBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F877C341273A616D090EC6D /* WidgetBridge.swift */; };
+		D983AEA121F7A5F78529DF4F /* SharedKit.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4FB6F899C5834EF3CD9AD47 /* SharedKit.swift */; };
+		DA6E04A0DD729D77E3B088B6 /* TodosView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1777648FEB04305143836A6C /* TodosView.swift */; };
+		DBE6BF85059EBA18D4E62A59 /* GradeSubjectView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 943C5EF47E582F856AE51F47 /* GradeSubjectView.swift */; };
+		E0B9C8953584213F72F75320 /* UsageReporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AC3FEA6CA42E9537A8F3DC3 /* UsageReporter.swift */; };
+		E33FFE0B1526F928EDF77682 /* AbsencesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 500C75B1B06F7A9CD27A9D7C /* AbsencesView.swift */; };
+		E68CC537E8010B5013525C1A /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA92B0E13EC6C39A34387B30 /* ContentView.swift */; };
+		EC22631AB184A0290389F1ED /* Store.swift in Sources */ = {isa = PBXBuildFile; fileRef = 832017DFF7AB67820BD6B830 /* Store.swift */; };
+		EC355BB31091C13900D60EE1 /* GradeMath.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1DEBBB75442FE0E3759FD9F6 /* GradeMath.swift */; };
+		EC4A6B1A3FB8961E3A7467D6 /* ClassregEventsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E2D97E0B4E5D3C3C36BCE43 /* ClassregEventsView.swift */; };
 		ED1DB5ED144C95DE807FF56A /* WatchSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = B63818320FC32D156E160721 /* WatchSession.swift */; };
+		EE3F3EBC0003C7B3F4C083B7 /* Notifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BFC92D8AA0E250C9F8DA7A9 /* Notifications.swift */; };
 		F64F6C72D5E094D1E78D8317 /* WatchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9573FB8B651BA48F66F4CF26 /* WatchApp.swift */; };
 		F67BC5E9E6FFE63440ED1794 /* PokyhCore in Frameworks */ = {isa = PBXBuildFile; productRef = 108D37B9FE31AAB95E218D85 /* PokyhCore */; };
+		FAC9D1FBFE029A25AB5B181D /* Config.swift in Sources */ = {isa = PBXBuildFile; fileRef = 748FE3934F5D7205ECB907B1 /* Config.swift */; };
 		FAD483D7D1D3E77882FF0821 /* POKYHWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 32797CDE11EDE3BC8C9EA7DF /* POKYHWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
@@ -93,30 +143,79 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		0D66E7931474A73F3994014F /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
+		0DDCD7171E2D6313CA1C9529 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		138284BCEE8C2E4997D6D31A /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
+		1777648FEB04305143836A6C /* TodosView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodosView.swift; sourceTree = "<group>"; };
+		1D673189980C353C0F98F905 /* LockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LockView.swift; sourceTree = "<group>"; };
+		1DEBBB75442FE0E3759FD9F6 /* GradeMath.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GradeMath.swift; sourceTree = "<group>"; };
+		2098E21C6163356040E6DA00 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
+		26A5A6FD4632BE2D5152457B /* JSON.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSON.swift; sourceTree = "<group>"; };
+		295049F8C53D3B9647243EBD /* SchoolHubView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SchoolHubView.swift; sourceTree = "<group>"; };
+		2AC3FEA6CA42E9537A8F3DC3 /* UsageReporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageReporter.swift; sourceTree = "<group>"; };
+		2BEF6AB952F1BDB634C2CB4D /* Background.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Background.swift; sourceTree = "<group>"; };
+		2C1B6D6920742BC3CA3DCCAD /* MensaView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MensaView.swift; sourceTree = "<group>"; };
 		32797CDE11EDE3BC8C9EA7DF /* POKYHWidgets.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = POKYHWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		333291FD93CD3E4D4C508225 /* DateHelpers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DateHelpers.swift; sourceTree = "<group>"; };
 		34506CC908C4120ABB0EE95E /* POKYH.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = POKYH.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		36E60D06E6BD735BBF715F67 /* BackendClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendClient.swift; sourceTree = "<group>"; };
 		3B8E1F1197BBE45BBDA07E27 /* POKYHApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = POKYHApp.swift; sourceTree = "<group>"; };
+		4104B5589EF5AE43F4AA0AC2 /* DiskCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiskCache.swift; sourceTree = "<group>"; };
+		442EBF6595C5618B8EF573F4 /* POKYHWidgetBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = POKYHWidgetBundle.swift; sourceTree = "<group>"; };
+		47E46E0EBFC11695851E623E /* Security.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Security.swift; sourceTree = "<group>"; };
+		4A60736CF68AC5A4B87E6119 /* MessagesWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessagesWidget.swift; sourceTree = "<group>"; };
 		4B6B81055F93A633318EC42E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		500C75B1B06F7A9CD27A9D7C /* AbsencesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AbsencesView.swift; sourceTree = "<group>"; };
 		510B97EDCC7D872B0EBF8E5C /* Widgets.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Widgets.entitlements; sourceTree = "<group>"; };
 		51994F3891F41BB39B110962 /* Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Debug.xcconfig; sourceTree = "<group>"; };
 		5A67C65CFD7137A7E67A7A29 /* WatchLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchLink.swift; sourceTree = "<group>"; };
 		5D41C038AFCB5256E11864DA /* Watch.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Watch.entitlements; sourceTree = "<group>"; };
-		703CD77CDE40395847111661 /* WidgetsBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetsBundle.swift; sourceTree = "<group>"; };
+		5ED5F62FCC953CC2EB5A676E /* ImageCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageCache.swift; sourceTree = "<group>"; };
+		6ADEAEE65F207ED978C2B78C /* TodayScheduleWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayScheduleWidget.swift; sourceTree = "<group>"; };
+		6BFC92D8AA0E250C9F8DA7A9 /* Notifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Notifications.swift; sourceTree = "<group>"; };
+		6D211009097448BE20A67419 /* LessonLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LessonLiveActivity.swift; sourceTree = "<group>"; };
+		6E2D97E0B4E5D3C3C36BCE43 /* ClassregEventsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClassregEventsView.swift; sourceTree = "<group>"; };
+		7096DD3F08136FBACD321C8F /* ICSExport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ICSExport.swift; sourceTree = "<group>"; };
+		748FE3934F5D7205ECB907B1 /* Config.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Config.swift; sourceTree = "<group>"; };
+		7CD55719B3D1A4FEF120A7D7 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
+		7EB236FAC0D855B630B91D64 /* NextLessonWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NextLessonWidget.swift; sourceTree = "<group>"; };
+		7F948362F734D8D10CFEC596 /* CommentSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommentSection.swift; sourceTree = "<group>"; };
+		830D16C174DDBE4C608A332D /* GradesWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GradesWidget.swift; sourceTree = "<group>"; };
+		832017DFF7AB67820BD6B830 /* Store.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Store.swift; sourceTree = "<group>"; };
+		87CAD3F19B7A1553B4371E56 /* GradesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GradesView.swift; sourceTree = "<group>"; };
+		8ABE32F38E18F8F371D8D2D8 /* ProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileView.swift; sourceTree = "<group>"; };
+		91B623D1932F26DE97A6EA64 /* LiveActivityManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveActivityManager.swift; sourceTree = "<group>"; };
 		92005C39273B9EC00D19CBBA /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Release.xcconfig; sourceTree = "<group>"; };
+		943C5EF47E582F856AE51F47 /* GradeSubjectView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GradeSubjectView.swift; sourceTree = "<group>"; };
 		9573FB8B651BA48F66F4CF26 /* WatchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchApp.swift; sourceTree = "<group>"; };
 		977F269DFF3715BEBFC28A7F /* POKYH.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = POKYH.entitlements; sourceTree = "<group>"; };
 		97A085FFE8B5C7FE86EFF94D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		9F877C341273A616D090EC6D /* WidgetBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetBridge.swift; sourceTree = "<group>"; };
 		AA09AE18D8F6D53CCBB8E194 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		AA92B0E13EC6C39A34387B30 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		AACB0CBF7C256350071B89D6 /* PrivacyNotice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivacyNotice.swift; sourceTree = "<group>"; };
+		AFA3531750F37C1CCCEB5999 /* ClassView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClassView.swift; sourceTree = "<group>"; };
 		B19FA6C1BA82F54AD3AC3626 /* WatchWidgetsBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchWidgetsBundle.swift; sourceTree = "<group>"; };
+		B2B5F08F57F7C5A6F9F991D0 /* RemindersView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemindersView.swift; sourceTree = "<group>"; };
+		B4FB6F899C5834EF3CD9AD47 /* SharedKit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedKit.swift; sourceTree = "<group>"; };
 		B63818320FC32D156E160721 /* WatchSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchSession.swift; sourceTree = "<group>"; };
+		B75B7C4739D3CB4C069C2F57 /* Cache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Cache.swift; sourceTree = "<group>"; };
 		BA1B9E70208BF0AD50C364D0 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		C02C15B4B0C62510189889A8 /* POKYHWatchWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = POKYHWatchWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		C30576B2FBDA53BDA092CDD8 /* UntisClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UntisClient.swift; sourceTree = "<group>"; };
+		C3CA33D736BD10F7C82661D0 /* OverviewWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverviewWidget.swift; sourceTree = "<group>"; };
 		C4229A96A430D9EF85F368AF /* POKYHWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = POKYHWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		C8F2F70D29CE7500C3435CB0 /* UIComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIComponents.swift; sourceTree = "<group>"; };
 		D3B3739B6626403A09E5D812 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		D9305591D188CF40D2D59119 /* TimetableView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimetableView.swift; sourceTree = "<group>"; };
+		DA3BBFA4074F7DC0DDFC8DA2 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		E14E4F36E4F3E864D2B16B64 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		E532D4CB471A9445BA531E6A /* RootTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootTabView.swift; sourceTree = "<group>"; };
 		E7B6F3A89A0290D0B8D019AC /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		F01FDC7D24E93DB3087D8361 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
+		F2CC0B25C4A8169F5B361398 /* MessagesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessagesView.swift; sourceTree = "<group>"; };
 		F950E635FE83EB14AF664CAB /* PokyhKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = PokyhKit; path = Packages/PokyhKit; sourceTree = SOURCE_ROOT; };
+		FD94457031D3AE583E573711 /* Crypto.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Crypto.swift; sourceTree = "<group>"; };
 		FDFB1F95CEC510BB82576B66 /* WatchWidgets.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = WatchWidgets.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -177,9 +276,16 @@
 		2F51B28FCEA25A10AFFB523C /* Widgets */ = {
 			isa = PBXGroup;
 			children = (
+				830D16C174DDBE4C608A332D /* GradesWidget.swift */,
 				97A085FFE8B5C7FE86EFF94D /* Info.plist */,
+				6D211009097448BE20A67419 /* LessonLiveActivity.swift */,
+				4A60736CF68AC5A4B87E6119 /* MessagesWidget.swift */,
+				7EB236FAC0D855B630B91D64 /* NextLessonWidget.swift */,
+				C3CA33D736BD10F7C82661D0 /* OverviewWidget.swift */,
+				442EBF6595C5618B8EF573F4 /* POKYHWidgetBundle.swift */,
+				E14E4F36E4F3E864D2B16B64 /* PrivacyInfo.xcprivacy */,
+				6ADEAEE65F207ED978C2B78C /* TodayScheduleWidget.swift */,
 				510B97EDCC7D872B0EBF8E5C /* Widgets.entitlements */,
-				703CD77CDE40395847111661 /* WidgetsBundle.swift */,
 			);
 			path = Widgets;
 			sourceTree = "<group>";
@@ -190,6 +296,7 @@
 				EAB36CD5C0D0D4BA9205AF07 /* App */,
 				B013C5208EDDD023A8A23EC8 /* Config */,
 				3FC1F5E397B60318BF96CC4D /* Packages */,
+				A0846609D977A39AD07BE928 /* Shared */,
 				587FDB06E01541C38DDC04B9 /* Watch */,
 				1205C509CAE549FDAFE2C5C9 /* WatchWidgets */,
 				2F51B28FCEA25A10AFFB523C /* Widgets */,
@@ -246,6 +353,14 @@
 			name = Frameworks;
 			sourceTree = "<group>";
 		};
+		A0846609D977A39AD07BE928 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				B4FB6F899C5834EF3CD9AD47 /* SharedKit.swift */,
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
 		B013C5208EDDD023A8A23EC8 /* Config */ = {
 			isa = PBXGroup;
 			children = (
@@ -267,10 +382,51 @@
 			isa = PBXGroup;
 			children = (
 				3893845FCAFFD140BA310A3E /* Resources */,
+				500C75B1B06F7A9CD27A9D7C /* AbsencesView.swift */,
+				36E60D06E6BD735BBF715F67 /* BackendClient.swift */,
+				2BEF6AB952F1BDB634C2CB4D /* Background.swift */,
+				B75B7C4739D3CB4C069C2F57 /* Cache.swift */,
+				6E2D97E0B4E5D3C3C36BCE43 /* ClassregEventsView.swift */,
+				AFA3531750F37C1CCCEB5999 /* ClassView.swift */,
+				7F948362F734D8D10CFEC596 /* CommentSection.swift */,
+				748FE3934F5D7205ECB907B1 /* Config.swift */,
+				AA92B0E13EC6C39A34387B30 /* ContentView.swift */,
+				FD94457031D3AE583E573711 /* Crypto.swift */,
+				333291FD93CD3E4D4C508225 /* DateHelpers.swift */,
+				4104B5589EF5AE43F4AA0AC2 /* DiskCache.swift */,
+				1DEBBB75442FE0E3759FD9F6 /* GradeMath.swift */,
+				943C5EF47E582F856AE51F47 /* GradeSubjectView.swift */,
+				87CAD3F19B7A1553B4371E56 /* GradesView.swift */,
+				7CD55719B3D1A4FEF120A7D7 /* HomeView.swift */,
+				7096DD3F08136FBACD321C8F /* ICSExport.swift */,
+				5ED5F62FCC953CC2EB5A676E /* ImageCache.swift */,
 				4B6B81055F93A633318EC42E /* Info.plist */,
+				26A5A6FD4632BE2D5152457B /* JSON.swift */,
+				91B623D1932F26DE97A6EA64 /* LiveActivityManager.swift */,
+				1D673189980C353C0F98F905 /* LockView.swift */,
+				0D66E7931474A73F3994014F /* LoginView.swift */,
+				2C1B6D6920742BC3CA3DCCAD /* MensaView.swift */,
+				F2CC0B25C4A8169F5B361398 /* MessagesView.swift */,
+				DA3BBFA4074F7DC0DDFC8DA2 /* Models.swift */,
+				6BFC92D8AA0E250C9F8DA7A9 /* Notifications.swift */,
 				977F269DFF3715BEBFC28A7F /* POKYH.entitlements */,
 				3B8E1F1197BBE45BBDA07E27 /* POKYHApp.swift */,
+				0DDCD7171E2D6313CA1C9529 /* PrivacyInfo.xcprivacy */,
+				AACB0CBF7C256350071B89D6 /* PrivacyNotice.swift */,
+				8ABE32F38E18F8F371D8D2D8 /* ProfileView.swift */,
+				B2B5F08F57F7C5A6F9F991D0 /* RemindersView.swift */,
+				E532D4CB471A9445BA531E6A /* RootTabView.swift */,
+				295049F8C53D3B9647243EBD /* SchoolHubView.swift */,
+				47E46E0EBFC11695851E623E /* Security.swift */,
+				832017DFF7AB67820BD6B830 /* Store.swift */,
+				2098E21C6163356040E6DA00 /* Theme.swift */,
+				D9305591D188CF40D2D59119 /* TimetableView.swift */,
+				1777648FEB04305143836A6C /* TodosView.swift */,
+				C8F2F70D29CE7500C3435CB0 /* UIComponents.swift */,
+				C30576B2FBDA53BDA092CDD8 /* UntisClient.swift */,
+				2AC3FEA6CA42E9537A8F3DC3 /* UsageReporter.swift */,
 				5A67C65CFD7137A7E67A7A29 /* WatchLink.swift */,
+				9F877C341273A616D090EC6D /* WidgetBridge.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -303,6 +459,7 @@
 			buildConfigurationList = 4DBDDD67E28206D5C3326C56 /* Build configuration list for PBXNativeTarget "POKYHWidgets" */;
 			buildPhases = (
 				3958C8E5F287CC6613CD74B6 /* Sources */,
+				858E135FB6B97081954CCD20 /* Resources */,
 				3158B5136E714CCF86763207 /* Frameworks */,
 			);
 			buildRules = (
@@ -421,6 +578,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				4BF56390559479D2AE241545 /* Assets.xcassets in Resources */,
+				B0AAA3D208D03C6FD3987FD5 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -429,6 +587,14 @@
 			buildActionMask = 2147483647;
 			files = (
 				B6F377E0B1148E2A0634C7A4 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		858E135FB6B97081954CCD20 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				548A75D6D19219EBAC7BA7CB /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -461,7 +627,14 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				571E79A91FC7B47153B28C1B /* WidgetsBundle.swift in Sources */,
+				4F2B790AA7C82AF7F3BEA88E /* GradesWidget.swift in Sources */,
+				4871B933DECD174EB303CA78 /* LessonLiveActivity.swift in Sources */,
+				60A3DAFA7B0A4A930C460A36 /* MessagesWidget.swift in Sources */,
+				4137BAAD7198FDF507A28E6D /* NextLessonWidget.swift in Sources */,
+				51C8FD20CCF8D807358FBE72 /* OverviewWidget.swift in Sources */,
+				BCB8D006687F2AE3711F7CDA /* POKYHWidgetBundle.swift in Sources */,
+				D983AEA121F7A5F78529DF4F /* SharedKit.swift in Sources */,
+				3CBC3AD2F36EE5E8B0C0C2ED /* TodayScheduleWidget.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -486,8 +659,49 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E33FFE0B1526F928EDF77682 /* AbsencesView.swift in Sources */,
+				8B74641BC9A33408DAB31365 /* BackendClient.swift in Sources */,
+				C291D53FB5E6BFFC7BB04B88 /* Background.swift in Sources */,
+				29CDC4F876664803042F3DE9 /* Cache.swift in Sources */,
+				16302DE620A04CC296C8C79B /* ClassView.swift in Sources */,
+				EC4A6B1A3FB8961E3A7467D6 /* ClassregEventsView.swift in Sources */,
+				7F66BFE564FF93B974575A00 /* CommentSection.swift in Sources */,
+				FAC9D1FBFE029A25AB5B181D /* Config.swift in Sources */,
+				E68CC537E8010B5013525C1A /* ContentView.swift in Sources */,
+				0440D0B8E5F835303139C17E /* Crypto.swift in Sources */,
+				C3942C6FB342737B2A152D80 /* DateHelpers.swift in Sources */,
+				0D364601D444CB93AA678E4E /* DiskCache.swift in Sources */,
+				EC355BB31091C13900D60EE1 /* GradeMath.swift in Sources */,
+				DBE6BF85059EBA18D4E62A59 /* GradeSubjectView.swift in Sources */,
+				53090F114DDAA279A7CE0225 /* GradesView.swift in Sources */,
+				AC46D19197F0CD4B0F5AD84A /* HomeView.swift in Sources */,
+				96B618210F056D129DC4388F /* ICSExport.swift in Sources */,
+				7BAF56FD8582907A955C72CD /* ImageCache.swift in Sources */,
+				AECB7F2F92E5A28DE2EF0E14 /* JSON.swift in Sources */,
+				5D0A936BB8933D9DD3135A87 /* LiveActivityManager.swift in Sources */,
+				D258C795767D4D798D66D81B /* LockView.swift in Sources */,
+				2C9F54AFA84C5A9997164AC5 /* LoginView.swift in Sources */,
+				C696BDDE379A8F476ED18FFB /* MensaView.swift in Sources */,
+				CF26250A3744D9EFEC411323 /* MessagesView.swift in Sources */,
+				2096BA3B5C48D8C592AA663E /* Models.swift in Sources */,
+				EE3F3EBC0003C7B3F4C083B7 /* Notifications.swift in Sources */,
 				18E95C6D7007CD448039E053 /* POKYHApp.swift in Sources */,
+				2A94E022D5B1A29F0EDA35D9 /* PrivacyNotice.swift in Sources */,
+				9A1CC64AC47D2A0A5093816B /* ProfileView.swift in Sources */,
+				309CA5F1A7C7A5CFB20C0D2C /* RemindersView.swift in Sources */,
+				7A5B43366FA0305E6D7E6BAF /* RootTabView.swift in Sources */,
+				A8838209FC294592BEB799D2 /* SchoolHubView.swift in Sources */,
+				258CBAA8373B26121122C63B /* Security.swift in Sources */,
+				698E89FE8C5CC9EC1A2502BA /* SharedKit.swift in Sources */,
+				EC22631AB184A0290389F1ED /* Store.swift in Sources */,
+				8AF2A19D24D44777A9EFC4D1 /* Theme.swift in Sources */,
+				A2185F70214014233C7AEF7F /* TimetableView.swift in Sources */,
+				DA6E04A0DD729D77E3B088B6 /* TodosView.swift in Sources */,
+				66094A2C4413B520F5910F2B /* UIComponents.swift in Sources */,
+				716DD4C31F67E1B8323EA72E /* UntisClient.swift in Sources */,
+				E0B9C8953584213F72F75320 /* UsageReporter.swift in Sources */,
 				502BF811C60F5A1F5BC0EA8F /* WatchLink.swift in Sources */,
+				D69C6CD2DBDB08AE155B8349 /* WidgetBridge.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -525,6 +739,10 @@
 				PRODUCT_BUNDLE_IDENTIFIER = "$(POKYH_BUNDLE_ID).widgets";
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
@@ -542,6 +760,10 @@
 				PRODUCT_BUNDLE_IDENTIFIER = "$(POKYH_BUNDLE_ID).widgets";
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
@@ -563,6 +785,10 @@
 				SDKROOT = iphoneos;
 				SUPPORTS_MACCATALYST = NO;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
@@ -785,6 +1011,10 @@
 				SDKROOT = iphoneos;
 				SUPPORTS_MACCATALYST = NO;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;

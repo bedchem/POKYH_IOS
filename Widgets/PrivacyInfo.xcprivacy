@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Die Widget-Extension sammelt keine Daten und nutzt kein Tracking. Sie liest
+	     ausschließlich den von der App im geteilten App-Group-Container abgelegten
+	     Stundenplan-/Noten-/Nachrichten-Snapshot (reines File-IO, keine Required-
+	     Reason-APIs, keine Netzwerkzugriffe). -->
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array/>
+</dict>
+</plist>
