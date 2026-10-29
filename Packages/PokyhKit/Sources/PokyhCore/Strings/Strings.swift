@@ -48,6 +48,7 @@ public struct Strings: Sendable {
     public let school: SchoolStrings
     public let search: SearchStrings
     public let recap: RecapStrings
+    public let watch: WatchStrings
 
     public static func of(_ lang: Lang) -> Strings {
         switch lang {
@@ -60,19 +61,19 @@ public struct Strings: Sendable {
     static let de = Strings(
         lang: .de, common: .de, states: .de, grades: .de, login: .de, absences: .de, profile: .de,
         settings: .de, account: .de, bell: .de, nav: .de, home: .de, timetable: .de, mensa: .de,
-        errors: .de, system: .de, tasks: .de, messages: .de, school: .de, search: .de, recap: .de
+        errors: .de, system: .de, tasks: .de, messages: .de, school: .de, search: .de, recap: .de, watch: .de
     )
 
     static let it = Strings(
         lang: .it, common: .it, states: .it, grades: .it, login: .it, absences: .it, profile: .it,
         settings: .it, account: .it, bell: .it, nav: .it, home: .it, timetable: .it, mensa: .it,
-        errors: .it, system: .it, tasks: .it, messages: .it, school: .it, search: .it, recap: .it
+        errors: .it, system: .it, tasks: .it, messages: .it, school: .it, search: .it, recap: .it, watch: .it
     )
 
     static let en = Strings(
         lang: .en, common: .en, states: .en, grades: .en, login: .en, absences: .en, profile: .en,
         settings: .en, account: .en, bell: .en, nav: .en, home: .en, timetable: .en, mensa: .en,
-        errors: .en, system: .en, tasks: .en, messages: .en, school: .en, search: .en, recap: .en
+        errors: .en, system: .en, tasks: .en, messages: .en, school: .en, search: .en, recap: .en, watch: .en
     )
 }
 
