@@ -13,6 +13,7 @@
 		35FD9E9D26DFCEBEB0B0B4B3 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 138284BCEE8C2E4997D6D31A /* SwiftUI.framework */; };
 		4B242D83C4AC7434CBB9CD6F /* PokyhDesign in Frameworks */ = {isa = PBXBuildFile; productRef = FB9A73FB023537F43F8183CC /* PokyhDesign */; };
 		4BF56390559479D2AE241545 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = E7B6F3A89A0290D0B8D019AC /* Assets.xcassets */; };
+		502BF811C60F5A1F5BC0EA8F /* WatchLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A67C65CFD7137A7E67A7A29 /* WatchLink.swift */; };
 		54221973AE1B6B03D5F9B187 /* PokyhDesign in Frameworks */ = {isa = PBXBuildFile; productRef = 12BA219DBFD94A6123322645 /* PokyhDesign */; };
 		571E79A91FC7B47153B28C1B /* WidgetsBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 703CD77CDE40395847111661 /* WidgetsBundle.swift */; };
 		5A4B615D38291272586211C3 /* PokyhDesign in Frameworks */ = {isa = PBXBuildFile; productRef = 611C7F86F7C07B6849B3B08C /* PokyhDesign */; };
@@ -25,6 +26,7 @@
 		B6F377E0B1148E2A0634C7A4 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AA09AE18D8F6D53CCBB8E194 /* Assets.xcassets */; };
 		B994199EEEE23B33366D1958 /* PokyhCore in Frameworks */ = {isa = PBXBuildFile; productRef = 836E82BBFADB5CDC5C0F8047 /* PokyhCore */; };
 		C9E425E3CF9C891AC1EF6224 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F01FDC7D24E93DB3087D8361 /* WidgetKit.framework */; };
+		ED1DB5ED144C95DE807FF56A /* WatchSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = B63818320FC32D156E160721 /* WatchSession.swift */; };
 		F64F6C72D5E094D1E78D8317 /* WatchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9573FB8B651BA48F66F4CF26 /* WatchApp.swift */; };
 		F67BC5E9E6FFE63440ED1794 /* PokyhCore in Frameworks */ = {isa = PBXBuildFile; productRef = 108D37B9FE31AAB95E218D85 /* PokyhCore */; };
 		FAD483D7D1D3E77882FF0821 /* POKYHWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 32797CDE11EDE3BC8C9EA7DF /* POKYHWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -98,6 +100,7 @@
 		4B6B81055F93A633318EC42E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		510B97EDCC7D872B0EBF8E5C /* Widgets.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Widgets.entitlements; sourceTree = "<group>"; };
 		51994F3891F41BB39B110962 /* Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Debug.xcconfig; sourceTree = "<group>"; };
+		5A67C65CFD7137A7E67A7A29 /* WatchLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchLink.swift; sourceTree = "<group>"; };
 		5D41C038AFCB5256E11864DA /* Watch.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Watch.entitlements; sourceTree = "<group>"; };
 		703CD77CDE40395847111661 /* WidgetsBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetsBundle.swift; sourceTree = "<group>"; };
 		92005C39273B9EC00D19CBBA /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Release.xcconfig; sourceTree = "<group>"; };
@@ -106,6 +109,7 @@
 		97A085FFE8B5C7FE86EFF94D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		AA09AE18D8F6D53CCBB8E194 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		B19FA6C1BA82F54AD3AC3626 /* WatchWidgetsBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchWidgetsBundle.swift; sourceTree = "<group>"; };
+		B63818320FC32D156E160721 /* WatchSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchSession.swift; sourceTree = "<group>"; };
 		BA1B9E70208BF0AD50C364D0 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		C02C15B4B0C62510189889A8 /* POKYHWatchWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = POKYHWatchWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		C4229A96A430D9EF85F368AF /* POKYHWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = POKYHWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -228,6 +232,7 @@
 				D3B3739B6626403A09E5D812 /* Info.plist */,
 				5D41C038AFCB5256E11864DA /* Watch.entitlements */,
 				9573FB8B651BA48F66F4CF26 /* WatchApp.swift */,
+				B63818320FC32D156E160721 /* WatchSession.swift */,
 			);
 			path = Watch;
 			sourceTree = "<group>";
@@ -265,6 +270,7 @@
 				4B6B81055F93A633318EC42E /* Info.plist */,
 				977F269DFF3715BEBFC28A7F /* POKYH.entitlements */,
 				3B8E1F1197BBE45BBDA07E27 /* POKYHApp.swift */,
+				5A67C65CFD7137A7E67A7A29 /* WatchLink.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -464,6 +470,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				F64F6C72D5E094D1E78D8317 /* WatchApp.swift in Sources */,
+				ED1DB5ED144C95DE807FF56A /* WatchSession.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -480,6 +487,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				18E95C6D7007CD448039E053 /* POKYHApp.swift in Sources */,
+				502BF811C60F5A1F5BC0EA8F /* WatchLink.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

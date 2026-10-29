@@ -2,7 +2,7 @@
 
 SIMULATOR ?= iPhone 18 Pro
 IPAD ?= iPad Pro 13-inch (M5)
-WATCH ?= Apple Watch Series 12 (46mm)
+WATCH ?= Apple Watch Series 11 (46mm)
 DERIVED = build/dd
 APP = $(DERIVED)/Build/Products/Debug-iphonesimulator/POKYH.app
 BUNDLE_ID = $(shell sed -n 's/^POKYH_BUNDLE_ID = //p' Config/Base.xcconfig)
