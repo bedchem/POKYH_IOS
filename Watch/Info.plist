@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>de</string>
+	<key>CFBundleDisplayName</key>
+	<string>POKYH</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>de</string>
+		<string>it</string>
+		<string>en</string>
+	</array>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>POKYHAPIKey</key>
+	<string>$(POKYH_API_KEY)</string>
+	<key>POKYHAPSEnvironment</key>
+	<string>$(POKYH_APS_ENVIRONMENT)</string>
+	<key>POKYHAppBundleID</key>
+	<string>$(POKYH_BUNDLE_ID)</string>
+	<key>POKYHAppGroup</key>
+	<string>$(POKYH_APP_GROUP)</string>
+	<key>POKYHBackendURL</key>
+	<string>$(POKYH_BACKEND_URL)</string>
+	<key>POKYHBackgroundTask</key>
+	<string>$(POKYH_BACKGROUND_TASK)</string>
+	<key>POKYHKeychainGroup</key>
+	<string>$(POKYH_KEYCHAIN_GROUP)</string>
+	<key>POKYHServerKey</key>
+	<string>$(POKYH_SERVER_KEY)</string>
+	<key>POKYHSupportEmail</key>
+	<string>$(POKYH_SUPPORT_EMAIL)</string>
+	<key>POKYHWebsiteURL</key>
+	<string>$(POKYH_WEBSITE_URL)</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
+	<key>WKApplication</key>
+	<true/>
+	<key>WKCompanionAppBundleIdentifier</key>
+	<string>$(POKYH_BUNDLE_ID)</string>
+	<key>WKRunsIndependentlyOfCompanionApp</key>
+	<false/>
+</dict>
+</plist>

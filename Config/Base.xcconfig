@@ -1,0 +1,22 @@
+// Shared by every target. Per-developer values live in Local.xcconfig and the
+// backend keys in Secrets.xcconfig; both are gitignored, see the .example files.
+
+POKYH_VERSION = 2.1.0
+POKYH_BUILD = 1
+
+POKYH_BUNDLE_ID = dev.plattnericus.POKYH
+POKYH_APP_GROUP = group.$(POKYH_BUNDLE_ID)
+POKYH_KEYCHAIN_GROUP = $(AppIdentifierPrefix)$(POKYH_BUNDLE_ID)
+POKYH_BACKGROUND_TASK = $(POKYH_BUNDLE_ID).refresh
+
+// "//" starts a comment in xcconfig, hence the $() in the middle.
+POKYH_BACKEND_URL = https:/$()/api.pokyh.com
+POKYH_WEBSITE_URL = https:/$()/pokyh.com
+POKYH_SUPPORT_EMAIL = contact@pokyh.com
+
+// Filled in by Secrets.xcconfig.
+POKYH_API_KEY =
+POKYH_SERVER_KEY =
+
+#include? "Local.xcconfig"
+#include? "Secrets.xcconfig"

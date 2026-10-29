@@ -1,97 +1,65 @@
-# ─────────────────────────────────────────────────────────────────────────────
-# POKYH iOS — .gitignore
-# ─────────────────────────────────────────────────────────────────────────────
-
-# ── Claude / AI-Tooling ──────────────────────────────────────────────────────
-.claude/
-**/.claude/
-CLAUDE.md
-.cursor/
-.aider*
-.continue/
-
-# ── macOS ────────────────────────────────────────────────────────────────────
+# macOS
 .DS_Store
 .AppleDouble
 .LSOverride
-Icon
 ._*
 .Spotlight-V100
 .Trashes
+Icon?
 
-# ── Xcode: User-spezifisch ───────────────────────────────────────────────────
+# Xcode
+build/
+DerivedData/
 xcuserdata/
 *.xcuserstate
-*.xcuserdatad/
 *.xcscmblueprint
 *.xccheckout
 *.moved-aside
-
-# ── Xcode: Build / Artefakte ─────────────────────────────────────────────────
-build/
-DerivedData/
 *.hmap
 *.ipa
-*.dSYM.zip
 *.dSYM
-*.app
+*.dSYM.zip
+*.xcresult
 timeline.xctimeline
 playground.xcworkspace
 
-# ── Swift Package Manager ────────────────────────────────────────────────────
+# Swift Package Manager (Package.resolved stays versioned)
 .build/
 .swiftpm/
-Packages/
-Package.pins
-Package.resolved
-*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/
+Packages/*/.build/
+Packages/*/.swiftpm/
 
-# ── CocoaPods / Carthage (falls jemals genutzt) ──────────────────────────────
-Pods/
-Carthage/Build/
-
-# ── Fastlane / CI ────────────────────────────────────────────────────────────
-fastlane/report.xml
-fastlane/Preview.html
-fastlane/screenshots/**/*.png
-fastlane/test_output
-
-# ── Secrets / lokale Konfiguration (NICHT committen) ─────────────────────────
+# Local config and secrets, see Config/*.example.xcconfig
+Config/Secrets.xcconfig
+Config/Local.xcconfig
 *.env
-.env.local
-Secrets.xcconfig
-POKYH/Secrets.swift
+.env*
+!.env.example
+*.p8
 *.p12
-*.mobileprovision
 *.cer
 *.certSigningRequest
+*.mobileprovision
+*.provisionprofile
 *.pem
 *.key
 
-# ── Profiling / Crash-Logs ───────────────────────────────────────────────────
-*.profraw
-*.crash
-*.xcresult/
+# fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output/
 
-# ─────────────────────────────────────────────────────────────────────────────
-# WebUntis-API-Referenz (nur Doku — Pfade liegen zentral in POKYH/Config.swift)
-# Basis: https://lbs-brixen.webuntis.com/WebUntis
-#
-#   POST /jsonrpc.do?school=lbs-brixen   (authenticate, getKlassen, getStudents,
-#                                         getCurrentSchoolyear, getSchoolyears)
-#   GET  /api/token/new
-#   GET  /api/rest/view/v1/timetable/entries
-#   GET  /api/classreg/grade/grading/list
-#   GET  /api/classreg/grade/grading/lesson
-#   GET  /api/classreg/absences/students
-#   GET  /api/classreg/classregevents
-#   GET  /api/rest/view/v1/messages
-#   GET  /api/rest/view/v1/messages/sent
-#   GET  /api/rest/view/v1/messages/drafts
-#   GET  /api/rest/view/v1/messages/{id}
-#   POST /api/rest/view/v1/messages/{id}/markasread
-#   GET  /api/rest/view/v1/app/data
-#   GET  /api/app/data
-#   GET  /api/rest/view/v1/users/me/data
-#   GET  /api/rest/view/v2/app/data
-# ─────────────────────────────────────────────────────────────────────────────
+# Crash logs and profiling
+*.crash
+*.profraw
+*.ips
+
+# Editors and tooling
+.idea/
+.vscode/
+*.swp
+*~
+.claude/
+CLAUDE.md
+CLAUDE.local.md

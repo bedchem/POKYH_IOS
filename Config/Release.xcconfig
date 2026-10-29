@@ -1,0 +1,3 @@
+#include "Base.xcconfig"
+
+POKYH_APS_ENVIRONMENT = production

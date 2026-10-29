@@ -1,0 +1,206 @@
+# Source of truth for POKYH.xcodeproj. After changing it: `xcodegen generate`.
+
+name: POKYH
+
+options:
+  deploymentTarget:
+    iOS: "26.0"
+    watchOS: "26.0"
+  xcodeVersion: "27.1"
+  developmentLanguage: de
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+configFiles:
+  Debug: Config/Debug.xcconfig
+  Release: Config/Release.xcconfig
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MARKETING_VERSION: $(POKYH_VERSION)
+    CURRENT_PROJECT_VERSION: $(POKYH_BUILD)
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    LOCALIZATION_PREFERS_STRING_CATALOGS: YES
+    SWIFT_EMIT_LOC_STRINGS: YES
+    ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS: YES
+    DEAD_CODE_STRIPPING: YES
+
+packages:
+  PokyhKit:
+    path: Packages/PokyhKit
+
+# What every bundle reads at runtime (PokyhCore/AppConfig). Values come from Config/*.xcconfig.
+x-pokyh-info: &pokyhInfo
+  POKYHBackendURL: $(POKYH_BACKEND_URL)
+  POKYHWebsiteURL: $(POKYH_WEBSITE_URL)
+  POKYHSupportEmail: $(POKYH_SUPPORT_EMAIL)
+  POKYHAPIKey: $(POKYH_API_KEY)
+  POKYHServerKey: $(POKYH_SERVER_KEY)
+  POKYHAppGroup: $(POKYH_APP_GROUP)
+  POKYHKeychainGroup: $(POKYH_KEYCHAIN_GROUP)
+  POKYHBackgroundTask: $(POKYH_BACKGROUND_TASK)
+  POKYHAppBundleID: $(POKYH_BUNDLE_ID)
+  POKYHAPSEnvironment: $(POKYH_APS_ENVIRONMENT)
+  CFBundleDisplayName: POKYH
+  CFBundleShortVersionString: $(MARKETING_VERSION)
+  CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+  ITSAppUsesNonExemptEncryption: false
+
+targets:
+  POKYH:
+    type: application
+    platform: iOS
+    sources:
+      - path: App
+    dependencies:
+      - package: PokyhKit
+        product: PokyhCore
+      - package: PokyhKit
+        product: PokyhDesign
+      - target: POKYHWidgets
+      - target: POKYHWatch
+    info:
+      path: App/Info.plist
+      properties:
+        <<: *pokyhInfo
+        CFBundleDevelopmentRegion: de
+        CFBundleLocalizations: [de, it, en]
+        LSApplicationCategoryType: public.app-category.education
+        UILaunchScreen:
+          UIColorName: LaunchBackground
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: true
+        UISupportedInterfaceOrientations~iphone:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UIBackgroundModes: [fetch, remote-notification]
+        BGTaskSchedulerPermittedIdentifiers: [$(POKYH_BACKGROUND_TASK)]
+        NSSupportsLiveActivities: true
+        NSFaceIDUsageDescription: POKYH nutzt Face ID, damit nur du deine Daten siehst.
+        NSCameraUsageDescription: POKYH braucht die Kamera, um den QR-Code zur Anmeldung am Computer zu lesen.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        CFBundleURLTypes:
+          - CFBundleURLName: $(POKYH_BUNDLE_ID)
+            CFBundleURLSchemes: [pokyh]
+    entitlements:
+      path: App/POKYH.entitlements
+      properties:
+        com.apple.security.application-groups: [$(POKYH_APP_GROUP)]
+        keychain-access-groups: [$(POKYH_KEYCHAIN_GROUP)]
+        aps-environment: $(POKYH_APS_ENVIRONMENT)
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(POKYH_BUNDLE_ID)
+        PRODUCT_NAME: POKYH
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+    scheme:
+      testTargets:
+        - package: PokyhKit/PokyhCoreTests
+      gatherCoverageData: true
+
+  POKYHWidgets:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: Widgets
+    dependencies:
+      - package: PokyhKit
+        product: PokyhCore
+      - package: PokyhKit
+        product: PokyhDesign
+      - sdk: WidgetKit.framework
+      - sdk: SwiftUI.framework
+    info:
+      path: Widgets/Info.plist
+      properties:
+        <<: *pokyhInfo
+        CFBundleDisplayName: POKYH
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      path: Widgets/Widgets.entitlements
+      properties:
+        com.apple.security.application-groups: [$(POKYH_APP_GROUP)]
+        keychain-access-groups: [$(POKYH_KEYCHAIN_GROUP)]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(POKYH_BUNDLE_ID).widgets
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SKIP_INSTALL: YES
+
+  POKYHWatch:
+    type: application
+    platform: watchOS
+    sources:
+      - path: Watch
+    dependencies:
+      - package: PokyhKit
+        product: PokyhCore
+      - package: PokyhKit
+        product: PokyhDesign
+      - target: POKYHWatchWidgets
+    info:
+      path: Watch/Info.plist
+      properties:
+        <<: *pokyhInfo
+        CFBundleDevelopmentRegion: de
+        CFBundleLocalizations: [de, it, en]
+        WKApplication: true
+        WKCompanionAppBundleIdentifier: $(POKYH_BUNDLE_ID)
+        WKRunsIndependentlyOfCompanionApp: false
+        UIBackgroundModes: [remote-notification]
+    entitlements:
+      path: Watch/Watch.entitlements
+      properties:
+        keychain-access-groups: [$(POKYH_KEYCHAIN_GROUP).watch]
+        com.apple.security.application-groups: [$(POKYH_APP_GROUP).watch]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(POKYH_BUNDLE_ID).watchkitapp
+        PRODUCT_NAME: POKYH
+        TARGETED_DEVICE_FAMILY: "4"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        SKIP_INSTALL: YES
+    scheme: {}
+
+  POKYHWatchWidgets:
+    type: app-extension
+    platform: watchOS
+    sources:
+      - path: WatchWidgets
+    dependencies:
+      - package: PokyhKit
+        product: PokyhCore
+      - package: PokyhKit
+        product: PokyhDesign
+      - sdk: WidgetKit.framework
+      - sdk: SwiftUI.framework
+    info:
+      path: WatchWidgets/Info.plist
+      properties:
+        <<: *pokyhInfo
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      path: WatchWidgets/WatchWidgets.entitlements
+      properties:
+        com.apple.security.application-groups: [$(POKYH_APP_GROUP).watch]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(POKYH_BUNDLE_ID).watchkitapp.widgets
+        TARGETED_DEVICE_FAMILY: "4"
+        SKIP_INSTALL: YES

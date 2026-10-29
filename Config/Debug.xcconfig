@@ -1,0 +1,4 @@
+#include "Base.xcconfig"
+
+// Debug builds talk to APNs' sandbox.
+POKYH_APS_ENVIRONMENT = development

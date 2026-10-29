@@ -1,0 +1,6 @@
+// Copy to Local.xcconfig. Gitignored, so everyone can sign with their own team.
+
+DEVELOPMENT_TEAM = ABCDE12345
+
+// Uncomment to run against a local backend.
+// POKYH_BACKEND_URL = http:/$()/localhost:3000
