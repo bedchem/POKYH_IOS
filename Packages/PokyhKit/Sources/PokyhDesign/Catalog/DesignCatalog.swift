@@ -42,6 +42,9 @@ public struct DesignCatalog: View {
                             }
                         }
                     }
+                    section("Components") {
+                        ComponentSamples()
+                    }
                     section("Type") {
                         VStack(alignment: .leading, spacing: Spacing.sm) {
                             Text("Display").textStyle(.display)
