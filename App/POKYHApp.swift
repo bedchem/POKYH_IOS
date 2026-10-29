@@ -35,7 +35,7 @@ enum DebugAccount {
             let account = StoredAccount(
                 username: "max.muster",
                 displayName: "Max Muster",
-                school: SchoolRef(loginName: "demo", displayName: "Demo-Schule", server: "demo.webuntis.com"),
+                school: School(loginName: "demo", server: "demo.webuntis.com", name: "Demo-Schule"),
                 secret: "appkey:ABCDEFGHIJKLMNOP"
             )
             try? accounts.save(account)

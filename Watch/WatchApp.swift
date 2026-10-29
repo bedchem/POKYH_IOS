@@ -60,7 +60,7 @@ struct SignedInView: View {
                     .textStyle(.title3)
                     .foregroundStyle(Palette.textPrimary)
                 VStack(alignment: .leading, spacing: Spacing.xxs) {
-                    Text(account.school.displayName)
+                    Text(account.school.name)
                         .textStyle(.footnote)
                         .foregroundStyle(Palette.textSecondary)
                     Text(account.username)

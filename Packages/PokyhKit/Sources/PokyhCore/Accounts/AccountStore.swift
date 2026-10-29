@@ -1,18 +1,25 @@
 import Foundation
 
-/// The school an account belongs to, as WebUntis' school search returns it.
-public struct SchoolRef: Codable, Sendable, Hashable {
+/// A WebUntis school, as the school search returns it.
+public struct School: Codable, Sendable, Hashable, Identifiable {
     /// WebUntis login name, e.g. "lbs-brixen".
     public var loginName: String
-    public var displayName: String
     /// WebUntis host, e.g. "lbs-brixen.webuntis.com".
     public var server: String
+    public var name: String
+    public var address: String
 
-    public init(loginName: String, displayName: String, server: String) {
+    public init(loginName: String, server: String, name: String = "", address: String = "") {
         self.loginName = loginName
-        self.displayName = displayName
         self.server = server
+        self.name = name
+        self.address = address
     }
+
+    public var id: String { "\(server)/\(loginName)" }
+
+    /// WebUntis' address for this school.
+    public var base: URL? { URL(string: "https://\(server)/WebUntis") }
 }
 
 /// What it takes to sign an account in again without asking: the iPhone keeps it after the
@@ -20,12 +27,12 @@ public struct SchoolRef: Codable, Sendable, Hashable {
 public struct StoredAccount: Codable, Sendable, Hashable {
     public var username: String
     public var displayName: String
-    public var school: SchoolRef
+    public var school: School
     /// The WebUntis password, or "appkey:<KEY>" for app key accounts (see `AppKey`).
     public var secret: String
     public var signedInAt: Date
 
-    public init(username: String, displayName: String, school: SchoolRef, secret: String, signedInAt: Date = .now) {
+    public init(username: String, displayName: String, school: School, secret: String, signedInAt: Date = .now) {
         self.username = username
         self.displayName = displayName
         self.school = school

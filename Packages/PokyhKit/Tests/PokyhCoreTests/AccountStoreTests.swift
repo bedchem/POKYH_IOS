@@ -3,7 +3,7 @@ import Testing
 @testable import PokyhCore
 
 struct AccountStoreTests {
-    let school = SchoolRef(loginName: "demo-school", displayName: "Demo School", server: "demo.webuntis.com")
+    let school = School(loginName: "demo-school", server: "demo.webuntis.com", name: "Demo School")
 
     func account(_ name: String = "max.muster") -> StoredAccount {
         StoredAccount(username: name, displayName: "Max Muster", school: school, secret: "appkey:ABCDEFGHIJKLMNOP", signedInAt: Date(timeIntervalSince1970: 1_800_000_000))
