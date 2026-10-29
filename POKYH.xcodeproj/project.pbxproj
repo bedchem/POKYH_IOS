@@ -339,6 +339,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = D0891E84934252C3CA98AC06 /* Build configuration list for PBXNativeTarget "POKYH" */;
 			buildPhases = (
+				0E0A5644ED0ADEBAAA9033C0 /* Check config */,
 				E9C80F44FA19D97D990FDBF8 /* Sources */,
 				29B631F36106B52B3034B2F6 /* Resources */,
 				00B0E5EC7B13700F979D9319 /* Frameworks */,
@@ -426,6 +427,28 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		0E0A5644ED0ADEBAAA9033C0 /* Check config */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Check config";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# Debug builds run without keys (the backend just refuses them); a release never ships without.\nif [ -z \"$POKYH_API_KEY\" ] || [ -z \"$POKYH_SERVER_KEY\" ]; then\n  level=warning\n  [ \"$CONFIGURATION\" = \"Release\" ] && level=error\n  echo \"$level: Backend keys missing. Copy Config/Secrets.example.xcconfig to Config/Secrets.xcconfig and fill it in.\"\n  [ \"$level\" = \"error\" ] && exit 1\nfi\nexit 0\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		3958C8E5F287CC6613CD74B6 /* Sources */ = {

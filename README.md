@@ -35,13 +35,18 @@ iOS and iPadOS 26 or newer, watchOS 26 or newer.
 
 You need Xcode 27 and [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`).
 
-1. Copy `Config/Secrets.example.xcconfig` to `Config/Secrets.xcconfig` and fill in the POKYH
-   API keys.
-2. Copy `Config/Local.example.xcconfig` to `Config/Local.xcconfig` and set your team id.
-3. Run `xcodegen generate`, open `POKYH.xcodeproj` and run the `POKYH` scheme.
+```sh
+make setup    # copies the config templates and generates POKYH.xcodeproj
+make open     # opens it in Xcode: pick the POKYH scheme and an iPhone simulator, then Run
+make run      # or build and launch on the iPhone simulator from the terminal
+```
 
-Both files stay on your machine. Everything else that differs between builds (backend address,
-bundle ids, app group) lives in `Config/Base.xcconfig`.
+`make setup` creates `Config/Secrets.xcconfig` (the POKYH API keys) and `Config/Local.xcconfig`
+(your team id). Both stay on your machine. Debug builds run without keys and Xcode shows a
+warning; a release build stops until they're there. Everything else that differs between
+builds (backend address, bundle ids, app group) lives in `Config/Base.xcconfig`.
+
+Other targets: `make build-ipad`, `make build-watch`, `make test`, `make clean`.
 
 The shared code is a local Swift package, `Packages/PokyhKit`, with `PokyhCore` (models, clients,
 storage, texts) and `PokyhDesign` (colors, type, components). Its tests run on the Mac:

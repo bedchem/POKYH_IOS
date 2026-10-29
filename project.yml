@@ -61,6 +61,18 @@ targets:
         product: PokyhDesign
       - target: POKYHWidgets
       - target: POKYHWatch
+    preBuildScripts:
+      - name: Check config
+        basedOnDependencyAnalysis: false
+        script: |
+          # Debug builds run without keys (the backend just refuses them); a release never ships without.
+          if [ -z "$POKYH_API_KEY" ] || [ -z "$POKYH_SERVER_KEY" ]; then
+            level=warning
+            [ "$CONFIGURATION" = "Release" ] && level=error
+            echo "$level: Backend keys missing. Copy Config/Secrets.example.xcconfig to Config/Secrets.xcconfig and fill it in."
+            [ "$level" = "error" ] && exit 1
+          fi
+          exit 0
     info:
       path: App/Info.plist
       properties:
