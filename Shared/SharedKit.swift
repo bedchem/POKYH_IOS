@@ -10,12 +10,21 @@ import WidgetKit
 #endif
 #if canImport(SwiftUI)
 
-/// Marken-Farben als EINE Quelle für App und Widget (entspricht `Palette`).
+/// Brand colors for app and widgets. Same values as PokyhDesign's Brand (Android's Palette.kt);
+/// this one shadows it inside the app and widget targets, so it carries every member.
 enum Brand {
-    static let accent   = Color(red: 99/255,  green: 102/255, blue: 241/255) // #6366F1
-    static let positive = Color(red: 16/255,  green: 185/255, blue: 129/255) // #10B981
-    static let danger   = Color(red: 239/255, green: 68/255,  blue: 68/255)  // #EF4444
-    /// Notenfarbe: positiv (≥6) grün, sonst rot.
+    static let accent     = Color(red: 99/255,  green: 102/255, blue: 241/255) // #6366F1
+    static let accentInk  = Color(red: 79/255,  green: 70/255,  blue: 229/255) // #4F46E5
+    static let onAccent   = Color.white
+    static let success    = Color(red: 16/255,  green: 185/255, blue: 129/255) // #10B981
+    static let positive   = success
+    static let warning    = Color(red: 245/255, green: 158/255, blue: 11/255)  // #F59E0B
+    static let danger     = Color(red: 239/255, green: 68/255,  blue: 68/255)  // #EF4444
+    static let star       = Color(red: 245/255, green: 179/255, blue: 1/255)   // #F5B301
+    static let orange     = Color(red: 249/255, green: 115/255, blue: 22/255)  // #F97316
+    static let accentSoft = Color(red: 139/255, green: 92/255,  blue: 246/255) // #8B5CF6
+    static let tint       = success
+    /// Pass/fail for widgets: 6 and up is green.
     static func grade(_ v: Double) -> Color { v >= 6 ? positive : danger }
 }
 #endif

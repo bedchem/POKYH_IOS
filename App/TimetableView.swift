@@ -1,6 +1,8 @@
 import SwiftUI
+import PokyhCore
+import PokyhDesign
 
-// ── Slot-/Tag-Logik (1:1 aus app/timetable/page.tsx portiert) ───────────────
+// ── Slots and day kinds (ported from the web's app/timetable/page.tsx) ──────
 
 enum SlotKind { case normal, cancelled, replacement, exam, event }
 enum DayKind { case normal, holiday, allCancelled, allReplacement, fullDayEvent, weekend }
@@ -15,7 +17,7 @@ struct MergedSlot: Identifiable {
 enum Timetable {
     static func mins(_ t: Int) -> Int { Fmt.minutes(t) }
 
-    /// Entries eines Tages zu Slots gruppieren (Vertretung/Entfall zusammenführen).
+    /// Groups one day's entries into slots, folding a cancellation and its stand-in together.
     static func buildSlots(_ dayEntries: [TimetableEntry]) -> [MergedSlot] {
         var groups: [Int: [TimetableEntry]] = [:]
         for e in dayEntries { groups[e.startTime, default: []].append(e) }
@@ -62,7 +64,7 @@ enum Timetable {
             slots.append(MergedSlot(display: display, replacement: nil, kind: kind))
         }
 
-        // Entfall-Slots entfernen, die optisch in einem aktiven Slot liegen
+        // A cancellation that sits entirely inside a lesson that happens adds nothing.
         let activeSlots = slots.filter { !$0.display.isCancelled }
         return slots.filter { slot in
             if !slot.display.isCancelled { return true }
@@ -77,7 +79,7 @@ enum Timetable {
         dayKind(dayEntries, slots: buildSlots(dayEntries), hasOtherDayEntries: hasOtherDayEntries, index: index)
     }
 
-    /// Variante mit bereits berechneten Slots (Performance: kein doppeltes `buildSlots`).
+    /// Same, for callers that already built the slots.
     static func dayKind(_ dayEntries: [TimetableEntry], slots: [MergedSlot], hasOtherDayEntries: Bool, index: Int) -> DayKind {
         if index == 5 && dayEntries.isEmpty { return .weekend }
         let base = baseDayKind(dayEntries, hasOtherDayEntries: hasOtherDayEntries)
@@ -102,34 +104,88 @@ enum Timetable {
         return .normal
     }
 
-    static func color(_ slot: MergedSlot) -> Color {
-        let d = slot.display
-        if d.isCancelled { return Palette.danger }
-        if d.isExam { return Palette.warning }
-        if slot.kind == .replacement { return Palette.orange }
-        if slot.kind == .event { return Palette.accent }
-        return Palette.subject(d.subjectName)
+    /// This school's bell schedule. Only gives the axis its period numbers.
+    static let periods: [(num: Int, s: Int, e: Int)] = [
+        (1, 470, 520), (2, 520, 570), (3, 570, 620), (4, 635, 685), (5, 685, 735),
+        (6, 735, 785), (7, 795, 845), (8, 845, 895), (9, 905, 955), (10, 955, 1005),
+    ]
+
+    /// Hues are handed out per week, so a week looks the same on the web, Android and here.
+    static func hues(for entries: [TimetableEntry]) -> SubjectHues {
+        let hues = SubjectHues()
+        hues.register(entries.map(\.subjectName))
+        return hues
+    }
+
+    /// At grid density the state is what you scan for, so it outranks the subject.
+    static func tone(_ entry: TimetableEntry, kind: SlotKind, hues: SubjectHues) -> Tone {
+        if kind == .cancelled || entry.isCancelled { return .cancelled }
+        if entry.isExam || kind == .exam { return .exam }
+        if kind == .event || entry.subjectName.isEmpty { return .event }
+        return .subject(entry.subjectName, hues: hues)
+    }
+
+    struct Changes { var subject = false, teacher = false, room = false }
+
+    /// Which fields WebUntis changed. A cancelled lesson isn't changed, it's gone.
+    static func changes(_ e: TimetableEntry) -> Changes {
+        guard !e.isCancelled else { return Changes() }
+        func changed(_ original: String?, _ current: String) -> Bool {
+            let o = (original ?? "").trimmingCharacters(in: .whitespaces)
+            return !o.isEmpty && o != current.trimmingCharacters(in: .whitespaces)
+        }
+        return Changes(
+            subject: changed(e.originalSubject, e.subjectName),
+            teacher: changed(e.originalTeacher, e.teacherName),
+            room: changed(e.originalRoom, e.roomName)
+        )
+    }
+
+    static func date(_ num: Int) -> Date? {
+        Calendar.current.date(from: DateComponents(year: num / 10000, month: num / 100 % 100, day: num % 100))
+    }
+
+    /// Monday is 0, like the string tables.
+    static func weekdayIndex(_ date: Date) -> Int {
+        (Calendar.current.component(.weekday, from: date) + 5) % 7
+    }
+
+    static func minuteNow(_ date: Date = Date()) -> Int {
+        let c = Calendar.current.dateComponents([.hour, .minute], from: date)
+        return (c.hour ?? 0) * 60 + (c.minute ?? 0)
+    }
+
+    static func hhmm(_ m: Int) -> String { String(format: "%02d:%02d", m / 60, m % 60) }
+
+    static func subjectText(_ e: TimetableEntry) -> String {
+        e.subjectName.isEmpty ? (e.note ?? "—") : e.subjectName
     }
 }
 
-// ── Hauptansicht ────────────────────────────────────────────────────────────
+/// What the detail sheet opens with: the slot and the color it had where it was tapped.
+struct LessonDetailItem: Identifiable {
+    let slot: MergedSlot
+    let tone: Tone
+    var id: UUID { slot.id }
+}
+
+// ── Screen ──────────────────────────────────────────────────────────────────
 
 struct TimetableView: View {
     @EnvironmentObject var app: AppState
+    @Environment(\.strings) private var s
     @State private var weekOffset = 0
     @State private var entries: [TimetableEntry] = []
     @State private var loading = true
     @State private var error: String?
     @State private var mode: Mode = .week
     @State private var selectedDay = 0
-    @State private var detail: MergedSlot?
+    @State private var detail: LessonDetailItem?
     @State private var shareItem: ShareItem?
     @State private var exporting = false
+    @State private var width: CGFloat = 0
 
-    enum Mode: String, CaseIterable { case week = "Woche", day = "Tag" }
-
-    private let dayLabels = ["Mo", "Di", "Mi", "Do", "Fr", "Sa"]
-    private let dayLong = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag"]
+    enum Mode: CaseIterable { case week, day }
 
     private var thisMonday: Date {
         var cal = Calendar(identifier: .iso8601); cal.firstWeekday = 2
@@ -139,67 +195,163 @@ struct TimetableView: View {
     private var monday: Date { Calendar.current.date(byAdding: .day, value: weekOffset * 7, to: thisMonday) ?? thisMonday }
     private func dayDate(_ i: Int) -> Date { Calendar.current.date(byAdding: .day, value: i, to: monday) ?? monday }
     private func dayNum(_ i: Int) -> Int { DateFmt.num(dayDate(i)) }
-    private func entriesFor(_ i: Int) -> [TimetableEntry] {
-        entries.filter { $0.date == dayNum(i) }
-    }
+    private func entriesFor(_ i: Int) -> [TimetableEntry] { entries.filter { $0.date == dayNum(i) } }
     private var anyDayHasEntries: Bool { (0..<6).contains { !entriesFor($0).isEmpty } }
+    private var compact: Bool { WidthClass(width: width) == .compact }
 
     var body: some View {
         VStack(spacing: 0) {
             weekHeader
-            Picker("Ansicht", selection: $mode) {
-                ForEach(Mode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            if !compact {
+                WeekFigures(entries: entries, todayNum: SchoolDates.todayNum())
+                    .padding(.horizontal, Spacing.screenH)
+                    .padding(.bottom, Spacing.md)
             }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, 16).padding(.bottom, 8)
-            Divider().overlay(Palette.separator)
+            PokyhSegmentedControl(Mode.allCases, selection: $mode) {
+                $0 == .week ? s.timetable.modeWeek : s.timetable.modeDay
+            }
+            .padding(.horizontal, Spacing.screenH)
+            .padding(.bottom, Spacing.md)
             content
         }
-        .navigationTitle("Stundenplan")
-        .profileToolbar()
+        .frame(maxWidth: WidthClass.wideMaxWidth)
+        .frame(maxWidth: .infinity)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+        .background(Palette.bg.ignoresSafeArea())
+        .navigationTitle(s.nav.timetable)
         .navigationBarTitleDisplayMode(.inline)
-        .appBackground()
-        .task(id: weekOffset) { await load(); prefetchAdjacent() }
+        .profileToolbar()
+        .task(id: weekOffset) { await load() }
         .onAppear { selectInitialDay() }
         .onChange(of: app.timetableHomeSignal) {
             withAnimation(.snappy(duration: 0.3)) { weekOffset = 0; selectInitialDay() }
         }
-        .sheet(item: $detail) { LessonDetailView(slot: $0) }
+        .sheet(item: $detail) { LessonDetailView(item: $0) }
         .sheet(item: $shareItem) { ShareSheet(items: [$0.url]) }
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Menu {
                     Button { exportWeek() } label: {
-                        Label("Diese Woche exportieren", systemImage: "calendar")
+                        Label(s.timetable.exportWeek, systemImage: "calendar")
                     }
                     Button { Task { await exportExams() } } label: {
-                        Label("Prüfungen exportieren", systemImage: "graduationcap")
+                        Label(s.timetable.exportExams, systemImage: "graduationcap")
                     }
                 } label: {
                     Image(systemName: "square.and.arrow.up")
                 }
+                .accessibilityLabel(s.timetable.export)
                 .disabled(exporting)
             }
         }
     }
 
-    // ── .ics-Export ─────────────────────────────────────────────────────────
+    // ── .ics export ─────────────────────────────────────────────────────────
+
     private func share(_ entries: [TimetableEntry], name: String) {
         guard !entries.isEmpty else { return }
         let ics = ICSExport.makeCalendar(entries, calendarName: name)
         if let url = ICSExport.writeTempFile(ics, name: name) { shareItem = ShareItem(url: url) }
     }
     private func exportWeek() {
-        share((0..<6).flatMap { entriesFor($0) }, name: "POKYH Stundenplan")
+        share((0..<6).flatMap { entriesFor($0) }, name: s.timetable.icsWeekName)
     }
     private func exportExams() async {
-        guard let s = app.session else { return }
+        guard let session = app.session else { return }
         exporting = true; defer { exporting = false }
-        let exams = (try? await UntisClient.shared.upcomingExams(s)) ?? []
-        share(exams, name: "POKYH Prüfungen")
+        let exams = (try? await UntisClient.shared.upcomingExams(session)) ?? []
+        share(exams, name: s.timetable.icsExamsName)
     }
 
-    /// Tagesansicht: horizontaler Swipe → Tag wechseln (clean, federnd).
+    // ── Week stepper ────────────────────────────────────────────────────────
+
+    private var weekHeader: some View {
+        HStack(spacing: Spacing.sm) {
+            IconButton("chevron.left", label: s.timetable.prevWeek, tinted: true, tint: Palette.accentText) { step(-1) }
+            VStack(spacing: Spacing.xxs) {
+                Text(rangeText)
+                    .textStyle(.headline)
+                    .foregroundStyle(Palette.textPrimary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                if weekOffset != 0 {
+                    Button(s.timetable.toToday) {
+                        withAnimation(.snappy(duration: 0.34, extraBounce: 0.08)) { weekOffset = 0; selectInitialDay() }
+                    }
+                    .buttonStyle(.plain)
+                    .textStyle(TextStyle.caption.weight(.semibold))
+                    .foregroundStyle(Palette.accentText)
+                } else {
+                    Text(verbatim: "\(s.timetable.cw(weekNumber)) · \(s.timetable.thisWeek)")
+                        .textStyle(.caption)
+                        .foregroundStyle(Palette.textSecondary)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            IconButton("chevron.right", label: s.timetable.nextWeek, tinted: true, tint: Palette.accentText) { step(1) }
+        }
+        .padding(.horizontal, Spacing.screenH)
+        .padding(.top, Spacing.xs)
+        .padding(.bottom, Spacing.md)
+    }
+
+    private func step(_ by: Int) {
+        withAnimation(.snappy(duration: 0.34, extraBounce: 0.08)) { weekOffset += by }
+    }
+
+    private var weekNumber: Int { Calendar(identifier: .iso8601).component(.weekOfYear, from: monday) }
+    private var rangeText: String {
+        let cal = Calendar.current
+        let start = monday, end = dayDate(5)
+        let a = s.common.dayMonthShort(cal.component(.day, from: start), cal.component(.month, from: start))
+        let b = s.common.dayMonthShort(cal.component(.day, from: end), cal.component(.month, from: end))
+        return "\(a) – \(b) \(cal.component(.year, from: end))"
+    }
+
+    // A wide range of weeks feels endless; pages are light and only visible ones load.
+    private let pageSpan = 40
+    private var weekRange: ClosedRange<Int> { -pageSpan...pageSpan }
+
+    @ViewBuilder
+    private var content: some View {
+        if mode == .week {
+            // Paging horizontal ScrollView: only the visible weeks render, size measured once.
+            GeometryReader { geo in
+                ScrollView(.horizontal) {
+                    LazyHStack(spacing: 0) {
+                        ForEach(weekRange, id: \.self) { off in
+                            WeekTimetablePage(weekOffset: off, size: geo.size,
+                                              initialEntries: cachedEntries(for: off),
+                                              onTap: { detail = LessonDetailItem(slot: $0, tone: $1) })
+                                .containerRelativeFrame(.horizontal)
+                                .id(off)
+                        }
+                    }
+                    .scrollTargetLayout()
+                }
+                .scrollTargetBehavior(.paging)
+                .scrollIndicators(.hidden)
+                .scrollPosition(id: scrollWeekBinding, anchor: .center)
+            }
+        } else {
+            dayView
+        }
+    }
+
+    /// Swiping and the chevrons both drive `weekOffset`.
+    private var scrollWeekBinding: Binding<Int?> {
+        Binding(get: { weekOffset }, set: { if let v = $0, v != weekOffset { weekOffset = v } })
+    }
+
+    /// A week that's already prefetched shows at once, without a skeleton flash.
+    private func cachedEntries(for off: Int) -> [TimetableEntry]? {
+        guard let session = app.session,
+              let m = Calendar.current.date(byAdding: .day, value: off * 7, to: thisMonday) else { return nil }
+        return UntisClient.shared.cachedTimetable(date: DateFmt.isoString(m), session)
+    }
+
+    // ── Day mode ────────────────────────────────────────────────────────────
+
     private var daySwipe: some Gesture {
         DragGesture(minimumDistance: 24)
             .onEnded { value in
@@ -216,135 +368,68 @@ struct TimetableView: View {
             }
     }
 
-    /// Wie viele Wochen je Richtung um die aktuelle vorgeladen werden.
-    /// Radius 2 ⇒ stets ein 5-Wochen-Fenster (−2…+2) vollständig im Cache.
-    private static let preloadRadius = 2
-
-    /// Precaching: das gesamte 5-Wochen-Fenster im Hintergrund laden → „unendliches",
-    /// flüssiges Blättern ohne Nachladen beim Swipen (alle Daten liegen im Cache).
-    private func prefetchAdjacent() {
-        guard let s = app.session else { return }
-        for off in (-Self.preloadRadius...Self.preloadRadius) where off != 0 {
-            guard let m = Calendar.current.date(byAdding: .day, value: (weekOffset + off) * 7, to: thisMonday) else { continue }
-            let iso = DateFmt.isoString(m)
-            Task { _ = try? await UntisClient.shared.timetable(date: iso, s) }  // füllt den Cache
-        }
-    }
-
-    private var weekHeader: some View {
-        HStack {
-            Button { withAnimation(.snappy(duration: 0.34, extraBounce: 0.08)) { weekOffset -= 1 } } label: {
-                Image(systemName: "chevron.left").font(.headline)
-            }.buttonStyle(.pressable)
-            Spacer()
-            VStack(spacing: 2) {
-                Text(rangeText).font(.subheadline.bold()).foregroundStyle(Palette.textPrimary)
-                if weekOffset != 0 {
-                    Button("Heute") { withAnimation(.snappy(duration: 0.34, extraBounce: 0.08)) { weekOffset = 0; selectInitialDay() } }
-                        .font(.caption2).tint(Palette.accent)
-                } else {
-                    Text("KW \(weekNumber) · Diese Woche").font(.caption2).foregroundStyle(Palette.accent)
-                }
-            }
-            Spacer()
-            Button { withAnimation(.snappy(duration: 0.34, extraBounce: 0.08)) { weekOffset += 1 } } label: {
-                Image(systemName: "chevron.right").font(.headline)
-            }.buttonStyle(.pressable)
-        }
-        .padding(.horizontal, 16).padding(.vertical, 10)
-        .tint(Palette.accent)
-    }
-
-    private var weekNumber: Int { Calendar(identifier: .iso8601).component(.weekOfYear, from: monday) }
-    private var rangeText: String {
-        let f = DateFormatter(); f.locale = Locale(identifier: "de_DE"); f.dateFormat = "d. MMM"
-        let f2 = DateFormatter(); f2.locale = Locale(identifier: "de_DE"); f2.dateFormat = "d. MMM yyyy"
-        return "\(f.string(from: monday)) – \(f2.string(from: dayDate(5)))"
-    }
-
-    // Großzügiger Wochenbereich → fühlt sich „unendlich" an (Seiten sind leicht,
-    // Daten laden nur sichtbare Seiten, mit Cache + Precaching).
-    private let pageSpan = 40
-    private var weekRange: ClosedRange<Int> { -pageSpan...pageSpan }
-
-    @ViewBuilder
-    private var content: some View {
-        if mode == .week {
-            // Performantes, flüssiges Paging: horizontaler ScrollView + LazyHStack
-            // (nur sichtbare Seiten werden gerendert) mit nativem Paging-Snapping.
-            // Breite EINMAL messen und an alle Seiten durchreichen.
-            GeometryReader { geo in
-                ScrollView(.horizontal) {
-                    LazyHStack(spacing: 0) {
-                        ForEach(weekRange, id: \.self) { off in
-                            WeekTimetablePage(weekOffset: off, width: geo.size.width,
-                                              initialEntries: cachedEntries(for: off), onTap: { detail = $0 })
-                                .containerRelativeFrame(.horizontal)
-                                .id(off)
-                        }
-                    }
-                    .scrollTargetLayout()
-                }
-                .scrollTargetBehavior(.paging)
-                .scrollIndicators(.hidden)
-                .scrollPosition(id: scrollWeekBinding, anchor: .center)
-            }
-        } else {
-            dayView
-        }
-    }
-
-    /// Bindet die Scroll-Seite an `weekOffset` (zwei Wege: Wischen ↔ Buttons).
-    private var scrollWeekBinding: Binding<Int?> {
-        Binding(get: { weekOffset }, set: { if let v = $0, v != weekOffset { weekOffset = v } })
-    }
-
-    /// Bereits vorgeladene Woche aus dem Cache (synchron) → Seite ohne Spinner.
-    private func cachedEntries(for off: Int) -> [TimetableEntry]? {
-        guard let s = app.session,
-              let m = Calendar.current.date(byAdding: .day, value: off * 7, to: thisMonday) else { return nil }
-        return UntisClient.shared.cachedTimetable(date: DateFmt.isoString(m), s)
-    }
-
     private var dayView: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 6) {
-                ForEach(0..<6, id: \.self) { i in
-                    let isToday = dayNum(i) == SchoolDates.todayNum()
-                    Button { withAnimation(.spring(response: 0.3)) { selectedDay = i } } label: {
-                        VStack(spacing: 2) {
-                            Text(dayLabels[i]).font(.caption2.weight(.semibold))
-                            Text("\(Calendar.current.component(.day, from: dayDate(i)))").font(.subheadline.bold())
-                        }
-                        .frame(maxWidth: .infinity).padding(.vertical, 8)
-                        .background(selectedDay == i ? Palette.accent : Color.clear, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        .foregroundStyle(selectedDay == i ? .white : (isToday ? Palette.accent : Palette.textPrimary))
-                    }.buttonStyle(.pressable)
-                }
-            }
-            .padding(.horizontal, 12).padding(.vertical, 8)
+            DayPills(
+                days: (0..<6).map { dayDate($0) },
+                selection: $selectedDay,
+                isToday: { DateFmt.num($0) == SchoolDates.todayNum() },
+                weekday: { s.common.weekdaysShort[Timetable.weekdayIndex($0)].capitalized },
+                dayNumber: { "\(Calendar.current.component(.day, from: $0))" }
+            )
+            .padding(.horizontal, Spacing.screenH)
+            .padding(.bottom, Spacing.lg)
 
-            let de = entriesFor(selectedDay)
-            let kind = Timetable.dayKind(de, hasOtherDayEntries: anyDayHasEntries, index: selectedDay)
             ScrollView {
-                if kind != .normal {
-                    SpecialDayCard(kind: kind, fullWidth: true)
-                        .frame(maxWidth: .infinity).frame(height: 380).padding(16)
-                } else {
-                    let slots = Timetable.buildSlots(de)
-                    LazyVStack(spacing: 10) {
-                        ForEach(Array(slots.enumerated()), id: \.element.id) { idx, slot in
-                            Button { detail = slot } label: { SlotRow(slot: slot) }
-                                .buttonStyle(.pressable)
-                                .fadeIn(delay: Double(idx) * 0.03)
-                        }
-                    }
-                    .padding(16)
-                }
+                dayContent
+                    .padding(.horizontal, Spacing.screenH)
+                    .padding(.bottom, Spacing.xxxl)
             }
             .id(selectedDay)
             .transition(.opacity.combined(with: .scale(scale: 0.98)))
             .simultaneousGesture(daySwipe)
+        }
+    }
+
+    @ViewBuilder
+    private var dayContent: some View {
+        let de = entriesFor(selectedDay)
+        if loading && entries.isEmpty {
+            TileRowSkeleton(rows: 5)
+        } else if let error, entries.isEmpty {
+            PokyhDesign.ErrorStateView(error) { Task { await load() } }
+        } else if entries.isEmpty && app.isOffline {
+            OfflineWeekState { Task { await load() } }
+        } else if !anyDayHasEntries {
+            SpecialDayCard(kind: .holiday, compact: false, plate: true)
+        } else {
+            let slots = Timetable.buildSlots(de)
+            let kind = Timetable.dayKind(de, slots: slots, hasOtherDayEntries: anyDayHasEntries, index: selectedDay)
+            let hues = Timetable.hues(for: entries)
+            if kind == .weekend {
+                // An empty Saturday is the absence of a timetable, not an entry in it.
+                InlineNotice(s.timetable.noLessons, symbol: "checkmark.circle.fill", tint: Brand.success)
+            } else if kind != .normal {
+                let tappable = kind != .allCancelled && kind != .holiday
+                SpecialDayCard(kind: kind, compact: false, plate: true)
+                    .contentShape(.rect)
+                    .onTapGesture {
+                        if tappable, let first = slots.first {
+                            detail = LessonDetailItem(slot: first, tone: Timetable.tone(first.display, kind: first.kind, hues: hues))
+                        }
+                    }
+            } else {
+                LazyVStack(spacing: Spacing.rowGap) {
+                    ForEach(Array(slots.enumerated()), id: \.element.id) { idx, slot in
+                        let shown = slot.replacement ?? slot.display
+                        let tone = Timetable.tone(shown, kind: slot.replacement == nil ? slot.kind : .replacement, hues: hues)
+                        DaySlotRow(slot: slot, tone: tone) {
+                            detail = LessonDetailItem(slot: slot, tone: tone)
+                        }
+                        .fadeIn(delay: Double(idx) * 0.03)
+                    }
+                }
+            }
         }
     }
 
@@ -354,11 +439,11 @@ struct TimetableView: View {
     }
 
     private func load() async {
-        guard let s = app.session else { return }
+        guard let session = app.session else { return }
         loading = true; error = nil
         do {
-            entries = try await UntisClient.shared.timetable(date: DateFmt.isoString(monday), s)
-            // Aktuelle Woche des STANDARD-Kontos → Widget/Live-Activity aktualisieren.
+            entries = try await UntisClient.shared.timetable(date: DateFmt.isoString(monday), session)
+            // This week of the default account feeds the widget and the Live Activity.
             if weekOffset == 0, app.isDefaultAccountActive {
                 WidgetBridge.publish(entries); app.refreshLiveActivity(from: entries)
             }
@@ -368,32 +453,43 @@ struct TimetableView: View {
             self.error = (error as? AppError)?.message ?? error.localizedDescription
         }
         loading = false
-        prefetchAdjacent()   // Nachbarwochen vorladen → flüssiges Blättern
+        prefetchAdjacent()
+    }
+
+    /// Two weeks either side stay in the cache, so paging never waits.
+    private static let preloadRadius = 2
+
+    private func prefetchAdjacent() {
+        guard let session = app.session else { return }
+        for off in (-Self.preloadRadius...Self.preloadRadius) where off != 0 {
+            guard let m = Calendar.current.date(byAdding: .day, value: (weekOffset + off) * 7, to: thisMonday) else { continue }
+            let iso = DateFmt.isoString(m)
+            Task { _ = try? await UntisClient.shared.timetable(date: iso, session) }
+        }
     }
 }
 
-// ── Eine Wochen-Seite (für das paginierte TabView) ──────────────────────────
+// ── One week page ───────────────────────────────────────────────────────────
 
 struct WeekTimetablePage: View {
     let weekOffset: Int
-    let width: CGFloat
-    let onTap: (MergedSlot) -> Void
+    let size: CGSize
+    let onTap: (MergedSlot, Tone) -> Void
     @EnvironmentObject var app: AppState
+    @Environment(\.strings) private var s
     @State private var entries: [TimetableEntry]
     @State private var loading: Bool
     @State private var error: String?
 
-    /// `initialEntries` aus dem Vorlade-Cache → die Seite rendert sofort (kein
-    /// Spinner-Flash beim Swipen); `.task` revalidiert danach still im Hintergrund.
-    init(weekOffset: Int, width: CGFloat, initialEntries: [TimetableEntry]?, onTap: @escaping (MergedSlot) -> Void) {
+    /// Starts from the prefetch cache when it can; `.task` then revalidates quietly.
+    init(weekOffset: Int, size: CGSize, initialEntries: [TimetableEntry]?, onTap: @escaping (MergedSlot, Tone) -> Void) {
         self.weekOffset = weekOffset
-        self.width = width
+        self.size = size
         self.onTap = onTap
         _entries = State(initialValue: initialEntries ?? [])
         _loading = State(initialValue: initialEntries == nil)
     }
 
-    private let dayLabels = ["Mo", "Di", "Mi", "Do", "Fr", "Sa"]
     private var thisMonday: Date {
         var cal = Calendar(identifier: .iso8601); cal.firstWeekday = 2
         let comps = cal.dateComponents([.yearForWeekOfYear, .weekOfYear], from: Date())
@@ -402,41 +498,45 @@ struct WeekTimetablePage: View {
     private var monday: Date { Calendar.current.date(byAdding: .day, value: weekOffset * 7, to: thisMonday) ?? thisMonday }
     private func dayDate(_ i: Int) -> Date { Calendar.current.date(byAdding: .day, value: i, to: monday) ?? monday }
     private func dayNum(_ i: Int) -> Int { DateFmt.num(dayDate(i)) }
-    private func entriesFor(_ i: Int) -> [TimetableEntry] { entries.filter { $0.date == dayNum(i) } }
-    private var anyDayHasEntries: Bool { (0..<6).contains { !entriesFor($0).isEmpty } }
 
     var body: some View {
         Group {
             if loading {
-                // Leichter Spinner statt dauer-animiertem Shimmer (kein Redraw-Stau beim Swipen).
-                ProgressView().controlSize(.large).tint(Palette.accent)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                WeekGridSkeleton(size: size)
             } else if let error {
-                ErrorStateView(message: error) { Task { await load() } }
+                PokyhDesign.ErrorStateView(error) { Task { await load() } }
+            } else if entries.isEmpty && app.isOffline {
+                // An empty week off the disk isn't proof of holidays.
+                OfflineWeekState { Task { await load() } }
             } else if entries.isEmpty {
-                ScrollView {
-                    SpecialDayCard(kind: .holiday, fullWidth: true)
-                        .frame(maxWidth: .infinity).frame(height: 420).padding(16)
-                }
+                HolidayWeek(month: Calendar.current.component(.month, from: monday))
             } else {
-                WeekGrid(dayEntries: (0..<6).map { entriesFor($0) },
-                         dayLabels: dayLabels,
-                         dates: (0..<6).map { dayDate($0) },
-                         todayNum: SchoolDates.todayNum(),
-                         dayNums: (0..<6).map { dayNum($0) },
-                         anyDayHasEntries: anyDayHasEntries, onTap: onTap, width: width)
-                    .equatable()
+                let cal = Calendar.current
+                let dates = (0..<6).map { dayDate($0) }
+                let nums = dates.map { DateFmt.num($0) }
+                WeekGrid(
+                    dayEntries: nums.map { n in entries.filter { $0.date == n } },
+                    dayLabels: dates.map { s.common.weekdaysShort[Timetable.weekdayIndex($0)].capitalized },
+                    dayNumbers: dates.map { cal.component(.day, from: $0) },
+                    weekLabel: s.timetable.cw(Calendar(identifier: .iso8601).component(.weekOfYear, from: monday)),
+                    monthLabel: s.common.monthsShort[cal.component(.month, from: monday) - 1],
+                    todayNum: SchoolDates.todayNum(),
+                    dayNums: nums,
+                    size: size,
+                    onTap: onTap
+                )
+                .equatable()
             }
         }
-        .task { await load() }   // lädt beim Erscheinen; TabView rendert Nachbarseiten vor
+        .task { await load() }
     }
 
     private func load() async {
-        guard let s = app.session else { return }
+        guard let session = app.session else { return }
         loading = entries.isEmpty
         error = nil
         do {
-            entries = try await UntisClient.shared.timetable(date: DateFmt.isoString(monday), s)
+            entries = try await UntisClient.shared.timetable(date: DateFmt.isoString(monday), session)
         } catch let e as AppError where e.message == "session_expired" {
             app.handleSessionExpired()
         } catch {
@@ -446,467 +546,1021 @@ struct WeekTimetablePage: View {
     }
 }
 
-// ── Wochenraster ────────────────────────────────────────────────────────────
+// ── Week grid ───────────────────────────────────────────────────────────────
 
+/// One box in a day column, already resolved to its times and its slice of the column width.
+/// A substitution is two boxes: the lesson that happens and the one that was called off.
+struct GridCell: Identifiable {
+    let id: String
+    /// What a tap opens.
+    let slot: MergedSlot
+    let entry: TimetableEntry
+    let kind: SlotKind
+    let tone: Tone
+    let start: Int
+    let end: Int
+    /// Left edge and width in per-mille of the column.
+    var lane = 0
+    var span = GridCell.perMille
+
+    static let perMille = 1000
+
+    var isCancelled: Bool { kind == .cancelled || entry.isCancelled }
+    func overlaps(_ o: GridCell) -> Bool { start < o.end && o.start < end }
+}
+
+enum GridLayout {
+    /// What the lesson that happens keeps when a cancellation runs alongside it.
+    static let activeShare = 750
+
+    static func cells(_ slots: [MergedSlot], hues: SubjectHues) -> [GridCell] {
+        var cells: [GridCell] = []
+        func cell(_ id: String, _ slot: MergedSlot, _ entry: TimetableEntry, _ kind: SlotKind) -> GridCell {
+            GridCell(id: id, slot: slot, entry: entry, kind: kind,
+                     tone: Timetable.tone(entry, kind: kind, hues: hues),
+                     start: Fmt.minutes(entry.startTime), end: Fmt.minutes(entry.endTime))
+        }
+        for slot in slots {
+            if slot.kind == .replacement, let replacement = slot.replacement {
+                let key = slot.id.uuidString
+                // The lesson that happens, at its own times.
+                cells.append(cell(key + "-active",
+                                  MergedSlot(display: replacement, replacement: slot.display, kind: .replacement),
+                                  replacement, .replacement))
+                // The original only gets its own box when it isn't already a standalone slot.
+                let standalone = slots.contains { $0.kind == .cancelled && $0.display.id == slot.display.id }
+                if !standalone {
+                    cells.append(cell(key + "-cancelled",
+                                      MergedSlot(display: slot.display, replacement: replacement, kind: .cancelled),
+                                      slot.display, .cancelled))
+                }
+            } else {
+                cells.append(cell(slot.id.uuidString, slot, slot.display, slot.kind))
+            }
+        }
+        // One lesson covering two cancelled periods comes back twice; draw it once.
+        var seen = Set<String>()
+        let unique = cells.filter { c in
+            guard c.end > c.start else { return false }
+            return seen.insert("\(c.entry.id)-\(c.start)-\(c.end)-\(c.kind)").inserted
+        }
+        return resolveHorizontal(unique)
+    }
+
+    /// The lesson that happens leads, cancellations fill in behind it, and a cell widens into
+    /// any lane that stays free for its whole duration.
+    static func resolveHorizontal(_ cells: [GridCell]) -> [GridCell] {
+        let ordered = cells.sorted {
+            if $0.isCancelled != $1.isCancelled { return !$0.isCancelled }
+            if $0.start != $1.start { return $0.start < $1.start }
+            return ($0.end - $0.start) > ($1.end - $1.start)
+        }
+        var lanes: [String: Int] = [:]
+        for c in ordered {
+            var lane = 0
+            while ordered.contains(where: { $0.id != c.id && lanes[$0.id] == lane && $0.overlaps(c) }) { lane += 1 }
+            lanes[c.id] = lane
+        }
+        let laneCount = (lanes.values.max() ?? 0) + 1
+        let trailing = ordered.filter { lanes[$0.id] == 1 }
+        let leading = ordered.filter { lanes[$0.id] == 0 }
+        let weighted = laneCount == 2 && !trailing.isEmpty
+            && trailing.allSatisfy(\.isCancelled) && leading.contains { !$0.isCancelled }
+        let edges = weighted
+            ? [0, activeShare, GridCell.perMille]
+            : (0...laneCount).map { $0 * GridCell.perMille / laneCount }
+
+        return ordered.map { c in
+            let lane = lanes[c.id] ?? 0
+            var last = lane
+            while last + 1 < laneCount,
+                  !ordered.contains(where: { $0.id != c.id && lanes[$0.id] == last + 1 && $0.overlaps(c) }) {
+                last += 1
+            }
+            var out = c
+            out.lane = edges[lane]
+            out.span = edges[last + 1] - edges[lane]
+            return out
+        }
+    }
+}
+
+/// Six day columns against a time axis built from the week's own lesson times. The day is
+/// spread over the height there is, so a whole school day shows without scrolling.
 struct WeekGrid: View, Equatable {
     let dayEntries: [[TimetableEntry]]
     let dayLabels: [String]
-    let dates: [Date]
+    let dayNumbers: [Int]
+    let weekLabel: String
+    let monthLabel: String
     let todayNum: Int
     let dayNums: [Int]
-    let anyDayHasEntries: Bool
-    let onTap: (MergedSlot) -> Void
-    /// Breite wird EINMAL von außen gemessen (kein GeometryReader pro Seite → performant).
-    let width: CGFloat
+    let size: CGSize
+    let onTap: (MergedSlot, Tone) -> Void
 
     private let gutter: CGFloat = 42
-    private let pxPerMin: CGFloat = 0.82
+    private let colGap: CGFloat = 3
+    private let edge: CGFloat = 6
+    private let headerRoom: CGFloat = 64
+    private let minCellHeight: CGFloat = 26
 
-    // Einmalig im init vorberechnet → beim Scrollen wird NICHTS neu gerechnet.
+    // Worked out once, so scrolling recomputes nothing.
     private let daySlots: [[MergedSlot]]
     private let dayKinds: [DayKind]
+    private let dayCells: [[GridCell]]
+    private let hues: SubjectHues
     private let minMins: Int
     private let maxMins: Int
-    private let totalHeight: CGFloat
-    private let boundaryTimes: [Int]
+    private let pxPerMin: CGFloat
     private let visiblePeriods: [(num: Int, s: Int, e: Int)]
+    private let boundaryTimes: [Int]
 
-    /// Festes Periodenraster (wie im Frontend): Stundennummer + Start/Ende.
-    private static let periods: [(num: Int, s: Int, e: Int)] = [
-        (1, 470, 520), (2, 520, 570), (3, 570, 620), (4, 635, 685), (5, 685, 735),
-        (6, 735, 785), (7, 795, 845), (8, 845, 895), (9, 905, 955), (10, 955, 1005),
-    ]
-
-    init(dayEntries: [[TimetableEntry]], dayLabels: [String], dates: [Date], todayNum: Int,
-         dayNums: [Int], anyDayHasEntries: Bool, onTap: @escaping (MergedSlot) -> Void, width: CGFloat) {
+    init(dayEntries: [[TimetableEntry]], dayLabels: [String], dayNumbers: [Int], weekLabel: String,
+         monthLabel: String, todayNum: Int, dayNums: [Int], size: CGSize, onTap: @escaping (MergedSlot, Tone) -> Void) {
         self.dayEntries = dayEntries
         self.dayLabels = dayLabels
-        self.dates = dates
+        self.dayNumbers = dayNumbers
+        self.weekLabel = weekLabel
+        self.monthLabel = monthLabel
         self.todayNum = todayNum
         self.dayNums = dayNums
-        self.anyDayHasEntries = anyDayHasEntries
+        self.size = size
         self.onTap = onTap
-        self.width = width
-
-        // Slots + Tagestyp je Tag EINMAL berechnen (statt mehrfach pro Frame).
-        var slots: [[MergedSlot]] = []
-        var kinds: [DayKind] = []
-        slots.reserveCapacity(6); kinds.reserveCapacity(6)
-        for d in 0..<6 {
-            let s = dayEntries.indices.contains(d) ? Timetable.buildSlots(dayEntries[d]) : []
-            slots.append(s)
-            kinds.append(Timetable.dayKind(dayEntries.indices.contains(d) ? dayEntries[d] : [],
-                                           slots: s, hasOtherDayEntries: anyDayHasEntries, index: d))
-        }
-        self.daySlots = slots
-        self.dayKinds = kinds
 
         let all = dayEntries.flatMap { $0 }
-        let mn = all.map { Fmt.minutes($0.startTime) }.min() ?? 470
-        let mx = all.map { Fmt.minutes($0.endTime) }.max() ?? 1005
-        self.minMins = mn
-        self.maxMins = mx
-        self.totalHeight = max(380, CGFloat(mx - mn) * 0.82)
-        let vis = Self.periods.filter { $0.e > mn && $0.s < mx }
-        self.visiblePeriods = vis
+        let hues = Timetable.hues(for: all)
+        self.hues = hues
+        let anyDay = dayEntries.contains { !$0.isEmpty }
+        var slots: [[MergedSlot]] = [], kinds: [DayKind] = [], cells: [[GridCell]] = []
+        for d in 0..<6 {
+            let entries = dayEntries.indices.contains(d) ? dayEntries[d] : []
+            let s = Timetable.buildSlots(entries)
+            slots.append(s)
+            kinds.append(Timetable.dayKind(entries, slots: s, hasOtherDayEntries: anyDay, index: d))
+            cells.append(GridLayout.cells(s, hues: hues))
+        }
+        daySlots = slots
+        dayKinds = kinds
+        dayCells = cells
+
+        let periods = Timetable.periods
+        let mn = all.map { Fmt.minutes($0.startTime) }.min() ?? periods.first!.s
+        let mx = all.map { Fmt.minutes($0.endTime) }.max() ?? periods.last!.e
+        minMins = mn
+        maxMins = mx
+        let fitted = (size.height - headerRoom - Spacing.xxxl) / CGFloat(max(1, mx - mn))
+        pxPerMin = min(max(fitted, 0.62), 2.4)
+
+        // Period numbers only when the lessons actually follow this bell schedule.
+        let onGrid = all.filter { e in periods.contains { $0.s == Fmt.minutes(e.startTime) } }.count
+        let vis = (!all.isEmpty && onGrid * 2 < all.count) ? [] : periods.filter { $0.e > mn && $0.s < mx }
+        visiblePeriods = vis
         var set = Set<Int>()
         for p in vis { set.insert(p.s); set.insert(p.e) }
-        self.boundaryTimes = set.filter { $0 >= mn - 2 && $0 <= mx + 2 }.sorted()
+        for e in all { set.insert(Fmt.minutes(e.startTime)); set.insert(Fmt.minutes(e.endTime)) }
+        boundaryTimes = set.filter { $0 >= mn - 2 && $0 <= mx + 2 }.sorted()
     }
 
-    /// Nur Daten vergleichen (Closure ignorieren) → SwiftUI überspringt das Neu-Rendern
-    /// beim horizontalen Blättern, solange sich die Wochendaten nicht ändern.
+    /// Data only; the closure is ignored so paging skips re-rendering unchanged weeks.
     static func == (l: WeekGrid, r: WeekGrid) -> Bool {
-        l.width == r.width && l.todayNum == r.todayNum &&
-        l.dayNums == r.dayNums && l.dates == r.dates && l.dayEntries == r.dayEntries
+        l.size == r.size && l.todayNum == r.todayNum && l.dayNums == r.dayNums
+            && l.dayEntries == r.dayEntries && l.dayLabels == r.dayLabels
     }
 
-    private func hhmm(_ m: Int) -> String { String(format: "%02d:%02d", m / 60, m % 60) }
-    private var colW: CGFloat { (width - gutter - 10) / 6 }
+    private var colW: CGFloat { max(10, (size.width - gutter - edge * 2 - colGap * 6) / 6) }
+    private var totalHeight: CGFloat { CGFloat(maxMins - minMins) * pxPerMin }
 
     var body: some View {
         ScrollView(.vertical) {
-            VStack(spacing: 0) {
-                headerRow(colW: colW)
-                HStack(alignment: .top, spacing: 0) {
-                    timeAxis
-                    ForEach(0..<6, id: \.self) { d in
-                        dayColumn(d, width: colW)
+            VStack(alignment: .leading, spacing: 0) {
+                headerRow.padding(.bottom, Spacing.sm)
+                TimelineView(.periodic(from: .now, by: 30)) { context in
+                    let minute = Timetable.minuteNow(context.date)
+                    ZStack(alignment: .topLeading) {
+                        HStack(alignment: .top, spacing: colGap) {
+                            timeAxis
+                            ForEach(0..<6, id: \.self) { d in dayColumn(d, minute: minute) }
+                        }
+                        nowLine(minute).allowsHitTesting(false)
                     }
+                    .frame(height: totalHeight, alignment: .topLeading)
                 }
-                .frame(height: totalHeight)
             }
-            .padding(.horizontal, 5).padding(.bottom, 16)
+            .padding(.horizontal, edge)
+            .padding(.bottom, Spacing.xxxl)
         }
+        .scrollIndicators(.hidden)
     }
 
-    private func headerRow(colW: CGFloat) -> some View {
-        HStack(spacing: 0) {
-            Color.clear.frame(width: gutter)
+    /// Week number and month in the corner above the axis; today's date on an accent disc.
+    private var headerRow: some View {
+        HStack(alignment: .bottom, spacing: colGap) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(weekLabel).textStyle(.caption2).foregroundStyle(Palette.textTertiary).lineLimit(1)
+                Text(monthLabel).textStyle(TextStyle.caption.weight(.semibold)).foregroundStyle(Palette.textSecondary).lineLimit(1)
+            }
+            .frame(width: gutter, alignment: .leading)
+            .padding(.bottom, 2)
             ForEach(0..<6, id: \.self) { d in
                 let isToday = dayNums[d] == todayNum
-                VStack(spacing: 1) {
-                    Text(dayLabels[d]).font(.caption2.weight(.semibold))
-                        .foregroundStyle(isToday ? Palette.accent : Palette.textSecondary)
-                    Text("\(Calendar.current.component(.day, from: dates[d]))")
-                        .font(.footnote.bold())
-                        .foregroundStyle(isToday ? .white : Palette.textPrimary)
-                        .frame(width: 22, height: 22)
-                        .background(isToday ? Palette.accent : Color.clear, in: Circle())
+                VStack(spacing: 2) {
+                    Text(dayLabels[d])
+                        .textStyle(.caption2)
+                        .foregroundStyle(isToday ? Palette.accentText : Palette.textTertiary)
+                        .lineLimit(1)
+                    Text(verbatim: "\(dayNumbers[d])")
+                        .textStyle(TextStyle.caption.weight(.semibold))
+                        .foregroundStyle(isToday ? Brand.onAccent : Palette.textPrimary)
+                        .lineLimit(1)
+                        .frame(width: 24, height: 24)
+                        .background(isToday ? Brand.accent : .clear, in: .circle)
                 }
                 .frame(width: colW)
             }
         }
-        .padding(.vertical, 6)
     }
 
+    /// Clock times at the period edges, the period number in the band between them.
     private var timeAxis: some View {
         ZStack(alignment: .topLeading) {
-            // Periodennummern (zentriert in der Stunde)
             ForEach(visiblePeriods, id: \.num) { p in
-                Text("\(p.num).")
-                    .font(.system(size: 9)).foregroundStyle(Palette.textTertiary)
-                    .frame(width: gutter - 4, alignment: .trailing)
-                    .offset(y: CGFloat((p.s + p.e) / 2 - minMins) * pxPerMin - 6)
+                Text(verbatim: "\(p.num).")
+                    .textStyle(.timeAxisPeriod)
+                    .foregroundStyle(Palette.textSecondary)
+                    .lineLimit(1)
+                    .frame(width: gutter - 6)
+                    .offset(y: CGFloat((p.s + p.e) / 2 - minMins) * pxPerMin - 9)
             }
-            // Uhrzeiten an den Periodengrenzen
             ForEach(boundaryTimes, id: \.self) { m in
-                Text(hhmm(m))
-                    .font(.system(size: 9, weight: .semibold)).foregroundStyle(Palette.textSecondary)
-                    .frame(width: gutter - 4, alignment: .trailing)
+                Text(verbatim: Timetable.hhmm(m))
+                    .textStyle(.timeAxisBoundary)
+                    .foregroundStyle(Palette.textTertiary)
+                    .lineLimit(1)
+                    .frame(width: gutter - 6, alignment: .leading)
                     .offset(y: CGFloat(m - minMins) * pxPerMin - 6)
             }
         }
         .frame(width: gutter, height: totalHeight, alignment: .topLeading)
     }
 
-    @ViewBuilder
-    private func dayColumn(_ d: Int, width: CGFloat) -> some View {
+    /// Today is marked in the header only; an empty Saturday draws nothing at all.
+    private func dayColumn(_ d: Int, minute: Int) -> some View {
         let kind = dayKinds[d]
-        ZStack(alignment: .topLeading) {
+        return ZStack(alignment: .topLeading) {
             ForEach(boundaryTimes, id: \.self) { m in
-                Rectangle().fill(Palette.separator.opacity(0.35)).frame(height: 0.5)
+                Rectangle()
+                    .fill(Palette.separator.opacity(0.55))
+                    .frame(width: colW, height: 1)
                     .offset(y: CGFloat(m - minMins) * pxPerMin)
             }
-            if kind != .normal {
-                SpecialDayCard(kind: kind, fullWidth: false)
-                    .frame(width: width - 4, height: totalHeight - 6)
-                    .offset(x: 2, y: 3)
+            if kind == .weekend {
+                EmptyView()
+            } else if kind != .normal {
+                let first = daySlots[d].first
+                let tappable = kind != .allCancelled && kind != .holiday
+                SpecialDayCard(kind: kind, compact: true, plate: true)
+                    .frame(width: colW, height: max(0, totalHeight - 4))
+                    .offset(y: 2)
+                    .contentShape(.rect)
+                    .onTapGesture {
+                        if tappable, let first {
+                            onTap(first, Timetable.tone(first.display, kind: first.kind, hues: hues))
+                        }
+                    }
             } else {
-                ForEach(daySlots[d]) { slot in
-                    let top = CGFloat(Fmt.minutes(slot.display.startTime) - minMins) * pxPerMin
-                    let h = max(24, CGFloat(Fmt.minutes(slot.display.endTime) - Fmt.minutes(slot.display.startTime)) * pxPerMin)
-                    Button { onTap(slot) } label: { GridLessonCell(slot: slot, height: h) }
-                        .buttonStyle(.pressable)
-                        .frame(width: width - 4, height: h)
-                        .offset(x: 2, y: top)
+                ForEach(dayCells[d]) { cell in
+                    cellView(cell, dayNum: dayNums[d], minute: minute)
                 }
             }
         }
-        .frame(width: width, height: totalHeight, alignment: .topLeading)
+        .frame(width: colW, height: totalHeight, alignment: .topLeading)
+    }
+
+    private func cellView(_ cell: GridCell, dayNum: Int, minute: Int) -> some View {
+        let top = CGFloat(cell.start - minMins) * pxPerMin
+        let h = max(minCellHeight, CGFloat(cell.end - cell.start) * pxPerMin)
+        // The seam comes off the leading edge, so the trailing lane stays flush.
+        let left = colW * CGFloat(cell.lane) / CGFloat(GridCell.perMille) + (cell.lane > 0 ? 2 : 0)
+        let right = colW * CGFloat(cell.lane + cell.span) / CGFloat(GridCell.perMille)
+        let w = max(10, right - left)
+        let past = dayNum < todayNum || (dayNum == todayNum && cell.end <= minute)
+        return Button { onTap(cell.slot, cell.tone) } label: {
+            GridLessonCell(cell: cell, width: w, height: h - 2, dense: cell.span < GridCell.perMille, past: past)
+        }
+        .buttonStyle(PressableStyle())
+        .offset(x: left, y: top + 1)
+    }
+
+    /// A faint rule across the week at the current time, a strong one on today's column.
+    @ViewBuilder
+    private func nowLine(_ minute: Int) -> some View {
+        if let today = dayNums.firstIndex(of: todayNum), minute >= minMins, minute <= maxMins {
+            let y = CGFloat(minute - minMins) * pxPerMin - 0.75
+            let gridStart = gutter + colGap
+            Rectangle()
+                .fill(Brand.accent.opacity(0.35))
+                .frame(width: colW * 6 + colGap * 5, height: 1.5)
+                .offset(x: gridStart, y: y)
+            Rectangle()
+                .fill(Brand.accent.opacity(0.9))
+                .frame(width: colW, height: 1.5)
+                .offset(x: gridStart + (colW + colGap) * CGFloat(today), y: y)
+        }
     }
 }
 
-// ── Stunden-Zelle (Wochenraster) ────────────────────────────────────────────
+// ── Grid cell ───────────────────────────────────────────────────────────────
 
+/// One soft pastel block. Only an outline means something: red cancelled, yellow exam.
+/// A changed teacher or room is drawn as a filled chip on that field instead.
 struct GridLessonCell: View {
-    let slot: MergedSlot
+    let cell: GridCell
+    let width: CGFloat
     let height: CGFloat
+    let dense: Bool
+    let past: Bool
+    @Environment(\.colorScheme) private var scheme
 
-    private var d: TimetableEntry { slot.display }
-    private var color: Color { Timetable.color(slot) }
-    private var subjectText: String {
-        d.subjectName.isEmpty ? (d.note ?? "—") : d.subjectName
+    enum PartMark { case plain, added, removed }
+
+    private var entry: TimetableEntry { cell.entry }
+    private var cancelled: Bool { cell.isCancelled }
+
+    private var outline: Color? {
+        let dark = scheme == .dark
+        if cancelled { return Brand.danger.opacity(dark ? 0.85 : 0.60) }
+        if entry.isExam || cell.kind == .exam { return Brand.warning.opacity(dark ? 0.95 : 0.80) }
+        return nil
     }
+
+    private var lineRoom: Int { height > 42 ? 2 : height > 28 ? 1 : 0 }
 
     var body: some View {
+        let shape = RoundedRectangle(cornerRadius: Radius.xs, style: .continuous)
+        let changes = Timetable.changes(entry)
+        let secondary = [
+            (Self.parts(entry.teacherName, original: entry.originalTeacher, changed: changes.teacher, dense: dense), TextStyle.gridCellTime),
+            (Self.parts(entry.roomName, original: entry.originalRoom, changed: changes.room, dense: dense), TextStyle.gridCellRoom),
+        ].filter { !$0.0.isEmpty }
+
         ZStack(alignment: .topLeading) {
-            background
-            HStack(spacing: 0) {
-                if slot.kind == .normal && !d.isCancelled {
-                    Rectangle().fill(color).frame(width: 3)
-                }
+            shape.fill(cell.tone.fill)
+            // Below about 34pt a cell carries no text; the tint and ring already say enough.
+            if width >= 34 {
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(subjectText).font(.system(size: 10, weight: .bold))
-                        .strikethrough(d.isCancelled, color: Palette.danger)
-                        .foregroundStyle(d.isCancelled ? Palette.danger.opacity(0.8) : Palette.textPrimary)
-                        .lineLimit(height > 32 ? 2 : 1)
-                    if height > 30 {
-                        Text("\(Fmt.time(d.startTime))–\(Fmt.time(d.endTime))")
-                            .font(.system(size: 7.5, weight: .medium)).foregroundStyle(Palette.textTertiary).lineLimit(1)
-                    }
-                    if height > 52, !d.roomName.isEmpty {
-                        Text(d.roomName).font(.system(size: 8)).foregroundStyle(Palette.textSecondary).lineLimit(1)
+                    line([(Timetable.subjectText(entry), changes.subject ? .added : .plain)],
+                         style: .gridCellSubject, color: cell.tone.ink)
+                    ForEach(Array(secondary.prefix(lineRoom).enumerated()), id: \.offset) { _, item in
+                        line(item.0, style: item.1, color: cell.tone.ink.opacity(0.78))
                     }
                 }
-                .padding(.horizontal, 4).padding(.vertical, 2)
-                Spacer(minLength: 0)
+                .padding(.horizontal, dense ? 3 : 5)
+                .padding(.vertical, 2.5)
             }
-            statusIcon
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(borderColor, lineWidth: borderWidth))
+        .frame(width: width, height: height, alignment: .topLeading)
+        .clipShape(shape)
+        .overlay {
+            if let outline { shape.strokeBorder(outline, lineWidth: 1.5) }
+        }
+        .overlay {
+            if past { pastShade(shape) }
+        }
+        .compositingGroup()
+        .contentShape(shape)
     }
 
-    @ViewBuilder private var background: some View {
-        switch slot.kind {
-        case .cancelled:
-            DiagonalStripes().fill(Palette.danger.opacity(0.12))
-                .background(Palette.danger.opacity(0.06))
-        case .exam:    Palette.warning.opacity(0.13)
-        case .replacement: Palette.orange.opacity(0.12)
-        case .event:   Palette.accent.opacity(0.12)
-        case .normal:  Palette.surface
+    /// Finished lessons keep a hint of their color and step back, like the web timetable.
+    @ViewBuilder
+    private func pastShade(_ shape: RoundedRectangle) -> some View {
+        ZStack {
+            shape.fill(Color(hex: 0x8A8F99).opacity(0.35)).blendMode(.color)
+            if scheme == .dark {
+                shape.fill(Color.black.opacity(0.5))
+            } else {
+                shape.fill(Color(hex: 0xC4CAD4)).blendMode(.multiply)
+            }
         }
+        .allowsHitTesting(false)
     }
-    private var borderColor: Color {
-        switch slot.kind {
-        case .cancelled: return Palette.danger.opacity(0.6)
-        case .exam: return Palette.warning.opacity(0.4)
-        case .replacement: return Palette.orange.opacity(0.4)
-        case .event: return Palette.accent.opacity(0.35)
-        case .normal: return Palette.border
-        }
-    }
-    private var borderWidth: CGFloat { slot.kind == .cancelled ? 1.5 : 0.6 }
 
-    @ViewBuilder private var statusIcon: some View {
-        let sym: String? = {
-            if d.isCancelled && slot.replacement != nil { return "arrow.left.arrow.right" }
-            if d.isCancelled { return "xmark" }
-            if d.isExam { return "doc.text" }
-            if slot.kind == .replacement { return "arrow.left.arrow.right" }
-            if slot.kind == .event { return "calendar" }
-            return nil
-        }()
-        if let sym, height > 28 {
-            Image(systemName: sym).font(.system(size: 9, weight: .bold))
-                .foregroundStyle(color)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-                .padding(4)
+    /// One line of a cell; a changed part becomes a solid chip, the one saturated block on the page.
+    private func line(_ parts: [(String, PartMark)], style: TextStyle, color: Color) -> some View {
+        HStack(spacing: 3) {
+            ForEach(Array(parts.enumerated()), id: \.offset) { _, part in
+                switch part.1 {
+                case .plain:
+                    Text(part.0)
+                        .textStyle(style)
+                        .foregroundStyle(color)
+                        .strikethrough(cancelled)
+                        .lineLimit(1)
+                case .added, .removed:
+                    Text(part.0)
+                        .textStyle(style)
+                        .foregroundStyle(Brand.onAccent)
+                        .strikethrough(part.1 == .removed)
+                        .lineLimit(1)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1.5)
+                        .background(part.1 == .added ? Brand.accent : Brand.danger, in: .pokyh(4))
+                }
+            }
         }
+    }
+
+    /// Splits a comma-joined field, changed parts first. A dense cell drops the unchanged ones.
+    static func parts(_ joined: String, original: String?, changed: Bool, dense: Bool) -> [(String, PartMark)] {
+        func split(_ s: String) -> [String] {
+            s.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        }
+        let current = split(joined)
+        let before = changed ? split(original ?? "") : []
+        var out: [(String, PartMark)] = current.map { ($0, changed && !before.contains($0) ? .added : .plain) }
+        out += before.filter { !current.contains($0) }.map { ($0, .removed) }
+        let marked = out.filter { $0.1 != .plain }
+        if dense && !marked.isEmpty { return marked }
+        return marked + out.filter { $0.1 == .plain }
     }
 }
 
-/// Stundenzeile für die Tagesansicht.
-struct SlotRow: View {
+// ── Day mode row ────────────────────────────────────────────────────────────
+
+/// Same shape as Home's lesson row. For a substitution the lesson that happens leads and the
+/// cancelled one becomes the "statt …" line under it.
+struct DaySlotRow: View {
     let slot: MergedSlot
-    private var d: TimetableEntry { slot.display }
-    private var color: Color { Timetable.color(slot) }
+    let tone: Tone
+    let action: () -> Void
+    @Environment(\.strings) private var s
+
+    private var shown: TimetableEntry { slot.replacement ?? slot.display }
+    private var original: TimetableEntry? { slot.replacement != nil ? slot.display : nil }
+
     var body: some View {
-        HStack(spacing: 12) {
-            RoundedRectangle(cornerRadius: 3).fill(color).frame(width: 5, height: 44)
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(d.subjectName.isEmpty ? (d.note ?? "—") : d.subjectName)
-                        .font(.subheadline.bold())
-                        .strikethrough(d.isCancelled, color: Palette.danger)
-                        .foregroundStyle(Palette.textPrimary)
+        let changes = Timetable.changes(shown)
+        TileRow(alignment: .top, action: action) {
+            RoundedRectangle(cornerRadius: 2, style: .continuous)
+                .fill(tone.bar)
+                .frame(width: 4, height: 44)
+            VStack(alignment: .leading, spacing: Spacing.xs) {
+                HStack(spacing: Spacing.sm) {
+                    Text(Timetable.subjectText(shown))
+                        .textStyle(.headline)
+                        .foregroundStyle(shown.isCancelled ? Brand.danger : Palette.textPrimary)
+                        .strikethrough(shown.isCancelled)
+                        .lineLimit(1)
                     badge
                 }
-                if !d.teacherName.isEmpty || !d.roomName.isEmpty {
-                    Text([d.teacherName, d.roomName].filter { !$0.isEmpty }.joined(separator: " · "))
-                        .font(.caption).foregroundStyle(Palette.textSecondary)
+                HStack(spacing: Spacing.xs) {
+                    meta(shown.teacherName, changed: changes.teacher)
+                    if !shown.teacherName.isEmpty && !shown.roomName.isEmpty {
+                        Text(verbatim: "·").textStyle(.footnote).foregroundStyle(Palette.textTertiary)
+                    }
+                    meta(shown.roomName, changed: changes.room)
                 }
-                if let r = slot.replacement {
-                    Label("Ersatz: \(r.subjectName.isEmpty ? (r.note ?? "") : r.subjectName)", systemImage: "arrow.left.arrow.right")
-                        .font(.caption2).foregroundStyle(Palette.orange)
+                if let original {
+                    HStack(spacing: Spacing.xs) {
+                        Image(systemName: "arrow.left.arrow.right")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text(s.timetable.insteadOf(Timetable.subjectText(original)))
+                            .textStyle(.caption)
+                            .strikethrough()
+                    }
+                    .foregroundStyle(Palette.textTertiary)
                 }
             }
-            Spacer()
-            Text("\(Fmt.time(d.startTime))\n\(Fmt.time(d.endTime))")
-                .font(.caption2.monospacedDigit()).foregroundStyle(Palette.textSecondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Text(verbatim: "\(Fmt.time(shown.startTime))\n\(Fmt.time(shown.endTime))")
+                .textStyle(TextStyle.caption2.weight(.medium))
+                .monospacedDigit()
+                .foregroundStyle(Palette.textTertiary)
                 .multilineTextAlignment(.trailing)
         }
-        .padding(12)
-        .cardSurface(radius: 12)
     }
-    @ViewBuilder private var badge: some View {
-        if d.isCancelled { tag("Entfall", Palette.danger) }
-        else if d.isExam { tag("Prüfung", Palette.warning) }
-        else if slot.kind == .replacement { tag("Vertretung", Palette.orange) }
-        else if slot.kind == .event { tag("Veranstaltung", Palette.accent) }
+
+    @ViewBuilder
+    private func meta(_ text: String, changed: Bool) -> some View {
+        if !text.isEmpty {
+            if changed {
+                Text(text)
+                    .textStyle(.caption)
+                    .foregroundStyle(Brand.onAccent)
+                    .padding(.horizontal, Spacing.xs)
+                    .padding(.vertical, 1)
+                    .background(Brand.accent, in: .pokyh(Radius.xs))
+            } else {
+                Text(text).textStyle(.footnote).foregroundStyle(Palette.textSecondary).lineLimit(1)
+            }
+        }
     }
-    private func tag(_ t: String, _ c: Color) -> some View {
-        Text(t).font(.system(size: 9, weight: .bold)).padding(.horizontal, 6).padding(.vertical, 2)
-            .background(c.opacity(0.2), in: Capsule()).foregroundStyle(c)
+
+    @ViewBuilder
+    private var badge: some View {
+        let d = slot.display
+        if d.isCancelled && slot.replacement == nil { TagChip(s.timetable.cancelled, color: Brand.danger) }
+        else if d.isExam { TagChip(s.timetable.exam, color: Brand.warning) }
+        else if slot.kind == .replacement { TagChip(s.timetable.substitution, color: Brand.orange) }
+        else if slot.kind == .event { TagChip(s.timetable.event, color: Brand.accent) }
     }
 }
 
-// ── Spezial-Tag (Ferien / Wochenende / Entfall / Vertretung / Veranstaltung) ─
+// ── Whole-day states ────────────────────────────────────────────────────────
 
+/// Instead of a lesson list when a whole day has no normal lessons. As a plate it fills its day
+/// in the day's own color, so the day reads as one block, like a cancelled lesson does.
 struct SpecialDayCard: View {
     let kind: DayKind
-    var fullWidth: Bool
+    var compact: Bool
+    var plate: Bool
+    @Environment(\.strings) private var s
+    @Environment(\.colorScheme) private var scheme
 
-    private var config: (color: Color, icon: String, title: String, desc: String) {
+    private var config: (color: Color, icon: String, title: String, subtitle: String) {
+        let t = s.timetable
         switch kind {
-        case .holiday:       return (Palette.orange, "beach.umbrella.fill", "Ferien", "Kein Unterricht")
-        case .weekend:       return (Palette.tint, "sun.max.fill", "Wochenende", "Frei")
-        case .allCancelled:  return (Palette.danger, "xmark.circle.fill", "Entfall", "Alle Stunden ausgefallen")
-        case .allReplacement:return (Palette.accent, "arrow.left.arrow.right", "Vertretung", "Tag durchgehend ersetzt")
-        case .fullDayEvent:  return (Palette.accent, "calendar", "Veranstaltung", "Ganztägig")
-        case .normal:        return (Palette.accent, "calendar", "", "")
+        case .holiday:        return (Brand.orange, "beach.umbrella.fill", t.holiday, t.noLessons)
+        case .weekend:        return (Brand.success, "sun.max.fill", t.weekend, t.free)
+        case .allCancelled:   return (Brand.danger, "xmark.circle.fill", t.cancelled, t.allCancelled)
+        case .allReplacement: return (Brand.accent, "arrow.left.arrow.right", t.substitution, t.allReplaced)
+        case .fullDayEvent:   return (Brand.accent, "calendar", t.event, t.allDay)
+        case .normal:         return (Brand.accent, "calendar", "", "")
         }
     }
 
     var body: some View {
         let c = config
-        ZStack {
-            RoundedRectangle(cornerRadius: 12, style: .continuous).fill(c.color.opacity(0.08))
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(c.color.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [4]))
-            VStack(spacing: 6) {
-                Image(systemName: c.icon)
-                    .font(.system(size: fullWidth ? 26 : 15))
-                    .foregroundStyle(c.color)
-                    .frame(width: fullWidth ? 48 : 28, height: fullWidth ? 48 : 28)
-                    .background(c.color.opacity(0.18), in: Circle())
-                Text(c.title).font(fullWidth ? .headline : .system(size: 11, weight: .bold))
-                    .foregroundStyle(c.color).multilineTextAlignment(.center)
-                Text(c.desc).font(fullWidth ? .subheadline : .system(size: 8.5))
-                    .foregroundStyle(Palette.textTertiary).multilineTextAlignment(.center)
+        let dark = scheme == .dark
+        VStack(spacing: compact ? Spacing.sm : Spacing.lg) {
+            Image(systemName: c.icon)
+                .font(.system(size: compact ? 15 : 32, weight: .semibold))
+                .foregroundStyle(c.color)
+                .frame(width: compact ? 30 : 72, height: compact ? 30 : 72)
+                .background(c.color.opacity(0.14), in: .circle)
+            Text(c.title)
+                .textStyle(compact ? .caption : .title2)
+                .foregroundStyle(Palette.textPrimary)
+                .multilineTextAlignment(.center)
+                .minimumScaleFactor(0.7)
+            Text(c.subtitle)
+                .textStyle(compact ? .caption2 : .callout)
+                .foregroundStyle(Palette.textSecondary)
+                .multilineTextAlignment(.center)
+                .minimumScaleFactor(0.7)
+        }
+        .padding(compact ? Spacing.xs : Spacing.card)
+        .frame(maxWidth: .infinity)
+        .frame(maxHeight: compact ? CGFloat.infinity : nil)
+        .frame(height: compact ? nil : CGFloat(340))
+        .background {
+            if plate {
+                let shape = RoundedRectangle(cornerRadius: Radius.sm, style: .continuous)
+                shape.fill(c.color.opacity(dark ? 0.20 : 0.12))
+                    .overlay(shape.strokeBorder(c.color.opacity(dark ? 0.60 : 0.45), lineWidth: 1.5))
             }
-            .padding(8)
         }
-        // füllt die Höhe, die der Aufrufer vorgibt (Spalte = bis ganz unten).
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
-/// Diagonale Streifen für Entfall-Zellen (wie repeating-linear-gradient im Web).
-struct DiagonalStripes: Shape {
-    var spacing: CGFloat = 7
-    func path(in rect: CGRect) -> Path {
-        var p = Path()
-        var x = -rect.height
-        while x < rect.width {
-            p.move(to: CGPoint(x: x, y: rect.height))
-            p.addLine(to: CGPoint(x: x + rect.height, y: 0))
-            p.addLine(to: CGPoint(x: x + rect.height + spacing / 2, y: 0))
-            p.addLine(to: CGPoint(x: x + spacing / 2, y: rect.height))
-            p.closeSubpath()
-            x += spacing
+/// A week without school, large, in the mood of the time of year.
+struct HolidayWeek: View {
+    let month: Int
+    @Environment(\.strings) private var s
+
+    private var symbol: String {
+        switch month {
+        case 12, 1, 2: "snowflake"
+        case 3, 4, 5: "leaf.fill"
+        case 6, 7, 8: "beach.umbrella.fill"
+        default: "wind"
         }
-        return p
     }
-}
-
-// ── Detail-Sheet (Liquid Glass) ──────────────────────────────────────────────
-
-struct LessonDetailView: View {
-    let slot: MergedSlot
-    @Environment(\.dismiss) private var dismiss
-
-    private var d: TimetableEntry { slot.display }
-    private var accent: Color { Timetable.color(slot) }
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    HStack(spacing: 8) {
-                        if d.isCancelled && slot.replacement == nil { tag("Entfall", Palette.danger) }
-                        if slot.replacement != nil { tag("Vertretung", Palette.orange) }
-                        if d.isExam { tag("Prüfung", Palette.warning) }
-                        if d.isSubstitution && !d.isCancelled && slot.replacement == nil { tag("Vertretung", Palette.orange) }
-                        if slot.kind == .event { tag("Veranstaltung", Palette.accent) }
-                    }
-                    Text(headerName).font(.largeTitle.bold())
-                        .strikethrough(d.isCancelled && slot.replacement == nil, color: Palette.danger)
-                        .foregroundStyle(Palette.textPrimary)
-                    Label("\(Fmt.time(d.startTime)) – \(Fmt.time(d.endTime))", systemImage: "clock")
-                        .foregroundStyle(Palette.textSecondary)
-
-                    detailsCard
-                    if let r = slot.replacement { replacementCard(r) }
-                    if let note = d.note, !note.isEmpty { section("Notiz", note) }
-                    if d.isExam, let desc = d.examDescription, !desc.isEmpty { section("Prüfungsinhalt", desc) }
-                    Spacer()
-                }
-                .padding(20)
+        ScrollView {
+            VStack(spacing: 0) {
+                Image(systemName: symbol)
+                    .font(.system(size: 64, weight: .regular))
+                    .foregroundStyle(Brand.orange)
+                    .frame(width: 160, height: 160)
+                    .background(Brand.orange.opacity(0.12), in: .circle)
+                Text(s.timetable.holiday)
+                    .textStyle(.largeTitle)
+                    .foregroundStyle(Palette.textPrimary)
+                    .padding(.top, 28)
+                Text(s.timetable.noLessons)
+                    .textStyle(TextStyle.callout.weight(.semibold))
+                    .foregroundStyle(Palette.textSecondary)
+                    .padding(.top, Spacing.xs)
             }
-            .appBackground()
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Fertig") { dismiss() } } }
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, Spacing.lg)
+            .padding(.vertical, Spacing.huge)
         }
+    }
+}
+
+/// Offline and nothing stored for this week: it could be holidays, saying so would be a guess.
+struct OfflineWeekState: View {
+    let retry: () -> Void
+    @Environment(\.strings) private var s
+
+    var body: some View {
+        StateView(s.timetable.unknownTitle, message: s.timetable.offlineUnknown) {
+            IconTile("wifi.slash", color: Brand.warning, size: 64)
+        } actions: {
+            Button(s.common.retry, action: retry).buttonStyle(.secondary(compact: true))
+        }
+    }
+}
+
+/// The week's counts in pills, on wide screens only.
+struct WeekFigures: View {
+    let entries: [TimetableEntry]
+    let todayNum: Int
+    @Environment(\.strings) private var s
+
+    var body: some View {
+        let t = s.timetable
+        let todayActive = entries.filter { $0.date == todayNum && !$0.isCancelled }
+        let todayLessons = Timetable.periods.filter { p in
+            todayActive.contains { Fmt.minutes($0.startTime) <= p.s && Fmt.minutes($0.endTime) >= p.e }
+        }.count
+        let figures: [(Int, String, Color)] = [
+            (todayLessons, "\(t.hoursUnit) · \(s.mensa.today)", Palette.textPrimary),
+            (entries.filter(\.isCancelled).count, t.cancellations, Decorative.blush.ink),
+            (entries.filter(\.isExam).count, t.examsLabel, Decorative.butter.ink),
+            (entries.filter { $0.isSubstitution && !$0.isCancelled }.count, t.substitutions, Decorative.periwinkle.ink),
+        ]
+        HStack(spacing: Spacing.sm) {
+            ForEach(Array(figures.enumerated()), id: \.offset) { _, f in
+                let color = f.0 == 0 ? Palette.textTertiary : f.2
+                HStack(spacing: 6) {
+                    Text(verbatim: "\(f.0)").textStyle(TextStyle.callout.weight(.heavy))
+                    Text(f.1).textStyle(.footnote)
+                }
+                .foregroundStyle(color)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
+                .background(Palette.card, in: .capsule)
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
+// ── Skeletons ───────────────────────────────────────────────────────────────
+
+struct WeekGridSkeleton: View {
+    let size: CGSize
+
+    // (start, height) per column, as fractions of the column.
+    private static let pattern: [[(CGFloat, CGFloat)]] = [
+        [(0.00, 0.18), (0.20, 0.26), (0.52, 0.16)],
+        [(0.00, 0.26), (0.30, 0.18), (0.54, 0.28)],
+        [(0.06, 0.20), (0.30, 0.34)],
+        [(0.00, 0.16), (0.18, 0.22), (0.44, 0.30)],
+        [(0.10, 0.30), (0.46, 0.18)],
+        [(0.00, 0.22)],
+    ]
+
+    var body: some View {
+        let gap: CGFloat = 3
+        let colW = max(10, (size.width - Spacing.md * 2 - 36 - gap * 6) / 6)
+        let height = max(200, size.height - 96)
+        VStack(spacing: Spacing.md) {
+            HStack(spacing: gap) {
+                Color.clear.frame(width: 36, height: 1)
+                ForEach(0..<6, id: \.self) { _ in
+                    VStack(spacing: Spacing.xs) {
+                        PokyhDesign.SkeletonBlock(height: 12).frame(width: 18)
+                        PokyhDesign.SkeletonBlock(height: 22, radius: 11).frame(width: 22)
+                    }
+                    .frame(width: colW)
+                }
+            }
+            HStack(alignment: .top, spacing: gap) {
+                Color.clear.frame(width: 36, height: 1)
+                ForEach(0..<6, id: \.self) { d in
+                    ZStack(alignment: .top) {
+                        ForEach(Array(Self.pattern[d].enumerated()), id: \.offset) { _, block in
+                            PokyhDesign.SkeletonBlock(height: height * block.1, radius: Radius.xs)
+                                .offset(y: height * block.0)
+                        }
+                    }
+                    .frame(width: colW, height: height, alignment: .top)
+                }
+            }
+        }
+        .padding(.horizontal, Spacing.md)
+        .padding(.vertical, Spacing.sm)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+}
+
+/// Bar, two text lines and a value, as many rows as asked for.
+struct TileRowSkeleton: View {
+    var rows = 3
+
+    var body: some View {
+        VStack(spacing: Spacing.rowGap) {
+            ForEach(0..<rows, id: \.self) { _ in
+                TileRow {
+                    PokyhDesign.SkeletonBlock(height: 40, radius: 2).frame(width: 4)
+                    VStack(alignment: .leading, spacing: Spacing.sm) {
+                        PokyhDesign.SkeletonBlock(height: 14).frame(width: 140)
+                        PokyhDesign.SkeletonBlock(height: 11).frame(width: 90)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    PokyhDesign.SkeletonBlock(height: 16).frame(width: 40)
+                }
+            }
+        }
+    }
+}
+
+// ── Lesson detail ───────────────────────────────────────────────────────────
+
+/// Built like a screen: the sheet is the canvas and everything on it a card, so the hero and
+/// the lists separate by the same tone step as everywhere else.
+struct LessonDetailView: View {
+    let item: LessonDetailItem
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.strings) private var s
+
+    private var slot: MergedSlot { item.slot }
+    private var tone: Tone { item.tone }
+    private var d: TimetableEntry { slot.display }
+
+    private static let headerHeight: CGFloat = 148
+    private static let tileSize: CGFloat = 40
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: Spacing.md) {
+                hero
+                detailsCard
+                if let other = slot.replacement { insteadCard(other) }
+                if d.isExam, let desc = d.examDescription?.trimmingCharacters(in: .whitespacesAndNewlines), !desc.isEmpty {
+                    sectionCard(s.timetable.examContent, desc)
+                }
+                if let note = d.note?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty {
+                    sectionCard(s.timetable.note, note)
+                }
+            }
+            .padding(.horizontal, Spacing.screenH)
+            .padding(.top, Spacing.lg)
+            .padding(.bottom, Spacing.xxxl)
+            .frame(maxWidth: WidthClass.readableMaxWidth)
+            .frame(maxWidth: .infinity)
+        }
+        .scrollIndicators(.hidden)
+        .background(Palette.bg.ignoresSafeArea())
         .presentationDetents([.medium, .large])
-        .presentationBackground(.regularMaterial)
+        .presentationDragIndicator(.visible)
+        .presentationBackground(Palette.bg)
+        .presentationCornerRadius(Radius.xxl)
     }
 
     private var headerName: String {
-        if let r = slot.replacement { return r.subjectLong.isEmpty ? (r.subjectName.isEmpty ? (r.note ?? "") : r.subjectName) : r.subjectLong }
-        return d.subjectLong.isEmpty ? (d.subjectName.isEmpty ? (d.note ?? "Stunde") : d.subjectName) : d.subjectLong
+        d.subjectLong.isEmpty ? (d.subjectName.isEmpty ? (d.note ?? s.timetable.lesson) : d.subjectName) : d.subjectLong
     }
 
-    @ViewBuilder private var detailsCard: some View {
+    private var tags: [(String, Color)] {
+        let t = s.timetable
+        var out: [(String, Color)] = []
+        if d.isCancelled { out.append((t.cancelled, Brand.danger)) }
+        if slot.kind == .replacement { out.append((t.substitution, Brand.orange)) }
+        if d.isExam { out.append((t.exam, Brand.warning)) }
+        if d.isSubstitution && !d.isCancelled && slot.kind != .replacement { out.append((t.substitution, Brand.orange)) }
+        if slot.kind == .event { out.append((t.event, Brand.accent)) }
+        return out
+    }
+
+    private var dayLine: String {
+        guard let date = Timetable.date(d.date) else { return "" }
+        let cal = Calendar.current
+        let weekday = s.common.weekdays[Timetable.weekdayIndex(date)]
+        let day = s.common.dayMonth(cal.component(.day, from: date), cal.component(.month, from: date))
+        return "\(weekday.prefix(1).uppercased())\(weekday.dropFirst()), \(day)"
+    }
+
+    private var hero: some View {
+        BleedCard {
+            ZStack {
+                tone.fill
+                // Two letters of the subject, oversized and quiet, where Android shows its photo.
+                Text(String(headerName.trimmingCharacters(in: .whitespaces).prefix(2)).uppercased())
+                    .textStyle(.numeral(72))
+                    .foregroundStyle(tone.ink.opacity(0.30))
+                    .lineLimit(1)
+            }
+            .frame(height: Self.headerHeight)
+            .frame(maxWidth: .infinity)
+            .overlay(alignment: .topTrailing) {
+                Button { dismiss() } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(Palette.textPrimary)
+                        .frame(width: 34, height: 34)
+                        .contentShape(.circle)
+                }
+                .buttonStyle(.plain)
+                .glassEffect(.regular.interactive(), in: .circle)
+                .accessibilityLabel(s.common.close)
+                .padding(Spacing.md)
+            }
+            .overlay(alignment: .bottomLeading) {
+                if !tags.isEmpty {
+                    HStack(spacing: Spacing.sm) {
+                        ForEach(Array(tags.enumerated()), id: \.offset) { _, tag in
+                            TagChip(tag.0, color: tag.1, large: true)
+                                .background(Palette.card, in: .capsule)
+                        }
+                    }
+                    .padding(Spacing.md)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: Spacing.xs) {
+                Text(headerName)
+                    .textStyle(.title2)
+                    .foregroundStyle(Palette.textPrimary)
+                    .strikethrough(d.isCancelled && slot.replacement == nil)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.7)
+                if !d.subjectName.isEmpty, d.subjectName.lowercased() != headerName.lowercased() {
+                    Text(d.subjectName).textStyle(.subheadline).foregroundStyle(Palette.textSecondary)
+                }
+                if !dayLine.isEmpty {
+                    Text(dayLine)
+                        .textStyle(TextStyle.footnote.weight(.semibold))
+                        .foregroundStyle(Palette.textSecondary)
+                        .padding(.top, Spacing.xs)
+                }
+                HStack(spacing: Spacing.xs) {
+                    Image(systemName: "clock").font(.system(size: 12, weight: .semibold))
+                    Text(verbatim: "\(Fmt.time(d.startTime)) – \(Fmt.time(d.endTime))")
+                        .textStyle(.footnote)
+                        .monospacedDigit()
+                }
+                .foregroundStyle(tone.ink)
+                .padding(.horizontal, Spacing.md)
+                .padding(.vertical, 6)
+                .background(tone.fill, in: .capsule)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(Spacing.card)
+        }
+    }
+
+    @ViewBuilder
+    private var detailsCard: some View {
         let teacher = d.teacherLongName ?? d.teacherName
         let origTeacher = d.originalTeacherLong ?? (d.originalTeacher ?? "")
-        VStack(alignment: .leading, spacing: 12) {
-            if !teacher.isEmpty || !origTeacher.isEmpty {
-                if !origTeacher.isEmpty && origTeacher != teacher {
-                    changeRow("Lehrer", from: origTeacher, to: teacher, icon: "person.fill")
-                } else {
-                    detailRow("Lehrer", teacher.isEmpty ? origTeacher : teacher, "person.fill")
+        let room = d.roomName, origRoom = d.originalRoom ?? ""
+        let hasTeacher = !teacher.isEmpty || !origTeacher.isEmpty
+        let hasRoom = !room.isEmpty || !origRoom.isEmpty
+        if hasTeacher || hasRoom {
+            PokyhCard(padding: 0) {
+                if hasTeacher {
+                    if !origTeacher.isEmpty && origTeacher != teacher && !teacher.isEmpty {
+                        changeRow(s.timetable.teacher, from: origTeacher, to: teacher, icon: "person.fill")
+                    } else {
+                        detailRow(s.timetable.teacher, teacher.isEmpty ? origTeacher : teacher, icon: "person.fill")
+                    }
+                }
+                if hasRoom {
+                    if hasTeacher { RowSeparator(inset: Spacing.card + Self.tileSize + Spacing.iconText) }
+                    if !origRoom.isEmpty && origRoom != room && !room.isEmpty {
+                        changeRow(s.timetable.room, from: origRoom, to: room, icon: "mappin.and.ellipse")
+                    } else {
+                        detailRow(s.timetable.room, room.isEmpty ? origRoom : room, icon: "mappin.and.ellipse")
+                    }
                 }
             }
-            let room = d.roomName, origRoom = d.originalRoom ?? ""
-            if !room.isEmpty || !origRoom.isEmpty {
-                if !origRoom.isEmpty && origRoom != room {
-                    changeRow("Raum", from: origRoom, to: room, icon: "mappin.circle.fill")
-                } else {
-                    detailRow("Raum", room.isEmpty ? origRoom : room, "mappin.circle.fill")
-                }
-            }
         }
-        .padding(16).frame(maxWidth: .infinity, alignment: .leading)
-        .glassEffect(.regular, in: .rect(cornerRadius: 16))
     }
 
-    private func replacementCard(_ r: TimetableEntry) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Label("Statt", systemImage: "arrow.left.arrow.right").font(.caption.bold()).foregroundStyle(Palette.textSecondary)
-            Text(d.subjectLong.isEmpty ? d.subjectName : d.subjectLong)
-                .font(.subheadline.bold()).foregroundStyle(Palette.textTertiary)
-                .strikethrough(true, color: Palette.danger)
-        }
-        .padding(16).frame(maxWidth: .infinity, alignment: .leading).cardSurface()
+    /// The row's glyph on the subject's pastel, so the list belongs to the lesson.
+    private func tile(_ icon: String) -> some View {
+        Image(systemName: icon)
+            .font(.system(size: 17, weight: .semibold))
+            .foregroundStyle(tone.ink)
+            .frame(width: Self.tileSize, height: Self.tileSize)
+            .background(tone.fill, in: .pokyh(Radius.sm))
     }
 
-    private func tag(_ t: String, _ c: Color) -> some View {
-        Text(t).font(.caption.bold()).padding(.horizontal, 10).padding(.vertical, 4)
-            .background(c.opacity(0.2), in: Capsule()).foregroundStyle(c)
-    }
-    private func detailRow(_ label: String, _ value: String, _ icon: String) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: icon).foregroundStyle(Palette.accent).frame(width: 22)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(label.uppercased()).font(.caption2).foregroundStyle(Palette.textTertiary)
-                Text(value).font(.subheadline.weight(.medium)).foregroundStyle(Palette.textPrimary)
+    private func detailRow(_ label: String, _ value: String, icon: String) -> some View {
+        HStack(spacing: Spacing.iconText) {
+            tile(icon)
+            VStack(alignment: .leading, spacing: Spacing.xxs) {
+                EyebrowLabel(label)
+                Text(value).textStyle(.body).foregroundStyle(Palette.textPrimary)
             }
-            Spacer()
+            Spacer(minLength: 0)
         }
+        .padding(.horizontal, Spacing.card)
+        .padding(.vertical, Spacing.md)
     }
+
+    /// Old and new on their own lines, so two full names never wrap mid-name.
     private func changeRow(_ label: String, from: String, to: String, icon: String) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: icon).foregroundStyle(Palette.accent).frame(width: 22)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(label.uppercased()).font(.caption2).foregroundStyle(Palette.textTertiary)
-                HStack(spacing: 6) {
-                    Text(from).strikethrough(true, color: Palette.danger).foregroundStyle(Palette.danger)
-                    Image(systemName: "arrow.right").font(.caption2).foregroundStyle(Palette.textTertiary)
-                    Text(to).foregroundStyle(Palette.orange)
-                }.font(.subheadline.weight(.medium))
+        HStack(spacing: Spacing.iconText) {
+            tile(icon)
+            VStack(alignment: .leading, spacing: Spacing.xxs) {
+                EyebrowLabel(label)
+                Text(from).textStyle(.body).foregroundStyle(Brand.danger).strikethrough()
+                HStack(spacing: Spacing.sm) {
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Palette.textTertiary)
+                    Text(to).textStyle(.body).foregroundStyle(Brand.orange)
+                }
             }
-            Spacer()
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, Spacing.card)
+        .padding(.vertical, Spacing.md)
+    }
+
+    /// The other half of a substitution, whichever half was tapped.
+    private func insteadCard(_ other: TimetableEntry) -> some View {
+        let cancelled = other.isCancelled
+        let meta = [other.teacherName, other.roomName].filter { !$0.isEmpty }.joined(separator: " · ")
+        return PokyhCard {
+            HStack(spacing: Spacing.sm) {
+                Image(systemName: "arrow.left.arrow.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Palette.textTertiary)
+                EyebrowLabel(cancelled ? s.timetable.insteadShort : s.timetable.instead)
+            }
+            Text(other.subjectLong.isEmpty ? Timetable.subjectText(other) : other.subjectLong)
+                .textStyle(.headline)
+                .foregroundStyle(cancelled ? Palette.textTertiary : Palette.textPrimary)
+                .strikethrough(cancelled)
+                .lineLimit(2)
+                .padding(.top, Spacing.sm)
+            if !meta.isEmpty {
+                Text(meta).textStyle(.footnote).foregroundStyle(Palette.textSecondary).padding(.top, Spacing.xxs)
+            }
         }
     }
-    private func section(_ title: String, _ body: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title.uppercased()).font(.caption2.bold()).foregroundStyle(Palette.textSecondary)
-            Text(body).font(.subheadline).foregroundStyle(Palette.textPrimary)
+
+    private func sectionCard(_ title: String, _ body: String) -> some View {
+        PokyhCard {
+            EyebrowLabel(title)
+            Text(body)
+                .textStyle(.body)
+                .foregroundStyle(Palette.textPrimary)
+                .textSelection(.enabled)
+                .padding(.top, Spacing.sm)
         }
-        .padding(16).frame(maxWidth: .infinity, alignment: .leading).cardSurface()
     }
 }
+
+// ── Previews ────────────────────────────────────────────────────────────────
+
+#if DEBUG
+private enum TimetablePreviewData {
+    static func entry(_ id: Int, day: Int, _ start: Int, _ end: Int, _ subject: String, teacher: String = "MÜL",
+                      room: String = "2.05", cancelled: Bool = false, exam: Bool = false,
+                      originalRoom: String? = nil) -> TimetableEntry {
+        TimetableEntry(id: id, lessonId: id, date: day, startTime: start, endTime: end, subjectName: subject,
+                       subjectLong: subject, teacherName: teacher, teacherLongName: nil, roomName: room,
+                       isExam: exam, isCancelled: cancelled, isSubstitution: originalRoom != nil, isAdditional: false,
+                       originalSubject: nil, originalSubjectLong: nil, originalTeacher: nil, originalTeacherLong: nil,
+                       originalRoom: originalRoom, note: nil, examDescription: exam ? "Kapitel 3 und 4" : nil)
+    }
+
+    static let week: [[TimetableEntry]] = {
+        let base = 20261102
+        return (0..<6).map { d in
+            guard d < 5 else { return [] }
+            return [
+                entry(d * 10 + 1, day: base + d, 750, 840, ["D", "M", "IT", "ENGL", "R"][d]),
+                entry(d * 10 + 2, day: base + d, 840, 930, ["M", "ENGL", "D", "IT", "Bew.Sport"][d], exam: d == 2),
+                entry(d * 10 + 3, day: base + d, 945, 1035, ["IT", "R", "M", "D", "ENGL"][d], cancelled: d == 1),
+                entry(d * 10 + 4, day: base + d, 1035, 1125, ["ENGL", "D", "R", "M", "IT"][d], originalRoom: d == 3 ? "1.12" : nil),
+            ]
+        }
+    }()
+}
+
+#Preview("Week grid") {
+    GeometryReader { geo in
+        WeekGrid(dayEntries: TimetablePreviewData.week, dayLabels: ["Mo", "Di", "Mi", "Do", "Fr", "Sa"],
+                 dayNumbers: [2, 3, 4, 5, 6, 7], weekLabel: "KW 45", monthLabel: "Nov.",
+                 todayNum: 20261104, dayNums: (0..<6).map { 20261102 + $0 }, size: geo.size, onTap: { _, _ in })
+    }
+    .background(Palette.bg)
+}
+
+#Preview("Lesson detail") {
+    let e = TimetablePreviewData.week[2][1]
+    Color.clear.sheet(isPresented: .constant(true)) {
+        LessonDetailView(item: LessonDetailItem(slot: MergedSlot(display: e, replacement: nil, kind: .exam), tone: .exam))
+    }
+}
+#endif

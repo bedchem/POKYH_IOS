@@ -1,13 +1,20 @@
 import SwiftUI
+import Charts
+import PokyhCore
+import PokyhDesign
 
-/// Fach-Detail mit Notenrechner + Zielnote-Rechner — 1:1 wie das Frontend.
+// A subject zoomed in: average, ratio and target calculator up top, then the trend, the grade
+// list and the average calculator. Excluded and added grades are a local draft per subject.
+
 struct GradeSubjectView: View {
     let lessonId: Int
     let subjects: [SubjectGrades]
 
+    @Environment(\.strings) private var s
     @State private var draft = GradeDraft()
     @State private var newGradeInput = ""
     @State private var targetInput = ""
+    @State private var width: CGFloat = 0
 
     private var subject: SubjectGrades? { subjects.first { $0.lessonId == lessonId } }
 
@@ -16,335 +23,604 @@ struct GradeSubjectView: View {
     private var teacherRows: [TeacherRow] {
         guard let subject else { return [] }
         let removed = Set(draft.removedTeacherGradeIds)
-        return subject.grades.sorted { $0.date > $1.date }.map {
-            TeacherRow(id: $0.id, label: gradeDisplay($0), date: $0.date,
+        return subject.grades.filter { $0.date > 0 }.sorted { $0.date > $1.date }.map {
+            TeacherRow(id: $0.id, label: gradeDisplay($0, exam: s.grades.exam), date: $0.date,
                        value: GradeMath.round2($0.markDisplayValue), removed: removed.contains($0.id))
         }
     }
-    private var liveValues: [Double] {
-        teacherRows.filter { !$0.removed }.map { $0.value } + draft.customGrades
-    }
-    private var liveAvg: Double { GradeMath.averageOf(liveValues) }
-    private var positive: Int { liveValues.filter { $0 >= 6 }.count }
-    private var negative: Int { liveValues.filter { $0 < 6 }.count }
+    private var liveValues: [Double] { teacherRows.filter { !$0.removed }.map(\.value) + draft.customGrades }
     private var hasDraft: Bool { !draft.isEmpty }
-    private var targetResult: GradeMath.TargetResult? { GradeMath.target(targetInput, values: liveValues) }
 
-    /// Chronologisch (Lehrernoten nach Datum + eigene am Ende) für den Trend.
-    private var chronological: [Double] {
-        guard let subject else { return [] }
-        let removed = Set(draft.removedTeacherGradeIds)
-        let teacher = subject.grades.filter { !removed.contains($0.id) }
-            .sorted { $0.date < $1.date }.map { GradeMath.round2($0.markDisplayValue) }
-        return teacher + draft.customGrades
+    /// Teacher grades by date, the own ones after them.
+    private var chronological: [GradeTrendPoint] {
+        teacherRows.filter { !$0.removed }.sorted { $0.date < $1.date }
+            .map { GradeTrendPoint(value: $0.value, date: $0.date, label: $0.label, own: false) }
+            + draft.customGrades.map { GradeTrendPoint(value: $0, date: nil, label: s.grades.ownGrade, own: true) }
+    }
+
+    private var subtitle: String {
+        guard let subject else { return "" }
+        var parts: [String] = []
+        if !subject.teacherName.isEmpty { parts.append(subject.teacherName) }
+        if let last = subject.grades.map(\.date).filter({ $0 > 0 }).max() {
+            parts.append("\(s.grades.lastGrade) \(Fmt.dateFull(last))")
+        }
+        return parts.joined(separator: " · ")
     }
 
     var body: some View {
-        ScrollView {
-            LazyVStack(spacing: 14) {
-                averageCard.fadeIn()
-                if chronological.count >= 2 { TrendChart(values: chronological).fadeIn(delay: 0.05) }
-                gradesCard.fadeIn(delay: 0.08)
-                targetCard.fadeIn(delay: 0.12)
-                if hasDraft {
-                    Button(role: .destructive) { reset() } label: {
-                        Label("Rechner zurücksetzen", systemImage: "arrow.counterclockwise")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered).tint(Palette.danger)
-                    .fadeIn(delay: 0.15)
-                }
+        Group {
+            if subject == nil {
+                EmptyStateView(systemImage: "magnifyingglass", title: s.grades.subjectNotFound)
+            } else {
+                content
             }
-            .padding(16)
         }
-        .navigationTitle(subject?.subjectName ?? "Fach")
-        .navigationBarTitleDisplayMode(.inline)
+        .navigationTitle(subject?.subjectName ?? s.grades.subject)
+        .navigationSubtitle(subtitle)
+        .navigationBarTitleDisplayMode(.large)
         .appBackground()
         .onAppear { draft = GradeDraftStore.get(lessonId) }
         .onChange(of: draft) { _, new in GradeDraftStore.set(lessonId, new) }
     }
 
-    // ── Schnitt ───────────────────────────────────────────────────────────────
-    private var averageCard: some View {
-        HStack(alignment: .center) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(hasDraft ? "Schnitt (mit Rechner)" : "Schnitt").font(.caption).foregroundStyle(Palette.textSecondary)
-                Text(liveAvg > 0 ? Fmt.num(liveAvg) : "–")
-                    .font(.system(size: 48, weight: .bold, design: .rounded))
-                    .foregroundStyle(liveAvg > 0 ? Palette.grade(liveAvg) : Palette.textSecondary)
-                    .contentTransition(.numericText())
-                    .animation(.spring(response: 0.4, dampingFraction: 0.8), value: liveAvg)
+    private var content: some View {
+        let values = liveValues
+        let avg = GradeMath.averageOf(values)
+        let teacherAvg = GradeMath.averageOf(teacherRows.map(\.value))
+        let points = chronological
+        let trend: Int = {
+            guard points.count >= 2, let first = points.first, let last = points.last else { return 0 }
+            let d = last.value - first.value
+            return abs(d) < 0.3 ? 0 : (d > 0 ? 1 : -1)
+        }()
+        let wide = WidthClass(width: width) != .compact
+        return ScrollView {
+            VStack(alignment: .leading, spacing: Spacing.section) {
+                Group {
+                    if wide {
+                        HStack(alignment: .top, spacing: Spacing.md) {
+                            averageCard(avg, values, teacherAvg, trend).frame(maxHeight: .infinity)
+                            ratioCard(values).frame(maxHeight: .infinity)
+                            targetCard(values).frame(maxHeight: .infinity)
+                        }
+                        .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        VStack(spacing: Spacing.md) {
+                            averageCard(avg, values, teacherAvg, trend)
+                            ratioCard(values)
+                            targetCard(values)
+                        }
+                    }
+                }
+                .fadeIn()
+
+                PokyhSection(s.grades.trendTitle) {
+                    if hasDraft {
+                        TextLinkButton(s.grades.reset, symbol: "arrow.counterclockwise") { reset() }
+                    }
+                } content: {
+                    if points.isEmpty {
+                        Text(s.grades.noGradesYet).textStyle(.callout).foregroundStyle(Palette.textTertiary)
+                    } else {
+                        TrendChart(points: points)
+                    }
+                    Text(s.grades.trendSub).textStyle(.caption).foregroundStyle(Palette.textTertiary)
+                        .padding(.top, Spacing.xs)
+                }
+                .fadeIn(delay: 0.05)
+
+                gradesSection.fadeIn(delay: 0.08)
+                calcSection.fadeIn(delay: 0.11)
             }
-            Spacer()
-            VStack(alignment: .trailing, spacing: 6) {
-                pill("\(positive) positiv", Palette.tint)
-                pill("\(negative) negativ", Palette.danger)
-                Text("\(liveValues.count) Noten").font(.caption2).foregroundStyle(Palette.textTertiary)
-            }
+            .padding(.horizontal, Spacing.screenH)
+            .padding(.top, Spacing.xs)
+            .padding(.bottom, Spacing.xxxl)
         }
-        .padding(18).cardSurface(radius: 18)
-    }
-    private func pill(_ text: String, _ color: Color) -> some View {
-        Text(text).font(.caption2.weight(.semibold))
-            .padding(.horizontal, 8).padding(.vertical, 3)
-            .background(color.opacity(0.15), in: Capsule()).foregroundStyle(color)
+        .scrollDismissesKeyboard(.interactively)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
     }
 
-    // ── Noten + Notenrechner ──────────────────────────────────────────────────
-    private var gradesCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Noten").font(.headline).foregroundStyle(Palette.textPrimary)
-            ForEach(teacherRows) { row in
-                gradeRow(value: row.value, label: row.label, sub: Fmt.dateFull(row.date),
-                         removed: row.removed, isCustom: false) {
+    // ── Schnitt · Notenverhältnis · Was brauche ich? ─────────────────────────
+
+    private func averageCard(_ avg: Double, _ values: [Double], _ teacherAvg: Double, _ trend: Int) -> some View {
+        let tone = avg > 0 ? GradesLook.tone(avg) : Tone(fill: Palette.card, ink: Palette.textPrimary)
+        let chip: (String, String, Tone) = switch trend {
+        case 1: (s.grades.rising, "arrow.up.right", Decorative.sage)
+        case -1: (s.grades.falling, "arrow.down.right", Decorative.blush)
+        default: (s.grades.stable, "arrow.right", Tone(fill: Palette.nested, ink: Palette.textSecondary))
+        }
+        let delta = avg > 0 && teacherAvg > 0 ? avg - teacherAvg : 0
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(s.grades.average).textStyle(TextStyle.callout.weight(.bold)).foregroundStyle(tone.ink)
+                    Text(s.grades.gradeCount(values.count) + (hasDraft ? " · \(s.grades.simulation)" : ""))
+                        .textStyle(TextStyle.footnote.weight(.semibold))
+                        .foregroundStyle(tone.ink.opacity(0.75))
+                }
+                Spacer(minLength: Spacing.sm)
+                HStack(spacing: Spacing.xs) {
+                    Image(systemName: chip.1).font(.system(size: 11, weight: .bold))
+                    Text(chip.0).textStyle(TextStyle.caption.weight(.bold))
+                }
+                .foregroundStyle(chip.2.ink)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(chip.2.fill, in: .capsule)
+            }
+            Spacer(minLength: Spacing.lg)
+            HStack(alignment: .lastTextBaseline) {
+                Text(avg > 0 ? GradesLook.num(avg, s) : "—")
+                    .textStyle(.statLarge)
+                    .foregroundStyle(tone.ink)
+                    .contentTransition(.numericText())
+                    .animation(Motion.smooth, value: avg)
+                Spacer(minLength: Spacing.sm)
+                if hasDraft && abs(delta) > 0.005 {
+                    VStack(alignment: .trailing, spacing: 0) {
+                        Text("\(s.grades.teacherAvg) \(GradesLook.num(teacherAvg, s))")
+                            .textStyle(TextStyle.caption.weight(.semibold))
+                            .foregroundStyle(tone.ink.opacity(0.8))
+                        Text((delta >= 0 ? "+" : "−") + GradesLook.num(abs(delta), s))
+                            .textStyle(TextStyle.callout.weight(.heavy))
+                            .foregroundStyle(tone.ink)
+                    }
+                } else if let best = values.max() {
+                    Text(s.grades.best(GradesLook.num(best, s)))
+                        .textStyle(TextStyle.footnote.weight(.semibold))
+                        .foregroundStyle(tone.ink.opacity(0.8))
+                }
+            }
+        }
+        .padding(22)
+        .frame(maxWidth: .infinity, minHeight: 150, maxHeight: .infinity, alignment: .topLeading)
+        .cardSurface(radius: Radius.xxl, fill: tone.fill)
+    }
+
+    private func ratioCard(_ values: [Double]) -> some View {
+        let positive = values.filter { $0 >= 6 }.count
+        let negative = values.count - positive
+        let rate = values.isEmpty ? 0 : Double(positive) * 100 / Double(values.count)
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(s.grades.ratioTitle).textStyle(TextStyle.callout.weight(.bold)).foregroundStyle(Palette.textPrimary)
+                    Text(s.grades.ratioSub).textStyle(.footnote).foregroundStyle(Palette.textSecondary)
+                }
+                Spacer(minLength: Spacing.sm)
+                Text("\(Int(rate.rounded())) %")
+                    .textStyle(TextStyle.caption.weight(.bold))
+                    .foregroundStyle(Palette.textSecondary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(Palette.nested, in: .capsule)
+            }
+            Spacer(minLength: Spacing.lg)
+            HStack(alignment: .lastTextBaseline, spacing: Spacing.sm) {
+                Text("\(positive)").textStyle(.statLarge).foregroundStyle(Brand.success)
+                Text("/").textStyle(.title2).foregroundStyle(Palette.textTertiary)
+                Text("\(negative)").textStyle(TextStyle.title1.weight(.heavy)).foregroundStyle(Brand.danger)
+            }
+            RatioBar(passRate: rate, hasGrades: !values.isEmpty, height: 8, gap: 3)
+                .padding(.top, Spacing.md)
+        }
+        .padding(22)
+        .frame(maxWidth: .infinity, minHeight: 150, maxHeight: .infinity, alignment: .topLeading)
+        .cardSurface(radius: Radius.xxl, fill: Palette.card)
+    }
+
+    private func targetCard(_ values: [Double]) -> some View {
+        let tone = Decorative.periwinkle
+        let r = GradeMath.target(targetInput, values: values)
+        let hint: String = {
+            guard let r else { return s.grades.hintEnter }
+            switch r.status {
+            case .reached: return s.grades.hintReached
+            case .impossible: return s.grades.hintImpossible
+            case .reachable: return r.count == 1 ? s.grades.hintNext : s.grades.hintMany(r.count, GradesLook.num(r.needed, s))
+            }
+        }()
+        return VStack(alignment: .leading, spacing: Spacing.md) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(s.grades.whatDoINeed).textStyle(TextStyle.callout.weight(.bold)).foregroundStyle(tone.ink)
+                    Text(s.grades.targetCalc).textStyle(TextStyle.footnote.weight(.semibold)).foregroundStyle(tone.ink.opacity(0.75))
+                }
+                Spacer(minLength: Spacing.sm)
+                Image(systemName: "target").font(.system(size: 18, weight: .semibold)).foregroundStyle(tone.ink)
+            }
+            HStack(spacing: Spacing.md) {
+                TextField("", text: gradeBinding($targetInput), prompt: Text(s.grades.targetShort).foregroundStyle(tone.ink.opacity(0.55)))
+                    .keyboardType(.decimalPad)
+                    .multilineTextAlignment(.center)
+                    .textStyle(TextStyle.title2.weight(.heavy))
+                    .foregroundStyle(tone.ink)
+                    .tint(tone.ink)
+                    .frame(width: 96)
+                    .padding(.vertical, Spacing.md)
+                    .background(tone.ink.opacity(0.12), in: .pokyh(Radius.lg))
+                Image(systemName: "chevron.right").font(.system(size: 16, weight: .semibold)).foregroundStyle(tone.ink)
+                HStack(alignment: .lastTextBaseline, spacing: 0) {
+                    if let r, r.status == .reachable {
+                        if r.count > 1 {
+                            Text("\(r.count)× ").textStyle(.headline).foregroundStyle(tone.ink.opacity(0.75))
+                        }
+                        Text(GradesLook.num(r.needed, s))
+                    } else {
+                        Text(r == nil ? "-" : (r?.status == .reached ? "✓" : "✕"))
+                    }
+                }
+                .textStyle(TextStyle.title1.weight(.heavy))
+                .foregroundStyle(tone.ink)
+                .contentTransition(.numericText())
+            }
+            Text(hint).textStyle(TextStyle.footnote.weight(.semibold)).foregroundStyle(tone.ink.opacity(0.8))
+        }
+        .padding(22)
+        .frame(maxWidth: .infinity, minHeight: 150, maxHeight: .infinity, alignment: .topLeading)
+        .cardSurface(radius: Radius.xxl, fill: tone.fill)
+        .animation(.easeInOut(duration: Motion.fast), value: r?.needed)
+    }
+
+    // ── Noten-Liste ──────────────────────────────────────────────────────────
+
+    private var gradesSection: some View {
+        let rows = teacherRows
+        return PokyhSection(s.grades.gradeList) {
+            Text(s.grades.activeExcluded(rows.filter { !$0.removed }.count, rows.filter(\.removed).count))
+                .textStyle(TextStyle.footnote.weight(.semibold))
+                .foregroundStyle(Palette.textSecondary)
+        } content: {
+            if rows.isEmpty {
+                Text(s.grades.noGradesYet).textStyle(.callout).foregroundStyle(Palette.textTertiary)
+            } else {
+                ListCard(rows) { row in teacherGradeRow(row) }
+            }
+        }
+    }
+
+    private func teacherGradeRow(_ row: TeacherRow) -> some View {
+        let tone = GradesLook.tone(row.value)
+        return HStack(spacing: Spacing.iconText) {
+            Text(GradesLook.num(row.value, s))
+                .textStyle(TextStyle.callout.weight(.heavy).tabularDigits)
+                .strikethrough(row.removed)
+                .foregroundStyle(row.removed ? Palette.textTertiary : tone.ink)
+                .padding(.horizontal, Spacing.sm)
+                .padding(.vertical, 10)
+                .frame(minWidth: 52)
+                .background(row.removed ? Palette.nested : tone.fill, in: .pokyh(Radius.md))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(row.label).textStyle(TextStyle.callout.weight(.semibold)).foregroundStyle(Palette.textPrimary).lineLimit(1)
+                Text("\(Fmt.dateShort(row.date)) · \(relativeDay(row.date))").textStyle(.footnote).foregroundStyle(Palette.textSecondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Button {
+                withAnimation(.easeInOut(duration: Motion.fast)) {
                     if row.removed { draft.removedTeacherGradeIds.removeAll { $0 == row.id } }
                     else { draft.removedTeacherGradeIds.append(row.id) }
                 }
+            } label: {
+                Image(systemName: row.removed ? "arrow.uturn.backward" : "eye.slash")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Palette.textTertiary)
+                    .frame(width: 36, height: 36)
+                    .contentShape(.circle)
             }
-            ForEach(Array(draft.customGrades.enumerated()), id: \.offset) { idx, val in
-                gradeRow(value: val, label: "Eigene Note", sub: "Notenrechner",
-                         removed: false, isCustom: true) {
-                    draft.customGrades.remove(at: idx)
+            .buttonStyle(.plain)
+            .accessibilityLabel(row.removed ? s.grades.restoreGrade : s.grades.excludeGrade)
+        }
+        .padding(.horizontal, Spacing.card)
+        .padding(.vertical, 10)
+        .opacity(row.removed ? 0.45 : 1)
+    }
+
+    // ── Mittelwert-Rechner ───────────────────────────────────────────────────
+
+    private var calcSection: some View {
+        PokyhSection(s.grades.avgCalc) {
+            VStack(alignment: .leading, spacing: Spacing.md) {
+                Text(s.grades.avgCalcSub).textStyle(.footnote).foregroundStyle(Palette.textSecondary)
+                HStack(spacing: Spacing.sm) {
+                    TextField("", text: gradeBinding($newGradeInput), prompt: Text(s.grades.examplePlaceholder).foregroundStyle(Palette.textTertiary))
+                        .keyboardType(.decimalPad)
+                        .textStyle(.body)
+                        .foregroundStyle(Palette.textPrimary)
+                        .tint(Brand.accent)
+                        .padding(.horizontal, Spacing.lg)
+                        .frame(minHeight: 48)
+                        .background(Palette.cardAlt, in: .pokyh(Radius.md))
+                        .onSubmit(addCustom)
+                    Button(action: addCustom) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 17, weight: .bold))
+                            .foregroundStyle(Brand.onAccent)
+                            .frame(width: 44, height: 44)
+                            .background(Brand.accent.opacity(GradeMath.parseGradeInput(newGradeInput) == nil ? 0.45 : 1), in: .circle)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(GradeMath.parseGradeInput(newGradeInput) == nil)
+                    .accessibilityLabel(s.grades.add)
+                }
+                // Quick test: a tap adds that grade.
+                HStack(spacing: 6) {
+                    ForEach(4...10, id: \.self) { v in
+                        let tone = GradesLook.tone(Double(v))
+                        Button {
+                            withAnimation(Motion.snappy) { draft.customGrades.append(Double(v)) }
+                        } label: {
+                            Text("\(v)")
+                                .textStyle(TextStyle.callout.weight(.heavy))
+                                .foregroundStyle(tone.ink)
+                                .frame(maxWidth: .infinity, minHeight: 40)
+                                .background(tone.fill, in: .pokyh(Radius.md))
+                        }
+                        .buttonStyle(.rowPress(radius: Radius.md))
+                    }
+                }
+                if draft.customGrades.isEmpty {
+                    Text(s.grades.noOwnGrades).textStyle(.footnote).foregroundStyle(Palette.textTertiary)
+                } else {
+                    ChipFlow(spacing: 6) {
+                        ForEach(Array(draft.customGrades.enumerated()), id: \.offset) { idx, value in
+                            Button {
+                                withAnimation(Motion.snappy) { _ = draft.customGrades.remove(at: idx) }
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Text(GradesLook.num(value, s)).textStyle(TextStyle.footnote.weight(.bold)).foregroundStyle(Palette.textPrimary)
+                                    Image(systemName: "xmark").font(.system(size: 9, weight: .bold)).foregroundStyle(Palette.textTertiary)
+                                }
+                                .padding(.leading, 12)
+                                .padding(.trailing, 8)
+                                .padding(.vertical, 6)
+                                .background(Palette.nested, in: .capsule)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(s.grades.removeOwnGrade)
+                        }
+                    }
                 }
             }
-
-            HStack(spacing: 8) {
-                TextField("Note (1–10)", text: $newGradeInput)
-                    .keyboardType(.decimalPad)
-                    .padding(.horizontal, 12).padding(.vertical, 10)
-                    .background(Palette.cardAlt, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                Button { addCustom() } label: {
-                    Label("Hinzufügen", systemImage: "plus").font(.subheadline.weight(.semibold))
-                        .padding(.horizontal, 14).padding(.vertical, 10)
-                }
-                .buttonStyle(.glassProminent).tint(Palette.accent)
-                .disabled(GradeMath.parseGradeInput(newGradeInput) == nil)
-            }
-            .padding(.top, 4)
+            .padding(Spacing.card)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .cardSurface(radius: Radius.xl, fill: Palette.card)
         }
-        .padding(16).cardSurface()
     }
 
-    private func gradeRow(value: Double, label: String, sub: String, removed: Bool, isCustom: Bool, action: @escaping () -> Void) -> some View {
-        HStack(spacing: 12) {
-            Text(Fmt.num(value, digits: value == value.rounded() ? 0 : 1))
-                .font(.headline.monospacedDigit())
-                .frame(width: 42, height: 42)
-                .background((removed ? Color.gray : Palette.grade(value)).opacity(0.18), in: Circle())
-                .foregroundStyle(removed ? Palette.textTertiary : Palette.grade(value))
-                .overlay(removed ? Circle().strokeBorder(Palette.textTertiary, style: StrokeStyle(lineWidth: 1, dash: [3])) : nil)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(label).font(.subheadline.weight(.medium))
-                    .foregroundStyle(removed ? Palette.textTertiary : Palette.textPrimary)
-                    .strikethrough(removed)
-                HStack(spacing: 4) {
-                    if isCustom { Image(systemName: "function").font(.caption2).foregroundStyle(Palette.accent) }
-                    Text(sub).font(.caption2).foregroundStyle(Palette.textTertiary)
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    /// Up to two digits, a comma or point, two decimals, as the web's grade fields take it.
+    private func gradeBinding(_ text: Binding<String>) -> Binding<String> {
+        Binding(
+            get: { text.wrappedValue },
+            set: { new in
+                if new.range(of: #"^\d{0,2}([.,]\d{0,2})?$"#, options: .regularExpression) != nil {
+                    text.wrappedValue = new
                 }
             }
-            Spacer()
-            Button(action: action) {
-                Image(systemName: isCustom ? "trash" : (removed ? "arrow.uturn.backward" : "xmark"))
-                    .font(.footnote)
-                    .foregroundStyle(isCustom ? Palette.danger : (removed ? Palette.accent : Palette.textTertiary))
-            }.buttonStyle(.pressable)
-        }
-        .padding(.vertical, 2)
+        )
     }
 
-    // ── Zielnote-Rechner ──────────────────────────────────────────────────────
-    private var targetCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label("Zielnote-Rechner", systemImage: "target").font(.headline).foregroundStyle(Palette.textPrimary)
-            TextField("Zielnote (z. B. 7)", text: $targetInput)
-                .keyboardType(.decimalPad)
-                .padding(.horizontal, 12).padding(.vertical, 10)
-                .background(Palette.cardAlt, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            if let r = targetResult {
-                Text(targetText(r)).font(.subheadline).foregroundStyle(targetColor(r))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .transition(.opacity)
-            } else if !targetInput.isEmpty {
-                Text("Gib eine gültige Note (1–10) ein.").font(.caption).foregroundStyle(Palette.textTertiary)
-            }
-        }
-        .padding(16).cardSurface()
-        .animation(.easeInOut, value: targetResult?.needed)
-    }
-
-    private func targetText(_ r: GradeMath.TargetResult) -> String {
-        switch r.status {
-        case .reached: return "Du hast die Zielnote \(Fmt.num(r.target)) bereits erreicht."
-        case .impossible: return "Die Zielnote \(Fmt.num(r.target)) ist nicht erreichbar."
-        case .reachable:
-            let verb = liveAvg < r.target ? "mindestens" : "höchstens"
-            let noun = r.count == 1 ? "Note" : "Noten"
-            return "Du brauchst \(r.count) \(noun) mit \(verb) \(Fmt.num(r.needed)), um \(Fmt.num(r.target)) zu erreichen."
-        }
-    }
-    private func targetColor(_ r: GradeMath.TargetResult) -> Color {
-        switch r.status {
-        case .reached: return Palette.tint
-        case .impossible: return Palette.danger
-        case .reachable: return Palette.textSecondary
+    /// "heute", "gestern", "vor 3 Tagen" and so on.
+    private func relativeDay(_ date: Int) -> String {
+        var c = DateComponents()
+        c.year = date / 10000; c.month = (date / 100) % 100; c.day = date % 100
+        let cal = Calendar(identifier: .gregorian)
+        guard let d = cal.date(from: c) else { return "" }
+        let diff = cal.dateComponents([.day], from: cal.startOfDay(for: d), to: cal.startOfDay(for: Date())).day ?? 0
+        let g = s.grades
+        switch diff {
+        case ..<1: return g.relToday
+        case 1: return g.relYesterday
+        case ..<7: return g.daysAgo(diff)
+        case ..<30: return g.weeksAgo(Int((Double(diff) / 7).rounded()))
+        case ..<365: return g.monthsAgo(Int((Double(diff) / 30).rounded()))
+        default: return g.yearsAgo(Int((Double(diff) / 365).rounded()))
         }
     }
 
-    // ── Aktionen ──────────────────────────────────────────────────────────────
     private func addCustom() {
         guard let v = GradeMath.parseGradeInput(newGradeInput) else { return }
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
-            draft.customGrades.append(v)
-        }
+        withAnimation(Motion.snappy) { draft.customGrades.append(v) }
         newGradeInput = ""
     }
+
     private func reset() {
         withAnimation { draft = GradeDraft(); newGradeInput = ""; targetInput = "" }
     }
 }
 
-/// Schlichter Trend-Sparkline (SwiftUI Path).
+/// Chips that wrap onto the next line.
+private struct ChipFlow: Layout {
+    var spacing: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var x: CGFloat = 0, y: CGFloat = 0, line: CGFloat = 0, widest: CGFloat = 0
+        for view in subviews {
+            let size = view.sizeThatFits(.unspecified)
+            if x > 0 && x + size.width > maxWidth { x = 0; y += line + spacing; line = 0 }
+            x += size.width + spacing
+            line = max(line, size.height)
+            widest = max(widest, x - spacing)
+        }
+        return CGSize(width: proposal.width ?? widest, height: y + line)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX, y = bounds.minY, line: CGFloat = 0
+        for view in subviews {
+            let size = view.sizeThatFits(.unspecified)
+            if x > bounds.minX && x + size.width > bounds.maxX { x = bounds.minX; y += line + spacing; line = 0 }
+            view.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            line = max(line, size.height)
+        }
+    }
+}
+
+// ── Trend chart ─────────────────────────────────────────────────────────────
+
+/// One grade on the trend: a teacher's (with its date) or one of the student's own.
+struct GradeTrendPoint: Equatable {
+    let value: Double
+    let date: Int?
+    let label: String
+    let own: Bool
+}
+
+/// Each grade a dot (below 6 red, own ones hollow on a dashed line), the running average as a
+/// line, the band under 6 tinted. A tap on a dot shows its date, label, value and average so far.
 struct TrendChart: View {
-    let values: [Double]
-    private let yTicks: [Double] = [10, 8, 6, 4, 2]   // Y-Achse: Note
-    private let chartHeight: CGFloat = 130
+    let points: [GradeTrendPoint]
+    @Environment(\.strings) private var s
+    @State private var selected: Int?
+
+    private var running: [Double] {
+        var sum = 0.0
+        return points.enumerated().map { i, p in sum += p.value; return sum / Double(i + 1) }
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Label("Notenverlauf", systemImage: "chart.xyaxis.line").font(.caption.bold()).foregroundStyle(Palette.textSecondary)
-                Spacer()
-                legendDot(Palette.accent.opacity(0.6), "Noten")
-                legendDot(Palette.grade(cumulativeAverages.last ?? 0), "Ø")
-                legendDot(Palette.orange, "Trend \(trendArrow)")
-            }
-
-            HStack(alignment: .top, spacing: 8) {
-                // Y-Achse (Note)
-                VStack(alignment: .trailing, spacing: 0) {
-                    ForEach(yTicks, id: \.self) { t in
-                        Text(Fmt.num(t, digits: 0)).font(.system(size: 9)).foregroundStyle(Palette.textTertiary)
-                        if t != yTicks.last { Spacer(minLength: 0) }
+        let run = running
+        let lowest = points.map(\.value).min() ?? 6
+        let yMin = max(1, min(4, lowest).rounded(.down))
+        let avgColor = PokyhDesign.Palette.grade(run.last ?? 6)
+        let firstOwn = points.firstIndex { $0.own }
+        let n = points.count
+        let xDomain = n <= 1 ? -1.0...1.0 : -0.35...(Double(n - 1) + 0.35)
+        VStack(alignment: .leading, spacing: Spacing.sm) {
+            Chart {
+                RuleMark(y: .value("6", 6.0))
+                    .foregroundStyle(Palette.textTertiary.opacity(0.45))
+                    .lineStyle(StrokeStyle(lineWidth: 1.5))
+                if n > 1 {
+                    ForEach(Array(run.enumerated()), id: \.offset) { i, a in
+                        LineMark(x: .value("i", Double(i)), y: .value("avg", a), series: .value("s", "avg"))
+                            .foregroundStyle(avgColor)
+                            .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
                     }
                 }
-                .frame(width: 16, height: chartHeight)
-
+                if let f = firstOwn, f > 0 {
+                    ForEach(Array((f - 1)..<n), id: \.self) { i in
+                        LineMark(x: .value("i", Double(i)), y: .value("own", points[i].value), series: .value("s", "own"))
+                            .foregroundStyle(Palette.textTertiary)
+                            .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+                    }
+                }
+                ForEach(Array(points.enumerated()), id: \.offset) { i, p in
+                    PointMark(x: .value("i", n <= 1 ? 0 : Double(i)), y: .value("grade", p.value))
+                        .symbol { dot(p, big: selected == i) }
+                }
+                if let i = selected, i < n {
+                    PointMark(x: .value("i", n <= 1 ? 0 : Double(i)), y: .value("grade", points[i].value))
+                        .symbolSize(0)
+                        .annotation(position: .top, spacing: 10, overflowResolution: .init(x: .fit(to: .chart), y: .fit(to: .chart))) {
+                            detailCard(points[i], average: run[i])
+                        }
+                }
+            }
+            .chartXScale(domain: xDomain)
+            .chartYScale(domain: yMin...10)
+            .chartXAxis(.hidden)
+            .chartYAxis {
+                AxisMarks(position: .leading, values: Array(stride(from: yMin, through: 10, by: 1))) { value in
+                    AxisGridLine(stroke: StrokeStyle(lineWidth: 1))
+                        .foregroundStyle(Palette.textTertiary.opacity(0.15))
+                    AxisValueLabel {
+                        if let v = value.as(Double.self) {
+                            Text("\(Int(v))").textStyle(.caption2).foregroundStyle(Palette.textTertiary)
+                        }
+                    }
+                }
+            }
+            .chartBackground { proxy in
+                // The band under 6.
                 GeometryReader { geo in
-                    let w = geo.size.width, h = geo.size.height
-                    let gradePts = points(values, in: CGSize(width: w, height: h))
-                    let cumAvgs = cumulativeAverages
-                    let avgPts = points(cumAvgs, in: CGSize(width: w, height: h))
-                    let finalAvg = cumAvgs.last ?? 0
-                    let avgColor = Palette.grade(finalAvg)
-                    ZStack {
-                        // Hilfslinien je Note
-                        ForEach(yTicks, id: \.self) { t in
-                            let y = h - CGFloat((t - 1) / 9) * h
-                            Path { p in p.move(to: CGPoint(x: 0, y: y)); p.addLine(to: CGPoint(x: w, y: y)) }
-                                .stroke((t == 6 ? Palette.tint : Palette.separator).opacity(t == 6 ? 0.5 : 0.4),
-                                        style: StrokeStyle(lineWidth: t == 6 ? 1 : 0.5, dash: t == 6 ? [4] : []))
-                        }
-                        // Einzelnoten – feine Linie + Punkte (die „Kurse")
-                        Path { p in
-                            guard let first = gradePts.first else { return }
-                            p.move(to: first); for pt in gradePts.dropFirst() { p.addLine(to: pt) }
-                        }
-                        .stroke(Palette.accent.opacity(0.45), style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
-                        ForEach(Array(gradePts.enumerated()), id: \.offset) { _, pt in
-                            Circle().fill(Palette.accent).frame(width: 5, height: 5).position(pt)
-                        }
-                        // Kumulativer Durchschnitt (laufender Mittelwert – wie ein Moving Average)
-                        Path { p in
-                            guard let first = avgPts.first else { return }
-                            p.move(to: first); for pt in avgPts.dropFirst() { p.addLine(to: pt) }
-                        }
-                        .stroke(avgColor, style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
-                        // Trend-„Stich": dünne lineare Regression – zeigt, ob es steigt/sinkt.
-                        if let r = regression {
-                            let y0 = yFor(r.intercept, h)
-                            let y1 = yFor(r.slope * Double(values.count - 1) + r.intercept, h)
-                            Path { p in p.move(to: CGPoint(x: 0, y: y0)); p.addLine(to: CGPoint(x: w, y: y1)) }
-                                .stroke(Palette.orange.opacity(0.85), style: StrokeStyle(lineWidth: 1.2, dash: [5, 3]))
-                        }
-                        // Endpunkt + Label = aktueller Gesamtschnitt
-                        if let last = avgPts.last {
-                            Circle().fill(avgColor).frame(width: 7, height: 7).position(last)
-                            Text("Ø \(Fmt.num(finalAvg))")
-                                .font(.system(size: 9, weight: .bold)).foregroundStyle(.white)
-                                .padding(.horizontal, 5).padding(.vertical, 1.5)
-                                .background(avgColor, in: Capsule())
-                                .position(x: min(w - 22, last.x), y: max(9, last.y - 12))
-                        }
+                    if let anchor = proxy.plotFrame, let y6 = proxy.position(forY: 6.0) {
+                        let plot = geo[anchor]
+                        Rectangle()
+                            .fill(Brand.danger.opacity(0.07))
+                            .frame(width: plot.width, height: max(0, plot.height - y6))
+                            .offset(x: plot.minX, y: plot.minY + y6)
                     }
                 }
-                .frame(height: chartHeight)
+            }
+            .chartOverlay { proxy in
+                GeometryReader { geo in
+                    Rectangle().fill(.clear).contentShape(.rect)
+                        .onTapGesture { location in
+                            guard let anchor = proxy.plotFrame, n > 0 else { return }
+                            let x = location.x - geo[anchor].minX
+                            guard let v: Double = proxy.value(atX: x) else { return }
+                            let hit = n <= 1 ? 0 : min(n - 1, max(0, Int(v.rounded())))
+                            withAnimation(.easeOut(duration: Motion.fast)) { selected = selected == hit ? nil : hit }
+                        }
+                }
+            }
+            .frame(height: 200)
+
+            // The first, middle and last grade's dates.
+            let dated = points.enumerated().compactMap { i, p in p.date.map { (i, $0) } }
+            if !dated.isEmpty {
+                let shown = [dated.first, dated.count > 2 ? dated[dated.count / 2] : nil, dated.count > 1 ? dated.last : nil].compactMap { $0 }
+                HStack {
+                    ForEach(Array(shown.enumerated()), id: \.offset) { idx, item in
+                        Text(Fmt.dateShort(item.1))
+                            .textStyle(.caption2)
+                            .foregroundStyle(Palette.textTertiary)
+                            .frame(maxWidth: .infinity, alignment: idx == 0 ? .leading : (idx == shown.count - 1 ? .trailing : .center))
+                    }
+                }
+                .padding(.leading, 22)
             }
 
-            // X-Achse (Reihenfolge der Noten)
-            HStack {
-                Text("Note 1").font(.system(size: 9)).foregroundStyle(Palette.textTertiary)
-                Spacer()
-                Text("Note \(values.count)").font(.system(size: 9)).foregroundStyle(Palette.textTertiary)
+            HStack(spacing: Spacing.md) {
+                Circle().fill(avgColor).frame(width: 10, height: 10)
+                Text(s.grades.average).textStyle(.caption).foregroundStyle(Palette.textSecondary)
+                if firstOwn != nil {
+                    Circle().strokeBorder(Palette.textTertiary, lineWidth: 2).frame(width: 10, height: 10)
+                    Text(s.grades.ownGrade).textStyle(.caption).foregroundStyle(Palette.textSecondary)
+                }
             }
-            .padding(.leading, 24)
         }
-        .padding(16).cardSurface()
+        .padding(Spacing.card)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardSurface(radius: Radius.xl, fill: Palette.card)
     }
 
-    /// Laufender (kumulativer) Mittelwert: an Position i der Schnitt aller Noten bis i.
-    /// Eigene eingegebene Noten sind in `values` bereits enthalten.
-    private var cumulativeAverages: [Double] {
-        var sum = 0.0
-        return values.enumerated().map { i, v in sum += v; return sum / Double(i + 1) }
-    }
-
-    /// Mappt eine Wertreihe gleichmäßig über die Breite (Y = Note 1…10).
-    private func points(_ vals: [Double], in size: CGSize) -> [CGPoint] {
-        guard !vals.isEmpty else { return [] }
-        guard vals.count > 1 else {
-            let y = size.height - CGFloat((min(10, max(1, vals[0])) - 1) / 9) * size.height
-            return [CGPoint(x: size.width / 2, y: y)]
-        }
-        return vals.enumerated().map { idx, v in
-            let x = CGFloat(idx) / CGFloat(vals.count - 1) * size.width
-            let y = size.height - CGFloat((min(10, max(1, v)) - 1) / 9) * size.height
-            return CGPoint(x: x, y: y)
+    @ViewBuilder private func dot(_ p: GradeTrendPoint, big: Bool) -> some View {
+        let tone = p.value < 6 ? Brand.danger : Palette.textPrimary
+        let size: CGFloat = big ? 12 : 9
+        if p.own {
+            Circle().fill(Palette.card)
+                .overlay(Circle().strokeBorder(tone, lineWidth: 2))
+                .frame(width: size, height: size)
+        } else {
+            Circle().fill(tone).frame(width: size, height: size)
         }
     }
 
-    /// Lineare Regression über die Noten (x = Index, y = Note) für die Trendlinie.
-    private var regression: (slope: Double, intercept: Double)? {
-        let n = values.count
-        guard n >= 2 else { return nil }
-        let meanX = Double(n - 1) / 2
-        let meanY = values.reduce(0, +) / Double(n)
-        var num = 0.0, den = 0.0
-        for i in 0..<n {
-            let dx = Double(i) - meanX
-            num += dx * (values[i] - meanY); den += dx * dx
+    private func detailCard(_ p: GradeTrendPoint, average: Double) -> some View {
+        var head: [String] = []
+        if let date = p.date { head.append(Fmt.dateShort(date)) }
+        if !p.label.isEmpty { head.append(p.label) }
+        return VStack(alignment: .leading, spacing: 1) {
+            Text(head.joined(separator: " · "))
+                .textStyle(.caption2)
+                .foregroundStyle(Palette.textSecondary)
+                .lineLimit(2)
+            Text(GradesLook.num(p.value, s))
+                .textStyle(TextStyle.headline.weight(.heavy))
+                .foregroundStyle(PokyhDesign.Palette.grade(p.value))
+            Text("Ø \(GradesLook.num(average, s))")
+                .textStyle(.caption2)
+                .foregroundStyle(Palette.textTertiary)
         }
-        guard den != 0 else { return nil }
-        let slope = num / den
-        return (slope, meanY - slope * meanX)
-    }
-
-    /// Trendrichtung als Pfeil für die Legende.
-    private var trendArrow: String {
-        guard let r = regression else { return "→" }
-        if r.slope > 0.05 { return "↗" }
-        if r.slope < -0.05 { return "↘" }
-        return "→"
-    }
-
-    /// Note → Y-Position (Skala 1…10), geklemmt.
-    private func yFor(_ v: Double, _ h: CGFloat) -> CGFloat {
-        h - CGFloat((min(10, max(1, v)) - 1) / 9) * h
-    }
-
-    private func legendDot(_ color: Color, _ text: String) -> some View {
-        HStack(spacing: 3) {
-            Circle().fill(color).frame(width: 6, height: 6)
-            Text(text).font(.system(size: 9)).foregroundStyle(Palette.textTertiary)
-        }
+        .frame(width: 120, alignment: .leading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, Spacing.sm)
+        .background(Palette.nested, in: .pokyh(Radius.md))
     }
 }

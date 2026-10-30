@@ -1,17 +1,11 @@
 import SwiftUI
+import PokyhCore
+import PokyhDesign
 
-/// Die Datenschutzerklärung in der App — wie das PrivacyGate der Website:
-///
-/// - Nach der **ersten Anmeldung** eines Kontos (Benutzername + Passwort eingegeben)
-///   einmal zum Bestätigen.
-/// - Ändert sich die Erklärung, bekommen **bereits angemeldete** Konten sie einmal als
-///   „aktualisiert" — ohne neue Anmeldung, ein Tippen auf „Verstanden" genügt.
-///
-/// Der Hinweis selbst bleibt kurz; was drinsteht, zeigt der Link „Mehr Informationen" auf
-/// der Website. Die aktuelle Version kommt von dort (`/api/privacy-notice`), die
-/// Bestätigung geht wie auf der Website ans Backend (`POST /privacy/acknowledge`). Sie ist
-/// keine Einwilligung, nur der Nachweis, dass der Hinweis angezeigt wurde. Ohne Netz wird
-/// nichts blockiert; der Hinweis kommt beim nächsten Mal.
+// The privacy notice, like the website's PrivacyGate: once after an account's first sign-in,
+// and once as "aktualisiert" when it changed, without signing in again. The current version
+// comes from the website, the acknowledgement goes to the backend. It isn't consent, only proof
+// the notice was shown, and without a network nothing is blocked.
 struct PrivacyNoticePrompt: Identifiable, Equatable {
     enum Kind { case first, updated }
     let kind: Kind
@@ -21,8 +15,8 @@ struct PrivacyNoticePrompt: Identifiable, Equatable {
 }
 
 extension AppState {
-    /// Nach einer Anmeldung: Kennt das Backend für dieses Konto die aktuelle Fassung noch
-    /// nicht, wird sie gezeigt. `fresh` = Zugangsdaten gerade eingegeben (erste Anmeldung).
+    /// Shows the notice if the backend hasn't seen this version acknowledged for the account.
+    /// `fresh`: the password was just typed in, so this is the first sign-in.
     func checkPrivacyNotice(fresh: Bool) async {
         guard !isOffline, let s = session, let token = s.apiToken else { return }
         guard let notice = await BackendClient.shared.currentPrivacyNotice(),
@@ -32,7 +26,7 @@ extension AppState {
         privacyNotice = PrivacyNoticePrompt(kind: fresh ? .first : .updated, version: notice.version, username: s.username)
     }
 
-    /// „Verstanden": beim Backend festhalten, dann schließen.
+    /// "Verstanden": record it with the backend, then close.
     func acknowledgePrivacyNotice() async -> Bool {
         guard let notice = privacyNotice, let token = session?.apiToken else { return false }
         guard await BackendClient.shared.acknowledgePrivacy(version: notice.version, token: token) else { return false }
@@ -41,48 +35,55 @@ extension AppState {
     }
 }
 
-/// Ein Banner oben, wie der Offline-Hinweis: blockiert nichts und bleibt, bis „Verstanden"
-/// getippt ist. Ein Hinweis, keine Einwilligung — daher nichts zum Ablehnen.
+/// A banner at the top, where the offline notice sits. Blocks nothing and stays until
+/// "Verstanden". It informs, it doesn't ask, so there's nothing to decline.
 struct PrivacyNoticeBanner: View {
     @EnvironmentObject var app: AppState
     let notice: PrivacyNoticePrompt
+    @Environment(\.strings) private var s
     @State private var saving = false
     @State private var failed = false
 
     private var title: String {
-        notice.kind == .first ? "Datenschutzerklärung" : "Datenschutzerklärung aktualisiert"
+        notice.kind == .first ? s.system.privacy : s.system.privacyUpdated
     }
 
+    // Kept short; what the notice says is behind the link.
     private var message: String {
         switch notice.kind {
-        case .first: return "Wie POKYH mit deinen Daten umgeht, steht in der Datenschutzerklärung."
-        case .updated: return "Wir haben unsere Datenschutzerklärung aktualisiert."
+        case .first: return s.system.privacyFirst
+        case .updated: return s.system.privacyChanged
         }
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "hand.raised.fill")
-                    .font(.subheadline)
+        VStack(alignment: .leading, spacing: Spacing.md) {
+            HStack(alignment: .top, spacing: Spacing.md) {
+                Image(systemName: "checkmark.shield.fill")
+                    .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(Palette.accent)
                     .frame(width: 32, height: 32)
-                    .background(Palette.accent.opacity(0.14), in: RoundedRectangle(cornerRadius: 10))
-                VStack(alignment: .leading, spacing: 3) {
+                    .background(Palette.accent.opacity(0.14), in: .pokyh(Radius.sm))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: Spacing.xxs) {
                     Text(title)
-                        .font(.subheadline.weight(.bold))
+                        .textStyle(.headline)
+                        .foregroundStyle(Palette.textPrimary)
                     Text(message)
-                        .font(.footnote)
+                        .textStyle(.footnote)
                         .foregroundStyle(Palette.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                     if let url = URL(string: Config.privacyURL) {
-                        Link("Datenschutzerklärung lesen", destination: url)
-                            .font(.footnote.weight(.semibold))
+                        Link(destination: url) {
+                            Text(s.system.privacyRead).textStyle(.footnote)
+                        }
+                        .foregroundStyle(Palette.accentText)
                     }
                     if failed {
-                        Text("Das hat nicht geklappt. Bitte versuche es noch einmal.")
-                            .font(.footnote)
-                            .foregroundStyle(.red)
+                        Text(s.system.privacyFailed)
+                            .textStyle(.footnote)
+                            .foregroundStyle(Palette.danger)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 Spacer(minLength: 0)
@@ -94,18 +95,22 @@ struct PrivacyNoticeBanner: View {
                     saving = false
                 }
             } label: {
-                Text(saving ? "Wird gespeichert…" : "Verstanden")
-                    .font(.subheadline.weight(.semibold))
-                    .frame(maxWidth: .infinity).frame(height: 40)
+                HStack(spacing: Spacing.sm) {
+                    if saving { ProgressView().controlSize(.small).tint(.white) }
+                    Text(s.system.understood)
+                }
+                .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.glassProminent)
-            .tint(Palette.accent)
+            .buttonStyle(.primary(compact: true))
             .disabled(saving)
         }
-        .padding(14)
-        .glassEffect(.regular, in: .rect(cornerRadius: 20))
-        .shadow(color: .black.opacity(0.12), radius: 10, y: 4)
-        .padding(.horizontal, 12)
-        .padding(.top, 8)
+        .padding(Spacing.lg)
+        .background(Palette.card, in: .pokyh(Radius.xl))
+        .overlay(RoundedRectangle(cornerRadius: Radius.xl, style: .continuous).strokeBorder(Palette.border, lineWidth: 1))
+        .warmShadow(.level3)
+        .padding(.horizontal, Spacing.md)
+        .frame(maxWidth: WidthClass.formMaxWidth + Spacing.md * 2)
+        .padding(.top, Spacing.sm)
+        .animation(.easeOut(duration: Motion.fast), value: failed)
     }
 }

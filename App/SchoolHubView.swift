@@ -1,72 +1,83 @@
 import SwiftUI
+import PokyhCore
+import PokyhDesign
 
+/// The school hub: color-blocked tiles for everything without a tab of its own, in the web's
+/// order. Tones cycle by position, so the grid repeats four tones instead of growing a fifth.
 struct SchoolHubView: View {
     @EnvironmentObject var app: AppState
+    @Environment(\.strings) private var s
 
-    private struct HubItem: Identifiable {
-        let id = UUID()
-        let title: String
-        let subtitle: String
-        let icon: String
-        let accent: Color
-        let destination: AnyView?   // nil → stattdessen Tab wechseln
-        let tab: AppTab?
+    private enum Destination: Hashable {
+        case messages, absences, todos, reminders, classreg, klasse
     }
 
+    private struct HubItem: Identifiable {
+        let destination: Destination
+        let title: String
+        let subtitle: String
+        let symbol: String
+        var id: Destination { destination }
+    }
+
+    @State private var path: Destination?
+
+    private var hasUntis: Bool { app.session?.hasUntis ?? true }
+    private var hasBackend: Bool { app.session?.apiToken != nil }
+
     private var items: [HubItem] {
-        // Wichtiges oben: Noten → Todos → Erinnerungen → Abwesenheiten → Klassenbuch → Klasse.
-        // Nachrichten ist über den Briefumschlag-Button oben rechts erreichbar.
-        // „Noten" wechselt zur Noten-Tab (Navbar), Rest navigiert innerhalb von Schule.
-        var list: [HubItem] = [
-            HubItem(title: "Noten", subtitle: "Alle Fächer & Bewertungen", icon: "chart.bar.fill", accent: Palette.accent, destination: nil, tab: .noten),
-        ]
-        // Eltern-/Erziehungsberechtigtenkonten haben eigene Todos und sehen die
-        // Klasse, aber KEINE Klassen-Erinnerungen.
-        list.append(HubItem(title: "Todos", subtitle: "Persönliche Aufgabenliste", icon: "checklist", accent: Palette.accentSoft, destination: AnyView(TodosView()), tab: nil))
-        if !app.isParent {
-            list.append(HubItem(title: "Erinnerungen", subtitle: "Hausaufgaben & Klassen-Erinnerungen", icon: "bell.fill", accent: Palette.tint, destination: AnyView(RemindersView()), tab: nil))
+        let t = s.school
+        var list: [HubItem] = []
+        if hasUntis {
+            list.append(HubItem(destination: .messages, title: s.nav.messages, subtitle: t.messagesInfo, symbol: "envelope.fill"))
+            list.append(HubItem(destination: .absences, title: t.absences, subtitle: t.absencesInfo, symbol: "person.fill.xmark"))
         }
-        list.append(HubItem(title: "Abwesenheiten", subtitle: "Fehlstunden & Entschuldigungen", icon: "person.fill.xmark", accent: Palette.orange, destination: AnyView(AbsencesView()), tab: nil))
-        list.append(HubItem(title: "Klassenbuch", subtitle: "Klassenbuch-Einträge", icon: "book.closed.fill", accent: Palette.orange, destination: AnyView(ClassregEventsView()), tab: nil))
-        list.append(HubItem(title: "Klasse", subtitle: "Klassenmitglieder & Code", icon: "person.3.fill", accent: Palette.tint, destination: AnyView(ClassView()), tab: nil))
+        list.append(HubItem(destination: .todos, title: t.todos, subtitle: t.todosInfo, symbol: "checklist"))
+        // Parent accounts see the class but not its reminders.
+        if !app.isParent {
+            list.append(HubItem(destination: .reminders, title: t.reminders, subtitle: t.remindersInfo, symbol: "bell.fill"))
+        }
+        if hasUntis {
+            list.append(HubItem(destination: .classreg, title: t.classreg, subtitle: t.classregInfo, symbol: "book.closed.fill"))
+        }
+        if hasUntis || hasBackend {
+            list.append(HubItem(destination: .klasse, title: t.klasse, subtitle: t.klasseInfo, symbol: "person.3.fill"))
+        }
         return list
+    }
+
+    /// "4BFS · LBS Brixen", like the web's hub.
+    private var subtitle: String {
+        [app.session?.klasseName ?? "", DefaultSchool.name].filter { !$0.isEmpty }.joined(separator: " · ")
     }
 
     var body: some View {
         ScrollView {
-            LazyVStack(spacing: 12) {
-                ForEach(Array(items.enumerated()), id: \.element.id) { idx, item in
-                    Group {
-                        if let dest = item.destination {
-                            NavigationLink { dest } label: { card(item) }
-                        } else {
-                            Button { if let t = item.tab { app.selectedTab = t } } label: { card(item) }
-                        }
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 158), spacing: Spacing.md)], spacing: Spacing.md) {
+                ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                    FeatureTile(item.title, subtitle: item.subtitle, tone: Decorative.cycle(index), symbol: item.symbol, height: 168) {
+                        path = item.destination
                     }
-                    .buttonStyle(.pressable)
-                    .fadeIn(delay: Double(idx) * 0.04)
+                    .fadeIn(delay: Double(index / 2) * 0.05)
                 }
             }
-            .padding(16)
+            .padding(.horizontal, Spacing.screenH)
+            .padding(.top, Spacing.sm)
+            .padding(.bottom, Spacing.xxxl)
         }
-        .navigationTitle("Schule")
+        .navigationTitle(s.nav.school)
+        .navigationSubtitle(subtitle)
         .profileToolbar()
         .appBackground()
-    }
-
-    private func card(_ item: HubItem) -> some View {
-        HStack(spacing: 14) {
-            Image(systemName: item.icon).font(.title2).foregroundStyle(item.accent)
-                .frame(width: 46, height: 46)
-                .background(item.accent.opacity(0.14), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            VStack(alignment: .leading, spacing: 2) {
-                Text(item.title).font(.headline).foregroundStyle(Palette.textPrimary)
-                Text(item.subtitle).font(.caption).foregroundStyle(Palette.textSecondary)
+        .navigationDestination(item: $path) { destination in
+            switch destination {
+            case .messages: MessagesView()
+            case .absences: AbsencesView()
+            case .todos: TodosView()
+            case .reminders: RemindersView()
+            case .classreg: ClassregEventsView()
+            case .klasse: ClassView()
             }
-            Spacer()
-            Image(systemName: "chevron.right").font(.footnote).foregroundStyle(Palette.textTertiary)
         }
-        .padding(14)
-        .cardSurface()
     }
 }

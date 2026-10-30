@@ -4,41 +4,50 @@
 //
 
 import SwiftUI
+import PokyhCore
+import PokyhDesign
 
 struct ContentView: View {
     @EnvironmentObject var app: AppState
+    @Environment(\.strings) private var s
 
-    /// Tatsächlich angewandtes Schema — wird verzögert (unter der Fade-Blende)
-    /// umgeschaltet, damit Hell⇄Dunkel weich überblendet statt hart springt.
+    /// The scheme actually applied. It switches under a short fade so light ⇄ dark
+    /// crossfades instead of snapping.
     @State private var appliedScheme: ColorScheme?
     @State private var themeFade = false
+    /// The offline notice stays until closed; closing it holds until the next time we go offline.
+    @State private var offlineDismissed = false
 
     private static let fadeDuration = 0.22
 
     var body: some View {
         Group {
             switch app.phase {
-            case .authed: RootTabView().id(app.session?.username ?? "")  // Kontowechsel → Tabs neu laden
+            case .authed: RootTabView().id(app.session?.username ?? "")  // new account, fresh tabs
             case .lock:   LockView().transition(.opacity)
             case .login:  LoginView().transition(.opacity)
             }
         }
         .overlay {
             if app.busy && app.phase == .authed {
-                SwitchingOverlay(text: app.statusText.isEmpty ? "Lädt…" : app.statusText)
+                SwitchingOverlay(text: app.statusText.isEmpty ? s.nav.switching : app.statusText)
                     .transition(.opacity)
             }
         }
-        // Offline-Hinweis (gecachte Daten) — dezent von oben einfliegend.
+        // Running on cached data: drops in from the top, like Android's OfflineNotice.
         .overlay(alignment: .top) {
-            if app.isOffline && app.phase == .authed {
-                OfflineBanner()
+            if app.isOffline && app.phase == .authed && !offlineDismissed {
+                OfflineBanner { offlineDismissed = true }
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
         .animation(.spring(response: 0.5, dampingFraction: 0.82), value: app.isOffline)
-        // Datenschutzerklärung: nach der ersten Anmeldung bzw. „aktualisiert" — als Banner
-        // oben, nur angemeldet, bis „Verstanden".
+        .animation(.spring(response: 0.5, dampingFraction: 0.82), value: offlineDismissed)
+        .onChange(of: app.isOffline) { _, offline in
+            if !offline { offlineDismissed = false }
+        }
+        // Privacy notice after the first sign-in or when it changed. A banner, signed in only,
+        // until "Verstanden".
         .overlay(alignment: .top) {
             if let notice = app.privacyNotice, app.phase == .authed {
                 PrivacyNoticeBanner(notice: notice)
@@ -46,7 +55,6 @@ struct ContentView: View {
             }
         }
         .animation(.spring(response: 0.5, dampingFraction: 0.82), value: app.privacyNotice)
-        // Weiche Überblendung beim Wechsel des Erscheinungsbilds.
         .overlay {
             if themeFade {
                 Color(.systemBackground).ignoresSafeArea().allowsHitTesting(false)
@@ -60,7 +68,7 @@ struct ContentView: View {
         .onChange(of: app.themeMode) { _, _ in crossfadeTheme() }
     }
 
-    /// Blende einblenden → Schema unter der Blende wechseln → Blende ausblenden.
+    /// Fade in, switch the scheme underneath, fade out.
     private func crossfadeTheme() {
         let target = app.colorScheme
         guard target != appliedScheme else { return }
@@ -72,35 +80,60 @@ struct ContentView: View {
     }
 }
 
-/// Voll­flächiger Lade-Overlay (z. B. beim Kontowechsel).
+/// Dimmed page plus a spinner card, e.g. while switching accounts.
 struct SwitchingOverlay: View {
     let text: String
     var body: some View {
         ZStack {
-            Palette.bg.opacity(0.6).ignoresSafeArea()
-            VStack(spacing: 14) {
+            Palette.bg.opacity(0.72).ignoresSafeArea()
+            VStack(spacing: Spacing.lg) {
                 ProgressView().controlSize(.large).tint(Palette.accent)
-                Text(text).font(.subheadline.weight(.medium)).foregroundStyle(Palette.textSecondary)
+                Text(text).textStyle(.footnote).foregroundStyle(Palette.textSecondary)
             }
-            .padding(26)
-            .glassEffect(.regular, in: .rect(cornerRadius: 20))
+            .padding(Spacing.xxxl)
+            .floatingSurface(radius: Radius.xl)
         }
     }
 }
 
-/// Schlanker Offline-Hinweis am oberen Rand.
+/// Signed in on stored data. Says so, says what that means, and waits to be closed.
 struct OfflineBanner: View {
+    var onClose: (() -> Void)? = nil
+    @Environment(\.strings) private var s
+
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "wifi.slash")
-            Text("Offline – zeige gespeicherte Daten")
-                .font(.footnote.weight(.semibold))
+        HStack(spacing: Spacing.md) {
+            IconTile("wifi.slash", color: Palette.warning, size: 46)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(s.system.offlineSignedIn)
+                    .textStyle(.headline)
+                    .foregroundStyle(Palette.textPrimary)
+                    .lineLimit(2)
+                Text(s.system.savedShown)
+                    .textStyle(.footnote)
+                    .foregroundStyle(Palette.textSecondary)
+                    .lineLimit(3)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            if let onClose {
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Palette.textSecondary)
+                        .frame(width: 40, height: 40)
+                        .contentShape(.circle)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(s.system.closeNotice)
+            }
         }
-        .foregroundStyle(.white)
-        .padding(.horizontal, 14).padding(.vertical, 8)
-        .background(Palette.warning, in: Capsule())
-        .shadow(color: .black.opacity(0.18), radius: 8, y: 3)
-        .padding(.top, 8)
+        .padding(.leading, Spacing.lg)
+        .padding(.vertical, Spacing.lg)
+        .padding(.trailing, Spacing.xs)
+        .floatingSurface(radius: Radius.lg)
+        .padding(.horizontal, Spacing.screenH)
+        .frame(maxWidth: WidthClass.formMaxWidth + Spacing.screenH * 2)
+        .padding(.top, Spacing.sm)
     }
 }
 

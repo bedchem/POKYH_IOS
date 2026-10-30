@@ -1,4 +1,5 @@
 import SwiftUI
+import PokyhDesign
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -141,22 +142,18 @@ extension UIColor {
 }
 #endif
 
-// ── Wiederverwendbare Stile / Animationen (GSAP-artig: weich, federnd) ──────
+// ── Shared styles and motion ────────────────────────────────────────────────
 
-/// Press-Scale wie `.press-scale` im Web (transform: scale(0.97)).
-struct PressableStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? 0.96 : 1)
-            .animation(.spring(response: 0.3, dampingFraction: 0.6), value: configuration.isPressed)
-    }
-}
+// The design package's press style under the old name. Files that import PokyhDesign get the
+// package's `.pressable` (the same style); the rest get this one.
+typealias PressableStyle = PokyhDesign.PressableStyle
 
 extension ButtonStyle where Self == PressableStyle {
+    @_disfavoredOverload
     static var pressable: PressableStyle { PressableStyle() }
 }
 
-/// `.fade-in` (opacity 0→1, translateY 8px→0) — leicht verzögerbar.
+/// Fades in while rising 10pt, like Android's `Modifier.fadeIn`.
 struct FadeIn: ViewModifier {
     var delay: Double = 0
     @State private var shown = false
@@ -170,8 +167,7 @@ struct FadeIn: ViewModifier {
     }
 }
 
-/// Pop-In (Scale 0.5→1 + Opacity, federnd) — für neu erscheinende Items, z. B. den
-/// Jahres-Wähler oben rechts. Standard-Items bleiben stabil.
+/// Springs in from half size, for items that appear later (the year picker).
 struct PopIn: ViewModifier {
     @State private var shown = false
     func body(content: Content) -> some View {
@@ -184,8 +180,7 @@ struct PopIn: ViewModifier {
     }
 }
 
-/// Premium-Slide-In von rechts (Offset + Fade + sanftes Entschärfen), federnd.
-/// Für neu erscheinende Header-Items wie den Jahres-Wähler.
+/// Slides in from the trailing edge with a little blur, for late header items.
 struct SlideInTrailing: ViewModifier {
     @State private var shown = false
     func body(content: Content) -> some View {
@@ -200,8 +195,7 @@ struct SlideInTrailing: ViewModifier {
     }
 }
 
-/// Wie SlideInTrailing, aber von außen gesteuert (`active`) — animiert nur einmal,
-/// wenn der gebundene Zustand wechselt (kein Re-Animieren bei Daten-Refresh).
+/// SlideInTrailing driven from outside, so a data refresh doesn't replay it.
 struct SlideInBound: ViewModifier {
     let active: Bool
     func body(content: Content) -> some View {
@@ -214,7 +208,7 @@ struct SlideInBound: ViewModifier {
     }
 }
 
-/// 3D-Würfel-Drehung — für Seitenwechsel (Stundenplan), wie ein gedrehter Cube.
+/// Cube turn for paging the timetable.
 struct CubeRotation: ViewModifier {
     let angle: Double
     let anchor: UnitPoint
@@ -226,7 +220,7 @@ struct CubeRotation: ViewModifier {
 }
 
 extension AnyTransition {
-    /// Würfel-Drehung. `forward` = Wisch nach links (nächste Seite).
+    /// `forward`: swiped left, to the next page.
     static func cube(forward: Bool) -> AnyTransition {
         .asymmetric(
             insertion: .modifier(
@@ -245,38 +239,71 @@ extension View {
     func slideInTrailing() -> some View { modifier(SlideInTrailing()) }
     func slideIn(_ active: Bool) -> some View { modifier(SlideInBound(active: active)) }
 
-    /// Karte im Web-Stil (solide `--app-card`, weiche Ecken).
-    func cardSurface(radius: CGFloat = 16) -> some View {
-        self.background(Palette.card, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(Palette.border, lineWidth: 0.5))
+    /// Android's card: card fill, continuous corners, a whisper of warm shadow, no border.
+    /// The same recipe as PokyhDesign's `cardSurface`, which wins in files that import it.
+    @_disfavoredOverload
+    func cardSurface(radius: CGFloat = Radius.xl, fill: Color = Palette.card, elevation: Elevation = .level1) -> some View {
+        self.background(fill, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+            .modifier(WarmShadow(elevation: elevation))
     }
 
-    /// Zentriert schmale Inhalte (Login-/Sperr-Formular) und begrenzt sie auf eine
-    /// angenehme Breite — auf dem iPhone wirkungslos (Breite > Display), auf iPad
-    /// zentriert. `maxWidth` ist eine Layout-Größe, kein Gerät-Hardcoding.
-    func centeredForm(_ maxWidth: CGFloat = 480) -> some View {
+    /// Caps login and lock forms at a comfortable width and centers them.
+    @_disfavoredOverload
+    func centeredForm(maxWidth: CGFloat = WidthClass.formMaxWidth) -> some View {
         self.frame(maxWidth: maxWidth).frame(maxWidth: .infinity)
     }
 
-    /// App-Hintergrund (`--app-bg`) + responsive Breite (iPad/regular size class:
-    /// Inhalt auf eine lesbare Breite begrenzen und zentrieren, Hintergrund bleibt
-    /// vollflächig). Auf dem iPhone (compact) unverändert.
-    func appBackground() -> some View {
-        self.modifier(ReadableContent()).background(Palette.bg.ignoresSafeArea())
+    func centeredForm(_ maxWidth: CGFloat) -> some View {
+        self.frame(maxWidth: maxWidth).frame(maxWidth: .infinity)
+    }
+
+    /// The canvas color, full bleed, with the content held to a readable width on iPad.
+    /// `wide` is Android's wide measure for screens laid out in columns (Home, timetable).
+    func appBackground(wide: Bool = false) -> some View {
+        self.modifier(ReadableContent(maxWidth: wide ? WidthClass.wideMaxWidth : ReadableContent.maxWidth))
+            .background(Palette.bg.ignoresSafeArea())
     }
 }
 
-/// Begrenzt Inhalte auf eine angenehm lesbare Breite und zentriert sie — nur in
-/// der „regular" horizontalen Größenklasse (iPad, breite Fenster). So wirkt die
-/// App auf großen Displays nicht gestreckt. Kein Geräte-Check / kein Hardcoding
-/// von Modellen — rein an der Größenklasse orientiert.
+/// Warm umber in light mode so it never looks like dirt on the warm canvas; plain black in
+/// dark, where cards get half the lift and lean on tone instead (Android's Elevation.kt).
+struct WarmShadow: ViewModifier {
+    let elevation: Elevation
+    @Environment(\.colorScheme) private var scheme
+
+    func body(content: Content) -> some View {
+        let dark = scheme == .dark
+        let base: CGFloat = switch elevation {
+        case .level1: 2
+        case .level2: 6
+        case .level3: 14
+        case .level4: 24
+        }
+        let radius = dark && elevation == .level1 ? base / 2 : base
+        let umber = Color(hex: "#3A2E1F")
+        content
+            .shadow(color: dark ? .black.opacity(0.30) : umber.opacity(0.07), radius: radius / 2, y: 0)
+            .shadow(color: dark ? .black.opacity(0.40) : umber.opacity(0.12), radius: radius, y: radius / 2)
+    }
+}
+
+extension View {
+    /// Shadow only, for surfaces that pick their own fill or shape.
+    func warmShadow(_ elevation: Elevation = .level1) -> some View {
+        modifier(WarmShadow(elevation: elevation))
+    }
+}
+
+/// Caps and centers content in the regular width class only, so wide windows don't
+/// stretch it. Goes by size class, never by device.
 struct ReadableContent: ViewModifier {
-    /// Obergrenze der Inhaltsbreite (über iPhone-Breite → auf dem iPhone wirkungslos).
-    static let maxWidth: CGFloat = 760
+    /// Wider than any iPhone, so phones never notice it.
+    static let maxWidth: CGFloat = WidthClass.readableMaxWidth
+    var maxWidth: CGFloat = ReadableContent.maxWidth
     @Environment(\.horizontalSizeClass) private var hSize
     func body(content: Content) -> some View {
         if hSize == .regular {
-            content.frame(maxWidth: Self.maxWidth).frame(maxWidth: .infinity)
+            content.frame(maxWidth: maxWidth).frame(maxWidth: .infinity)
         } else {
             content
         }

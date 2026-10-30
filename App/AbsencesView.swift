@@ -1,117 +1,190 @@
 import SwiftUI
+import PokyhCore
+import PokyhDesign
 
-// ─── Abwesenheitsberechnung (1:1 portiert aus dem Frontend: app/absences/page.tsx) ───
-// Die Fehlstunden werden NICHT aus dem von WebUntis gelieferten `hours`-Feld
-// gerechnet, sondern exakt über den Stundenplan: pro Abwesenheit werden die
-// tatsächlichen Unterrichtsminuten in deren Zeitfenster aufsummiert. Zusätzlich
-// werden alle möglichen Unterrichtsminuten seit Schuljahresbeginn summiert
-// (berücksichtigt Ferien, Feiertage, persönlichen Stundenplan) → daraus die
-// Fehlquote. Eine „Schulstunde" zählt dabei als 50 Minuten.
+// Abwesenheiten as on Android: the absence rate as the hero, missed time per month as bars that
+// jump to the month, then the absences grouped by month. Missed time comes from the real
+// timetable (the lessons inside each absence), not WebUntis' `hours`, and is shown in
+// 60-minute hours like the web.
 
-private struct DaySlot { let startMins: Int; let endMins: Int }
+// ── Lesson calendar (the web's lib/absence-calc.ts) ─────────────────────────
 
-private let absCal = Calendar(identifier: .gregorian)
+private struct Lesson { var start: Int; var end: Int }
 
-/// WebUntis-Zeitwert → Minuten seit Mitternacht. Werte können als Minuten
-/// (z. B. 475 = 07:55) ODER als HHMM (z. B. 755 = 07:55) kommen. Erkennung:
-/// sind die letzten zwei Stellen > 59, kann es kein gültiges HHMM sein.
-private func toMinutesAbs(_ t: Int) -> Int {
-    if t == 0 { return 0 }
-    if t > 2359 { return t }       // zu groß für HHMM
-    if t % 100 > 59 { return t }   // Minutenteil > 59 → bereits Minuten
-    return (t / 100) * 60 + (t % 100)
+/// The lessons of a school year, per week (its Monday, yyyy-MM-dd), per day (yyyyMMdd).
+private struct LessonCalendar {
+    var weeks: [String: [Int: [Lesson]]] = [:]
+    var failed: Set<String> = []
 }
 
-private func dateFromNum(_ yyyymmdd: Int) -> Date {
-    var c = DateComponents()
-    c.year = yyyymmdd / 10000
-    c.month = (yyyymmdd / 100) % 100
-    c.day = yyyymmdd % 100
-    return absCal.date(from: c) ?? Date()
+private struct AbsenceFigures {
+    var perAbsence: [Int: Int] = [:]
+    var minutes = 0
+    var excusedMinutes = 0
+    /// Lesson minutes so far (or the whole year); nil until every week is loaded.
+    var possible: Int?
+    var rate: Double?
 }
 
-private func numFromDate(_ d: Date) -> Int {
-    let c = absCal.dateComponents([.year, .month, .day], from: d)
-    return (c.year ?? 0) * 10000 + (c.month ?? 0) * 100 + (c.day ?? 0)
-}
+private enum AbsenceCalc {
+    static let cal: Calendar = {
+        var c = Calendar(identifier: .gregorian)
+        c.firstWeekday = 2
+        return c
+    }()
 
-/// 0 = Sonntag … 6 = Samstag (wie JavaScripts `Date.getDay`).
-private func jsWeekday(_ d: Date) -> Int { absCal.component(.weekday, from: d) - 1 }
-
-/// Montag (yyyy-MM-dd) der Woche, die `d` enthält.
-private func mondayISO(_ d: Date) -> String {
-    let dow = jsWeekday(d)
-    let mon = absCal.date(byAdding: .day, value: -(dow == 0 ? 6 : dow - 1), to: d) ?? d
-    return DateFmt.isoString(mon)
-}
-
-/// Je ein Montag pro Kalenderwoche von Schuljahresbeginn (1. Sept) bis `now`.
-private func weeksForSchoolYear(now: Date, sep: Date) -> [String] {
-    let dow = jsWeekday(sep)
-    var d = absCal.date(byAdding: .day, value: -(dow == 0 ? 6 : dow - 1), to: sep) ?? sep
-    var out: [String] = []
-    while d <= now {
-        out.append(DateFmt.isoString(d))
-        d = absCal.date(byAdding: .day, value: 7, to: d) ?? d
+    /// WebUntis gives times as HHMM or as minutes of the day; HHMM can't have more than 59 minutes.
+    static func toMinutes(_ t: Int) -> Int {
+        if t == 0 { return 0 }
+        if t > 2359 || t % 100 > 59 { return t }
+        return (t / 100) * 60 + t % 100
     }
-    return out
-}
 
-/// Je ein Montag pro Kalenderwoche, die sich mit einer Abwesenheit überschneidet.
-private func weeksForAbsences(_ absences: [AbsenceEntry]) -> [String] {
-    var set = Set<String>()
-    for a in absences {
-        var d = dateFromNum(a.startDate)
-        let end = dateFromNum(a.endDate)
-        while d <= end {
-            set.insert(mondayISO(d))
-            d = absCal.date(byAdding: .day, value: 1, to: d) ?? d
+    static func date(_ n: Int) -> Date? {
+        cal.date(from: DateComponents(year: n / 10000, month: (n / 100) % 100, day: n % 100))
+    }
+
+    static func num(_ d: Date) -> Int {
+        let c = cal.dateComponents([.year, .month, .day], from: d)
+        return (c.year ?? 0) * 10000 + (c.month ?? 0) * 100 + (c.day ?? 0)
+    }
+
+    static func monday(_ d: Date) -> Date {
+        let weekday = cal.component(.weekday, from: d)   // 1 = Sunday
+        return cal.date(byAdding: .day, value: -((weekday + 5) % 7), to: cal.startOfDay(for: d)) ?? d
+    }
+
+    /// Up to now, or to the end of 30 June for the whole year and for years that are over.
+    static func countUntil(_ year: Int, whole: Bool, now: Date = Date()) -> Date {
+        let end = cal.date(from: DateComponents(year: year + 1, month: 6, day: 30, hour: 23, minute: 59)) ?? now
+        return !whole && now < end ? now : end
+    }
+
+    /// The Mondays from 1 September up to now (whole: up to 30 June).
+    static func schoolYearWeeks(_ year: Int, whole: Bool) -> [String] {
+        guard let sep = date(year * 10000 + 901) else { return [] }
+        let until = countUntil(year, whole: whole)
+        var out: [String] = []
+        var d = monday(sep)
+        while d <= until {
+            out.append(DateFmt.isoString(d))
+            d = cal.date(byAdding: .day, value: 7, to: d) ?? until.addingTimeInterval(1)
         }
+        return out
     }
-    return Array(set)
-}
 
-/// Exakte Unterrichtsminuten einer Abwesenheit über den Stundenplan.
-private func calcAbsenceMinutes(_ entry: AbsenceEntry, _ dateMap: [Int: [DaySlot]]) -> Int {
-    var total = 0
-    var d = dateFromNum(entry.startDate)
-    let end = dateFromNum(entry.endDate)
-    let isMultiDay = entry.startDate != entry.endDate
-    let absStartMin = toMinutesAbs(entry.startTime)
-    let absEndMin = toMinutesAbs(entry.endTime)
-
-    while d <= end {
-        let dow = jsWeekday(d)
-        if dow != 0 && dow != 6 {
-            let dateNum = numFromDate(d)
-            for slot in dateMap[dateNum] ?? [] {
-                // Gezählte Dauer auf das Abwesenheitsfenster beschneiden.
-                var countStart = slot.startMins
-                var countEnd = slot.endMins
-                if isMultiDay {
-                    if absStartMin > 0 && dateNum == entry.startDate { countStart = max(countStart, absStartMin) }
-                    if absEndMin > 0 && dateNum == entry.endDate { countEnd = min(countEnd, absEndMin) }
-                } else {
-                    if absStartMin > 0 { countStart = max(countStart, absStartMin) }
-                    if absEndMin > 0 { countEnd = min(countEnd, absEndMin) }
-                }
-                if countEnd > countStart { total += countEnd - countStart }
+    /// The Mondays of the weeks the absences touch.
+    static func absenceWeeks(_ absences: [AbsenceEntry]) -> [String] {
+        var out = Set<String>()
+        for a in absences {
+            guard let start = date(a.startDate), let end = date(a.endDate) else { continue }
+            var d = monday(start)
+            var n = 0
+            // Longer than 60 weeks is a typo in the dates, not an absence.
+            while d <= end && n < 60 {
+                out.insert(DateFmt.isoString(d))
+                d = cal.date(byAdding: .day, value: 7, to: d) ?? end.addingTimeInterval(1)
+                n += 1
             }
         }
-        d = absCal.date(byAdding: .day, value: 1, to: d) ?? d
+        return Array(out)
     }
-    return total
+
+    /// A week as lessons per day: cancelled and subject-less entries left out, overlaps merged.
+    static func lessons(_ entries: [TimetableEntry]) -> [Int: [Lesson]] {
+        var byDay: [Int: [Lesson]] = [:]
+        for e in entries where !e.isCancelled && !(e.subjectName.isEmpty && e.subjectLong.isEmpty) {
+            let start = toMinutes(e.startTime), end = toMinutes(e.endTime)
+            if end > start { byDay[e.date, default: []].append(Lesson(start: start, end: end)) }
+        }
+        return byDay.mapValues { slots in
+            var merged: [Lesson] = []
+            for s in slots.sorted(by: { $0.start < $1.start }) {
+                // Only overlaps merge; back-to-back lessons each count once they're over.
+                if let last = merged.last, s.start < last.end {
+                    merged[merged.count - 1].end = max(last.end, s.end)
+                } else {
+                    merged.append(s)
+                }
+            }
+            return merged
+        }
+    }
+
+    static func hasWholeYear(_ c: LessonCalendar, _ year: Int, whole: Bool) -> Bool {
+        schoolYearWeeks(year, whole: whole).allSatisfy { c.weeks[$0] != nil }
+    }
+
+    /// Every lesson from 1 September that has ended (whole: up to 30 June).
+    static func possibleMinutes(_ c: LessonCalendar, _ year: Int, whole: Bool) -> Int {
+        let from = year * 10000 + 901
+        let until = countUntil(year, whole: whole)
+        let today = num(until)
+        let parts = cal.dateComponents([.hour, .minute], from: until)
+        let clock = (parts.hour ?? 0) * 60 + (parts.minute ?? 0)
+        var total = 0
+        for week in c.weeks.values {
+            for (day, slots) in week where day >= from && day <= today {
+                for s in slots where day < today || s.end <= clock { total += s.end - s.start }
+            }
+        }
+        return total
+    }
+
+    /// The lesson minutes inside an absence; nil while one of its weeks is missing.
+    static func minutesFromLessons(_ a: AbsenceEntry, _ c: LessonCalendar) -> Int? {
+        guard var d = date(a.startDate), let end = date(a.endDate) else { return nil }
+        let multiDay = a.startDate != a.endDate
+        let absStart = toMinutes(a.startTime), absEnd = toMinutes(a.endTime)
+        var total = 0
+        var n = 0
+        while d <= end && n < 420 {
+            guard let week = c.weeks[DateFmt.isoString(monday(d))] else { return nil }
+            let day = num(d)
+            for s in week[day] ?? [] {
+                var from = s.start, to = s.end
+                // The times belong to the first and last day; the days between count whole.
+                if absStart > 0 && (!multiDay || day == a.startDate) { from = max(from, absStart) }
+                if absEnd > 0 && (!multiDay || day == a.endDate) { to = min(to, absEnd) }
+                if to > from { total += to - from }
+            }
+            d = cal.date(byAdding: .day, value: 1, to: d) ?? end.addingTimeInterval(1)
+            n += 1
+        }
+        return total
+    }
+
+    /// The most common lesson length in the timetable; 50 when there is none.
+    static func usualLesson(_ c: LessonCalendar) -> Int {
+        var count: [Int: Int] = [:]
+        for week in c.weeks.values { for slots in week.values { for s in slots { count[s.end - s.start, default: 0] += 1 } } }
+        return count.max { $0.value < $1.value }?.key ?? 50
+    }
+
+    static func figures(_ absences: [AbsenceEntry], _ c: LessonCalendar, _ year: Int, whole: Bool) -> AbsenceFigures {
+        var f = AbsenceFigures()
+        let lesson = usualLesson(c)
+        for a in absences {
+            let m = minutesFromLessons(a, c) ?? a.hours * lesson
+            f.perAbsence[a.id] = m
+            f.minutes += m
+            if a.isExcused { f.excusedMinutes += m }
+        }
+        if hasWholeYear(c, year, whole: whole) {
+            let possible = possibleMinutes(c, year, whole: whole)
+            f.possible = possible
+            f.rate = possible > 0 ? min(100, Double(f.minutes) / Double(possible) * 100) : nil
+        }
+        return f
+    }
 }
 
-private func formatMinutes(_ m: Int) -> String {
-    let h = m / 50
-    let min = m % 50
+/// "3h" rounded, "3h 20m" exact.
+private func formatAbsence(_ m: Int, exact: Bool) -> String {
+    if !exact { return "\(Int((Double(m) / 60).rounded()))h" }
+    let h = m / 60, min = m % 60
     return min == 0 ? "\(h)h" : "\(h)h \(min)m"
 }
-
-private func roundHours(_ m: Int) -> String { "\(Int((Double(m) / 50).rounded()))h" }
-
-private let monthNamesDE = ["Jän", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"]
 
 private struct MonthGroup: Identifiable {
     let id: String
@@ -120,45 +193,38 @@ private struct MonthGroup: Identifiable {
     let totalMinutes: Int
 }
 
-private func groupByMonth(_ entries: [AbsenceEntry], _ minutesMap: [Int: Int]) -> [MonthGroup] {
-    var map: [String: [AbsenceEntry]] = [:]
-    for e in entries {
-        let s = String(e.startDate)
-        guard s.count == 8 else { continue }
-        let key = "\(s.prefix(4))-\(s.dropFirst(4).prefix(2))"
-        map[key, default: []].append(e)
-    }
-    return map.map { key, es in
-        let parts = key.split(separator: "-")
-        let year = String(parts[0])
-        let month = Int(parts[1]) ?? 1
-        let total = es.reduce(0) { $0 + (minutesMap[$1.id] ?? $1.hours * 50) }
-        return MonthGroup(id: key, label: "\(monthNamesDE[month - 1]) \(year)", entries: es, totalMinutes: total)
-    }
-    .sorted { $0.id > $1.id }
-}
-
-// ─── View ─────────────────────────────────────────────────────────────────────
+// ── Screen ──────────────────────────────────────────────────────────────────
 
 struct AbsencesView: View {
     @EnvironmentObject var app: AppState
+    @Environment(\.strings) private var s
     @State private var absences: [AbsenceEntry] = []
-    @State private var minutesMap: [Int: Int] = [:]
-    @State private var totalPossibleMins = 1
+    @State private var calendar = LessonCalendar()
+    @State private var figures = AbsenceFigures()
     @State private var loading = true
+    @State private var calcBusy = false
     @State private var error: String?
     @State private var year = SchoolDates.currentSchoolYear
-    @State private var yearShown = false
     @State private var exact = false
+    @State private var wholeYear = false
 
-    private func getMin(_ e: AbsenceEntry) -> Int { minutesMap[e.id] ?? e.hours * 50 }
-    private func fmt(_ m: Int) -> String { exact ? formatMinutes(m) : roundHours(m) }
+    private var canWhole: Bool { year == SchoolDates.currentSchoolYear }
+    private func fmt(_ m: Int) -> String { formatAbsence(m, exact: exact) }
 
-    private var totalMinutes: Int { absences.reduce(0) { $0 + getMin($1) } }
-    private var excusedMinutes: Int { absences.filter { $0.isExcused }.reduce(0) { $0 + getMin($1) } }
-    private var unexcusedMinutes: Int { totalMinutes - excusedMinutes }
-    private var rate: Double { totalPossibleMins > 0 ? min(Double(totalMinutes) / Double(totalPossibleMins) * 100, 100) : 0 }
-    private var rateColor: Color { rate < 5 ? Palette.tint : rate < 15 ? Palette.warning : Palette.danger }
+    private var groups: [MonthGroup] {
+        var map: [String: [AbsenceEntry]] = [:]
+        for e in absences where e.startDate > 10_000_000 {
+            map[String(format: "%04d-%02d", e.startDate / 10000, (e.startDate / 100) % 100), default: []].append(e)
+        }
+        return map.map { key, entries in
+            let parts = key.split(separator: "-")
+            let month = Int(parts[1]) ?? 1
+            let name = s.common.months.indices.contains(month - 1) ? s.common.months[month - 1] : ""
+            let total = entries.reduce(0) { $0 + (figures.perAbsence[$1.id] ?? 0) }
+            return MonthGroup(id: key, label: "\(name) \(parts[0])", entries: entries.sorted { $0.startDate > $1.startDate }, totalMinutes: total)
+        }
+        .sorted { $0.id > $1.id }
+    }
 
     var body: some View {
         Group {
@@ -166,131 +232,235 @@ struct AbsencesView: View {
                 LoadingView()
             } else if let error {
                 ErrorStateView(message: error) { Task { await load() } }
-            } else if absences.isEmpty {
-                ScrollView {
-                    VStack(spacing: 14) {
-                        overviewCard
-                        EmptyStateView(systemImage: "checkmark.seal", title: "Keine Fehlstunden", subtitle: "Du hast keine Abwesenheiten in diesem Schuljahr.")
-                            .padding(.top, 24)
-                    }
-                    .padding(16)
-                }
             } else {
-                ScrollView {
-                    VStack(spacing: 18) {
-                        overviewCard
-                        ForEach(groupByMonth(absences, minutesMap)) { group in
-                            VStack(alignment: .leading, spacing: 8) {
-                                HStack {
-                                    Text(group.label).font(.system(size: 15, weight: .semibold))
-                                    Spacer()
-                                    Text(fmt(group.totalMinutes)).font(.subheadline).foregroundStyle(.secondary)
-                                }
-                                .padding(.horizontal, 2)
-                                ForEach(group.entries.sorted { $0.startDate > $1.startDate }) { a in
-                                    AbsenceRow(absence: a, minutes: getMin(a), label: fmt(getMin(a)))
-                                }
-                            }
-                        }
-                    }
-                    .padding(16)
-                }
+                content
             }
         }
-        .navigationTitle("Abwesenheiten")
-        .profileToolbar()
-        .navigationBarTitleDisplayMode(.inline)
-        .appBackground()
+        .navigationTitle(s.absences.title)
+        .navigationSubtitle(s.common.schoolYear(year))
+        .navigationBarTitleDisplayMode(.large)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button { withAnimation(.easeInOut(duration: 0.2)) { exact.toggle() } } label: {
-                    Label(exact ? "Exakt" : "Gerundet", systemImage: exact ? "clock.badge.checkmark" : "clock")
-                        .font(.caption.weight(.medium))
+                Button {
+                    withAnimation(.easeInOut(duration: Motion.fast)) { exact.toggle() }
+                } label: {
+                    Label(exact ? s.absences.exact : s.absences.rounded, systemImage: exact ? "clock.badge.checkmark" : "clock")
+                        .labelStyle(.titleAndIcon)
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
-                    ForEach(SchoolDates.availableYears, id: \.self) { y in
-                        Button("\(String(y))/\(String((y + 1) % 100))") { year = y; Task { await load() } }
-                    }
-                } label: { Text("\(String(year))/\(String((year + 1) % 100))") }
-                .slideIn(yearShown)
+                    Picker(selection: $year) {
+                        ForEach(SchoolDates.availableYears, id: \.self) { y in
+                            Text("\(String(y))/\(String((y + 1) % 100))").tag(y)
+                        }
+                    } label: { EmptyView() }
+                } label: {
+                    Text("\(String(year))/\(String((year + 1) % 100))")
+                }
             }
         }
-        .task { withAnimation(.spring(response: 0.6, dampingFraction: 0.48).delay(0.1)) { yearShown = true } }
-        .task(id: year) { await load() }
+        .appBackground()
+        .task(id: year) {
+            wholeYear = false
+            await load()
+        }
     }
 
-    private var overviewCard: some View {
-        VStack(spacing: 16) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Fehlstunden gesamt").font(.caption).foregroundStyle(.secondary)
-                    Text(fmt(totalMinutes)).font(.system(size: 30, weight: .bold, design: .rounded))
-                }
-                Spacer()
-                HStack(spacing: 18) {
-                    miniStat(fmt(excusedMinutes), "Entschuldigt", Palette.tint)
-                    miniStat(fmt(unexcusedMinutes), "Unentschuldigt", Palette.danger)
-                }
-            }
-            VStack(spacing: 6) {
-                HStack {
-                    Text("Fehlquote").font(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                    Text(String(format: "%.1f%%", rate)).font(.caption.weight(.semibold)).foregroundStyle(rateColor)
-                }
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(Palette.card)
-                        Capsule().fill(rateColor).frame(width: geo.size.width * CGFloat(rate / 100))
+    private var content: some View {
+        let groups = groups
+        return ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: Spacing.lg) {
+                    rateCard.fadeIn()
+                    MonthBars(year: year, groups: groups, fmt: fmt) { key in
+                        withAnimation(.easeInOut(duration: Motion.slow)) { proxy.scrollTo(key, anchor: .top) }
+                    }
+                    .fadeIn(delay: 0.03)
+                    NavigationLink {
+                        AbsenceCalculatorView(
+                            absent: canWhole ? Double(figures.minutes) / 60 : nil,
+                            total: canWhole ? soFarMinutes.map { Double($0) / 60 } : nil,
+                            yearTotal: canWhole ? wholeYearMinutes.map { Double($0) / 60 } : nil
+                        )
+                    } label: {
+                        ButtonLabel(s.absences.calc, symbol: "percent")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.secondary(compact: true))
+                    .fadeIn(delay: 0.05)
+
+                    if absences.isEmpty {
+                        VStack(spacing: Spacing.sm) {
+                            Image(systemName: "checkmark.seal")
+                                .font(.system(size: 34))
+                                .foregroundStyle(Palette.textTertiary)
+                            Text(s.absences.emptyTitle).textStyle(.headline).foregroundStyle(Palette.textPrimary)
+                            Text(s.absences.emptySubtitle).textStyle(.footnote).foregroundStyle(Palette.textSecondary)
+                                .multilineTextAlignment(.center)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(Spacing.card)
+                        .cardSurface(radius: Radius.xl, fill: Palette.card)
+                    }
+
+                    ForEach(Array(groups.enumerated()), id: \.element.id) { idx, group in
+                        VStack(alignment: .leading, spacing: Spacing.headerContent) {
+                            SectionHeader(group.label) { EyebrowLabel(fmt(group.totalMinutes)) }
+                            VStack(spacing: 0) {
+                                ForEach(Array(group.entries.enumerated()), id: \.element.id) { i, a in
+                                    if i > 0 { RowSeparator(inset: Spacing.card).padding(.trailing, Spacing.card) }
+                                    AbsenceRow(absence: a, label: fmt(figures.perAbsence[a.id] ?? 0))
+                                }
+                            }
+                            .cardSurface(radius: Radius.xl, fill: Palette.card)
+                        }
+                        .padding(.top, Spacing.sm)
+                        .id(group.id)
+                        .fadeIn(delay: min(0.4, 0.07 + Double(idx) * 0.03))
                     }
                 }
-                .frame(height: 8)
+                .padding(.horizontal, Spacing.screenH)
+                .padding(.top, Spacing.xs)
+                .padding(.bottom, Spacing.xxxl)
             }
+            .refreshable { await load() }
         }
-        .padding(18)
-        .background(Palette.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
-    private func miniStat(_ value: String, _ label: String, _ color: Color) -> some View {
-        VStack(spacing: 2) {
-            Text(value).font(.system(size: 20, weight: .bold, design: .rounded)).foregroundStyle(color)
-            Text(label).font(.caption2).foregroundStyle(.secondary)
+    // ── Fehlquote ───────────────────────────────────────────────────────────
+
+    private var rateCard: some View {
+        let total = figures.minutes
+        let excused = figures.excusedMinutes
+        let unexcused = total - excused
+        let whole = wholeYear && canWhole
+        let rate = figures.rate
+        let rateColor: Color = {
+            guard let rate else { return Palette.textTertiary }
+            if rate < 5 { return Brand.success }
+            if rate < 15 { return Decorative.butter.ink }
+            return Brand.danger
+        }()
+        let rateText: String? = {
+            if let possible = figures.possible {
+                return whole ? s.absences.ofLessonsYear(fmt(total), fmt(possible)) : s.absences.ofLessons(fmt(total), fmt(possible))
+            }
+            return calcBusy ? s.absences.rateCounting : nil
+        }()
+        let share = total > 0 ? Double(excused) / Double(total) : 0
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                EyebrowLabel(s.absences.rate, color: Palette.textSecondary)
+                Spacer(minLength: Spacing.sm)
+                if canWhole {
+                    PokyhSegmentedControl([false, true], selection: Binding(get: { wholeYear }, set: { setWholeYear($0) })) {
+                        $0 ? s.absences.spanYear : s.absences.spanSoFar
+                    }
+                    .frame(maxWidth: 220)
+                }
+            }
+            Group {
+                if let rate {
+                    Text("\(String(format: "%.1f", rate).replacingOccurrences(of: ".", with: String(s.common.decimal))) %")
+                        .textStyle(.statLarge)
+                        .foregroundStyle(rateColor)
+                        .contentTransition(.numericText())
+                } else if calcBusy {
+                    SkeletonBlock(height: 44, width: 150)
+                } else {
+                    Text("–").textStyle(.statLarge).foregroundStyle(rateColor)
+                }
+            }
+            .padding(.top, Spacing.sm)
+            Group {
+                if let rateText {
+                    Text(rateText).textStyle(.footnote).foregroundStyle(Palette.textSecondary)
+                } else {
+                    HStack(spacing: Spacing.xs) {
+                        Text(s.absences.rateMissing).textStyle(.footnote).foregroundStyle(Palette.textSecondary)
+                        Button(s.absences.rateRetry) { Task { await refreshCalendar(whole: whole) } }
+                            .textStyle(TextStyle.footnote.weight(.semibold))
+                            .underline()
+                            .foregroundStyle(Palette.textPrimary)
+                            .buttonStyle(.plain)
+                    }
+                }
+            }
+            .padding(.top, Spacing.sm)
+
+            // Excused against unexcused.
+            GeometryReader { geo in
+                let gap: CGFloat = share > 0 && unexcused > 0 ? 3 : 0
+                HStack(spacing: gap) {
+                    if share > 0 { Capsule().fill(Brand.success).frame(width: max(0, (geo.size.width - gap) * share)) }
+                    if unexcused > 0 { Capsule().fill(Brand.danger) }
+                }
+                .frame(width: geo.size.width, height: 10, alignment: .leading)
+                .background(Palette.cardAlt, in: .capsule)
+                .animation(.easeOut(duration: 0.7), value: share)
+            }
+            .frame(height: 10)
+            .padding(.top, Spacing.xl)
+
+            HStack(alignment: .top, spacing: Spacing.md) {
+                figure(s.absences.totalMissed, fmt(total), dot: nil, valueColor: Palette.textPrimary)
+                figure(s.absences.excused, fmt(excused), dot: Brand.success, valueColor: Palette.textPrimary)
+                figure(s.absences.unexcused, fmt(unexcused), dot: Brand.danger, valueColor: unexcused > 0 ? Brand.danger : Palette.textPrimary)
+            }
+            .padding(.top, Spacing.lg)
+        }
+        .padding(Spacing.card)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardSurface(radius: Radius.xl, fill: Palette.card)
+    }
+
+    private func figure(_ label: String, _ value: String, dot: Color?, valueColor: Color) -> some View {
+        VStack(alignment: .leading, spacing: Spacing.xs) {
+            HStack(spacing: 6) {
+                if let dot { Circle().fill(dot).frame(width: 8, height: 8) }
+                Text(label).textStyle(.caption).foregroundStyle(Palette.textSecondary).lineLimit(2)
+            }
+            Text(value).textStyle(TextStyle.title3.tabularDigits).foregroundStyle(valueColor).lineLimit(1)
+                .contentTransition(.numericText())
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // ── Loading ─────────────────────────────────────────────────────────────
+
+    private var soFarMinutes: Int? {
+        AbsenceCalc.hasWholeYear(calendar, year, whole: false) ? AbsenceCalc.possibleMinutes(calendar, year, whole: false) : nil
+    }
+
+    private var wholeYearMinutes: Int? {
+        AbsenceCalc.hasWholeYear(calendar, year, whole: true) ? AbsenceCalc.possibleMinutes(calendar, year, whole: true) : nil
+    }
+
+    private func recompute() {
+        figures = AbsenceCalc.figures(absences, calendar, year, whole: wholeYear && canWhole)
+    }
+
+    private func setWholeYear(_ whole: Bool) {
+        wholeYear = whole
+        recompute()
+        // The weeks still to come are only needed for the whole year.
+        if whole && !AbsenceCalc.hasWholeYear(calendar, year, whole: true) {
+            Task { await refreshCalendar(whole: true) }
         }
     }
 
     private func load() async {
-        guard let s = app.session else { return }
-        loading = true; error = nil
+        guard let session = app.session else { return }
+        if absences.isEmpty { loading = true }
+        error = nil
         do {
-            let parsed = try await UntisClient.shared.absences(
-                startDate: SchoolDates.yearStart(year), endDate: SchoolDates.yearEnd(year), s)
-            absences = parsed
-
-            // Schuljahres-Zeitraum für das gewählte Jahr.
-            let sep = dateFromNum(year * 10000 + 901)                 // 1. Sept
-            let now: Date = year == SchoolDates.currentSchoolYear
-                ? Date()
-                : dateFromNum((year + 1) * 10000 + 630)              // 30. Juni Folgejahr
-
-            // Stundenplan für Abwesenheits-Wochen + alle Schuljahres-Wochen laden
-            // (für einen korrekten Nenner der Fehlquote).
-            let weeks = Array(Set(weeksForAbsences(parsed) + weeksForSchoolYear(now: now, sep: sep)))
-            let dateMap = try await buildDateMap(weeks: weeks, s)
-
-            // Exakte Minuten je Abwesenheit.
-            var mins: [Int: Int] = [:]
-            for e in parsed { mins[e.id] = calcAbsenceMinutes(e, dateMap) }
-            minutesMap = mins
-
-            // Alle möglichen Unterrichtsminuten seit Schuljahresbeginn.
-            let sepNum = numFromDate(sep), nowNum = numFromDate(now)
-            var possible = 0
-            for (dateNum, slots) in dateMap where dateNum >= sepNum && dateNum <= nowNum {
-                for slot in slots { possible += slot.endMins - slot.startMins }
-            }
-            totalPossibleMins = max(1, possible)
+            absences = try await UntisClient.shared.absences(
+                startDate: SchoolDates.yearStart(year), endDate: SchoolDates.yearEnd(year), session)
+            calendar = LessonCalendar()
+            recompute()
+            loading = false
+            await refreshCalendar(whole: wholeYear && canWhole)
         } catch let e as AppError where e.message == "session_expired" {
             app.handleSessionExpired()
         } catch {
@@ -299,94 +469,424 @@ struct AbsencesView: View {
         loading = false
     }
 
-    /// Lädt die Wochen-Stundenpläne nebenläufig und baut eine Karte
-    /// dateNum → Unterrichts-Slots (dedupliziert nach Startzeit, abgesagte und
-    /// fachlose Einträge übersprungen — wie `mergeTimetableIntoMap` im Frontend).
-    private func buildDateMap(weeks: [String], _ s: UserSession) async throws -> [Int: [DaySlot]] {
-        var raw: [Int: [Int: DaySlot]] = [:]
-        try await withThrowingTaskGroup(of: [TimetableEntry].self) { group in
-            for w in weeks {
+    /// Loads the timetable weeks still missing, six at a time; failed weeks are tried again next time.
+    private func refreshCalendar(whole: Bool) async {
+        guard let session = app.session else { return }
+        let wanted = Array(Set(AbsenceCalc.schoolYearWeeks(year, whole: whole) + AbsenceCalc.absenceWeeks(absences)))
+            .filter { calendar.weeks[$0] == nil }
+            .sorted()
+        guard !wanted.isEmpty else { recompute(); return }
+        let forYear = year
+        calcBusy = true
+        defer { calcBusy = false }
+        do {
+            let loaded = try await Self.fetchWeeks(wanted, session)
+            guard forYear == year else { return }
+            for (monday, days) in loaded.weeks { calendar.weeks[monday] = days }
+            calendar.failed = loaded.failed
+            recompute()
+        } catch let e as AppError where e.message == "session_expired" {
+            app.handleSessionExpired()
+        } catch {
+            recompute()
+        }
+    }
+
+    private static func fetchWeeks(_ mondays: [String], _ s: UserSession) async throws -> LessonCalendar {
+        var out = LessonCalendar()
+        try await withThrowingTaskGroup(of: (String, [TimetableEntry]?).self) { group in
+            var next = 0
+            func start(_ monday: String) {
                 group.addTask {
-                    do { return try await UntisClient.shared.timetable(date: w, s) }
+                    do { return (monday, try await UntisClient.shared.timetable(date: monday, s)) }
                     catch let e as AppError where e.message == "session_expired" { throw e }
-                    catch { return [] }
+                    catch { return (monday, nil) }
                 }
             }
-            for try await entries in group {
-                for e in entries {
-                    if e.isCancelled { continue }
-                    if e.subjectName.isEmpty && e.subjectLong.isEmpty { continue }
-                    let startMins = Fmt.minutes(e.startTime)
-                    let endMins = Fmt.minutes(e.endTime)
-                    // Parallele Fächer (gleicher Beginn) zählen als eine Stunde.
-                    if raw[e.date]?[startMins] == nil {
-                        raw[e.date, default: [:]][startMins] = DaySlot(startMins: startMins, endMins: endMins)
-                    }
-                }
+            while next < min(6, mondays.count) { start(mondays[next]); next += 1 }
+            while let (monday, entries) = try await group.next() {
+                if let entries { out.weeks[monday] = AbsenceCalc.lessons(entries) } else { out.failed.insert(monday) }
+                if next < mondays.count { start(mondays[next]); next += 1 }
             }
         }
-        return raw.mapValues { Array($0.values) }
+        return out
     }
 }
 
-struct AbsenceRow: View {
-    let absence: AbsenceEntry
-    let minutes: Int
-    let label: String
+// ── Per month ───────────────────────────────────────────────────────────────
+
+/// September to June, missed time per month; a bar jumps to its month.
+private struct MonthBars: View {
+    let year: Int
+    let groups: [MonthGroup]
+    let fmt: (Int) -> String
+    let onPick: (String) -> Void
+    @Environment(\.strings) private var s
+    @State private var grown = false
+
+    private struct Bar: Identifiable { let id: String; let minutes: Int; let future: Bool; let label: String }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(dateText).font(.subheadline.weight(.medium))
+        let today = SchoolDates.todayNum()
+        let months = ([9, 10, 11, 12].map { (year, $0) } + (1...6).map { (year + 1, $0) })
+        let bars = months.map { pair -> Bar in
+            let (y, m) = pair
+            let key = String(format: "%04d-%02d", y, m)
+            let label = s.common.monthsShort.indices.contains(m - 1) ? s.common.monthsShort[m - 1] : ""
+            return Bar(
+                id: key,
+                minutes: groups.first { $0.id == key }?.totalMinutes ?? 0,
+                future: y * 10000 + m * 100 + 1 > today,
+                label: label.hasSuffix(".") ? String(label.dropLast()) : label
+            )
+        }
+        let maxMinutes = max(1, bars.map(\.minutes).max() ?? 1)
+        return VStack(alignment: .leading, spacing: 0) {
+            EyebrowLabel(s.absences.perMonth, color: Palette.textSecondary)
+            HStack(alignment: .bottom, spacing: 6) {
+                ForEach(Array(bars.enumerated()), id: \.element.id) { i, bar in
+                    let has = bar.minutes > 0
+                    Button { onPick(bar.id) } label: {
+                        VStack(spacing: Spacing.xs) {
+                            Spacer(minLength: 0)
+                            Text(has ? fmt(bar.minutes) : "")
+                                .textStyle(TextStyle.caption2.tabularDigits)
+                                .foregroundStyle(Palette.textSecondary)
+                                .lineLimit(1)
+                                .fixedSize()
+                            GeometryReader { geo in
+                                let fraction = has ? max(0.08, Double(bar.minutes) / Double(maxMinutes)) : 0
+                                VStack {
+                                    Spacer(minLength: 0)
+                                    RoundedRectangle(cornerRadius: Radius.xs / 2, style: .continuous)
+                                        .fill(has ? Brand.accent : Palette.cardAlt.opacity(bar.future ? 0.5 : 1))
+                                        .frame(height: has ? geo.size.height * (grown ? fraction : 0.02) : 4)
+                                        .animation(.easeOut(duration: 0.5).delay(Double(i) * 0.03), value: grown)
+                                }
+                            }
+                            .frame(height: 112)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .contentShape(.rect)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!has)
+                }
+            }
+            .frame(height: 150)
+            .padding(.top, Spacing.lg)
+            HStack(spacing: 6) {
+                ForEach(bars) { bar in
+                    Text(bar.label)
+                        .textStyle(TextStyle.caption2.weight(.semibold))
+                        .foregroundStyle(Palette.textTertiary.opacity(bar.future ? 0.6 : 1))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            .padding(.top, Spacing.sm)
+        }
+        .padding(Spacing.card)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardSurface(radius: Radius.xl, fill: Palette.card)
+        .onAppear { grown = true }
+    }
+}
+
+// ── Absence row ─────────────────────────────────────────────────────────────
+
+struct AbsenceRow: View {
+    let absence: AbsenceEntry
+    let label: String
+    @Environment(\.strings) private var s
+
+    var body: some View {
+        let tone = absence.isExcused ? Decorative.sage : Decorative.blush
+        let start = AbsenceCalc.date(absence.startDate)
+        VStack(alignment: .leading, spacing: Spacing.sm) {
+            HStack(alignment: .top, spacing: Spacing.md) {
+                // The day as a tile in the status tone.
+                VStack(spacing: 0) {
+                    Text(String(absence.startDate % 100))
+                        .textStyle(TextStyle.headline.tabularDigits)
+                        .foregroundStyle(tone.ink)
+                    Text(weekdayShort(start).uppercased())
+                        .textStyle(TextStyle.caption2.weight(.semibold))
+                        .foregroundStyle(tone.ink.opacity(0.8))
+                }
+                .frame(width: 48, height: 48)
+                .background(tone.fill, in: .pokyh(Radius.md))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(alignment: .top) {
+                        Text(title).textStyle(.headline).foregroundStyle(Palette.textPrimary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Text(label).textStyle(TextStyle.headline.tabularDigits).foregroundStyle(Palette.textPrimary)
+                    }
                     if !subText.isEmpty {
-                        Text(subText).font(.caption).foregroundStyle(.secondary)
+                        Text(subText).textStyle(.footnote).foregroundStyle(Palette.textSecondary)
+                    }
+                    let extra = [absence.reasonName, absence.note].compactMap { $0 }.filter { !$0.isEmpty }
+                    if !extra.isEmpty {
+                        Text(extra.joined(separator: " · ")).textStyle(.footnote).foregroundStyle(Palette.textSecondary)
                     }
                 }
-                Spacer()
-                VStack(alignment: .trailing, spacing: 6) {
-                    Text(label).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
-                    Label(absence.isExcused ? "entschuldigt" : "offen",
-                          systemImage: absence.isExcused ? "checkmark.circle.fill" : "xmark.circle.fill")
-                        .font(.caption2.bold())
-                        .foregroundStyle(absence.isExcused ? Palette.tint : Palette.danger)
+            }
+            HStack(spacing: Spacing.sm) {
+                HStack(spacing: 6) {
+                    Image(systemName: absence.isExcused ? "checkmark.circle.fill" : "xmark.circle.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text(absence.isExcused ? s.absences.statusExcused : s.absences.statusOpen)
+                        .textStyle(TextStyle.footnote.weight(.semibold))
+                        .lineLimit(1)
                 }
+                .foregroundStyle(tone.ink)
+                .padding(.horizontal, Spacing.md)
+                .frame(height: 32)
+                .background(tone.fill, in: .capsule)
             }
-            if let reason = absence.reasonName, !reason.isEmpty {
-                infoLine("Grund", reason)
-            }
-            if let note = absence.note, !note.isEmpty {
-                infoLine("Text", note)
-            }
+            .padding(.leading, 48 + Spacing.md)
         }
-        .padding(12)
-        .background(Palette.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .padding(.horizontal, Spacing.card)
+        .padding(.vertical, Spacing.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
     }
 
-    private var dateText: String {
-        absence.startDate != absence.endDate
-            ? "\(Fmt.dateShort(absence.startDate)) – \(Fmt.dateShort(absence.endDate))"
-            : Fmt.dateShort(absence.startDate)
+    private func weekdayIndex(_ d: Date?) -> Int? {
+        guard let d else { return nil }
+        return (AbsenceCalc.cal.component(.weekday, from: d) + 5) % 7   // Monday = 0
+    }
+
+    private func weekdayShort(_ d: Date?) -> String {
+        guard let i = weekdayIndex(d), s.common.weekdaysShort.indices.contains(i) else { return "" }
+        return s.common.weekdaysShort[i]
+    }
+
+    /// "Mittwoch, 17. Dezember" for one day, "17. Dez. – 19. Dez." for several.
+    private var title: String {
+        let c = s.common
+        let sd = absence.startDate % 100, sm = (absence.startDate / 100) % 100
+        guard (1...12).contains(sm) else { return Fmt.dateShort(absence.startDate) }
+        if absence.startDate != absence.endDate {
+            let ed = absence.endDate % 100, em = (absence.endDate / 100) % 100
+            guard (1...12).contains(em) else { return Fmt.dateShort(absence.startDate) }
+            return "\(c.dayMonthShort(sd, sm)) – \(c.dayMonthShort(ed, em))"
+        }
+        guard let i = weekdayIndex(AbsenceCalc.date(absence.startDate)), c.weekdays.indices.contains(i) else {
+            return c.dayMonth(sd, sm)
+        }
+        let weekday = c.weekdays[i]
+        return "\(weekday.prefix(1).uppercased())\(weekday.dropFirst()), \(c.dayMonth(sd, sm))"
     }
 
     private var subText: String {
         var parts: [String] = []
         if absence.startTime != 0 || absence.endTime != 0 {
-            parts.append("\(Fmt.time(absence.startTime)) – \(Fmt.time(absence.endTime))")
+            parts.append("\(time(absence.startTime)) – \(time(absence.endTime))")
         }
         if let sub = absence.subjectName, !sub.isEmpty { parts.append(sub) }
         if let t = absence.teacherName, !t.isEmpty { parts.append(t) }
         return parts.joined(separator: " · ")
     }
 
-    private func infoLine(_ title: String, _ value: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(title).font(.caption2.weight(.semibold)).foregroundStyle(.tertiary)
-            Text(value).font(.caption).foregroundStyle(.secondary)
-            Spacer(minLength: 0)
+    private func time(_ t: Int) -> String {
+        if t == 0 { return "" }
+        let m = AbsenceCalc.toMinutes(t)
+        return String(format: "%02d:%02d", m / 60, m % 60)
+    }
+}
+
+// ── Calculator (the web's public absence calculator) ───────────────────────
+
+/// Absences in percent and the hours left before the limit (25 %, the three-quarter rule).
+/// Filled in with the year's own numbers when opened from the page; nothing leaves the device.
+private struct AbsenceCalculatorView: View {
+    let absent: Double?
+    let total: Double?
+    let yearTotal: Double?
+
+    @Environment(\.strings) private var s
+    @State private var absentInput = ""
+    @State private var weeklyMode = true
+    @State private var wholeYear = false
+    @State private var totalInput = ""
+    @State private var weeklyInput = ""
+    @State private var weeksInput = ""
+    @State private var limitInput = "25"
+    @State private var filled = false
+
+    private var prefilled: Bool { total != nil || yearTotal != nil }
+
+    var body: some View {
+        let absentHours = parse(absentInput)
+        let weekly = parse(weeklyInput), weeks = parse(weeksInput)
+        let yearHours: Double? = weeklyMode ? (weekly.flatMap { w in weeks.map { w * $0 } }) : parse(totalInput)
+        let limit = parse(limitInput)
+        let tooMany = absentHours != nil && yearHours != nil && (yearHours ?? 0) > 0 && (absentHours ?? 0) > (yearHours ?? 0)
+        let stats: (pct: Double, left: Int)? = {
+            guard let a = absentHours, let t = yearHours, let l = limit else { return nil }
+            return Self.stats(absent: a, total: t, limit: min(l, 100))
+        }()
+
+        ScrollView {
+            VStack(alignment: .leading, spacing: Spacing.lg) {
+                Text(s.absences.calcLead).textStyle(.callout).foregroundStyle(Palette.textSecondary)
+                resultCard(stats, limit: limit, tooMany: tooMany).fadeIn()
+                VStack(alignment: .leading, spacing: Spacing.lg) {
+                    numberField(s.absences.calcAbsent, $absentInput, invalid: (!absentInput.isEmpty && absentHours == nil) || tooMany)
+                    if total != nil && yearTotal != nil {
+                        PokyhSegmentedControl([false, true], selection: Binding(get: { wholeYear }, set: { whole in
+                            wholeYear = whole
+                            weeklyMode = false
+                            totalInput = shown(whole ? yearTotal : total)
+                        })) { $0 ? s.absences.spanYear : s.absences.spanSoFar }
+                    }
+                    EyebrowLabel(s.absences.calcTotalMode, color: Palette.textSecondary)
+                    PokyhSegmentedControl([true, false], selection: $weeklyMode) {
+                        $0 ? s.absences.calcModeWeekly : s.absences.calcModeTotal
+                    }
+                    if weeklyMode {
+                        HStack(alignment: .top, spacing: Spacing.md) {
+                            numberField(s.absences.calcWeekly, $weeklyInput, invalid: !weeklyInput.isEmpty && weekly == nil)
+                            numberField(s.absences.calcWeeks, $weeksInput, invalid: !weeksInput.isEmpty && weeks == nil)
+                        }
+                        if let yearHours, yearHours > 0 {
+                            Text(s.absences.calcYear(number(yearHours, 1))).textStyle(.footnote).foregroundStyle(Palette.textTertiary)
+                        }
+                    } else {
+                        numberField(s.absences.calcTotal, $totalInput, invalid: !totalInput.isEmpty && parse(totalInput) == nil)
+                    }
+                    numberField(s.absences.calcLimit, $limitInput, invalid: limit == nil || (limit ?? 0) > 100, suffix: "%")
+                }
+                .padding(Spacing.card)
+                .cardSurface(radius: Radius.xl, fill: Palette.card)
+                .fadeIn(delay: 0.04)
+
+                if prefilled {
+                    Text(s.absences.calcFromYear).textStyle(.footnote).foregroundStyle(Palette.textTertiary)
+                }
+                VStack(alignment: .leading, spacing: Spacing.sm) {
+                    Text(s.absences.calcRuleTitle).textStyle(.headline).foregroundStyle(Palette.textPrimary)
+                    Text(s.absences.calcRule).textStyle(.footnote).foregroundStyle(Palette.textSecondary)
+                }
+                .padding(Spacing.card)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .cardSurface(radius: Radius.xl, fill: Palette.card)
+                .fadeIn(delay: 0.08)
+                Text(s.absences.calcPrivacy).textStyle(.caption).foregroundStyle(Palette.textTertiary)
+            }
+            .padding(.horizontal, Spacing.screenH)
+            .padding(.top, Spacing.xs)
+            .padding(.bottom, Spacing.xxxl)
         }
-        .padding(.horizontal, 10).padding(.vertical, 6)
+        .scrollDismissesKeyboard(.interactively)
+        .navigationTitle(s.absences.calc)
+        .navigationBarTitleDisplayMode(.large)
+        .appBackground()
+        .onAppear {
+            guard !filled else { return }
+            filled = true
+            absentInput = shown(absent)
+            weeklyMode = !prefilled
+            wholeYear = total == nil && yearTotal != nil
+            totalInput = shown(total ?? yearTotal)
+        }
+    }
+
+    private func resultCard(_ stats: (pct: Double, left: Int)?, limit: Double?, tooMany: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if let stats {
+                HStack(alignment: .lastTextBaseline, spacing: Spacing.md) {
+                    Text("\(number(stats.pct, 1)) %").textStyle(.statLarge).foregroundStyle(Palette.textPrimary)
+                        .contentTransition(.numericText())
+                    Text(s.absences.calcResult).textStyle(.headline).foregroundStyle(Palette.textSecondary)
+                }
+                // The bar runs to twice the limit, so the limit's marker sits in the middle.
+                let span = max((limit ?? 25) * 2, stats.pct, 1)
+                let tone: Color = {
+                    guard let limit else { return Palette.textTertiary }
+                    if stats.left < 0 { return Brand.danger }
+                    if stats.pct >= limit * 0.6 { return Brand.warning }
+                    return Decorative.sage.ink
+                }()
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Palette.cardAlt).frame(height: 12)
+                        Capsule().fill(tone).frame(width: geo.size.width * min(1, max(0, stats.pct / span)), height: 12)
+                        if let limit {
+                            Capsule().fill(Palette.textPrimary)
+                                .frame(width: 2, height: 20)
+                                .offset(x: geo.size.width * min(1, max(0, limit / span)) - 1)
+                        }
+                    }
+                    .frame(height: 20)
+                    .animation(.easeOut(duration: 0.5), value: stats.pct)
+                }
+                .frame(height: 20)
+                .padding(.top, Spacing.lg)
+                Text(s.absences.calcPresent(number(100 - stats.pct, 1)))
+                    .textStyle(.footnote).foregroundStyle(Palette.textSecondary)
+                    .padding(.top, Spacing.md)
+                Text(stats.left > 0 ? s.absences.calcLeft(number(Double(stats.left), 0))
+                     : stats.left == 0 ? s.absences.calcAtLimit
+                     : s.absences.calcOver(number(Double(-stats.left), 0)))
+                    .textStyle(.headline).foregroundStyle(Palette.textPrimary)
+                    .padding(.top, Spacing.sm)
+            } else {
+                Text(tooMany ? s.absences.calcInvalid : s.absences.calcEmpty).textStyle(.body).foregroundStyle(Palette.textTertiary)
+            }
+        }
+        .padding(Spacing.card)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Palette.cardAlt, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .cardSurface(radius: Radius.xl, fill: Palette.card)
+    }
+
+    private func numberField(_ label: String, _ text: Binding<String>, invalid: Bool, suffix: String? = nil) -> some View {
+        VStack(alignment: .leading, spacing: Spacing.sm) {
+            EyebrowLabel(label, color: Palette.textSecondary)
+            HStack(spacing: Spacing.sm) {
+                TextField("", text: Binding(get: { text.wrappedValue }, set: { text.wrappedValue = String($0.prefix(7)) }))
+                    .keyboardType(.decimalPad)
+                    .textStyle(.body)
+                    .foregroundStyle(Palette.textPrimary)
+                    .tint(Brand.accent)
+                if let suffix { Text(suffix).textStyle(.body).foregroundStyle(Palette.textTertiary) }
+            }
+            .padding(.horizontal, Spacing.lg)
+            .frame(minHeight: 52)
+            .background(Palette.cardAlt, in: .pokyh(Radius.md))
+            .overlay(alignment: .bottom) {
+                if invalid { Capsule().fill(Brand.danger).frame(height: 2).padding(.horizontal, Spacing.sm) }
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private static func stats(absent: Double, total: Double, limit: Double) -> (pct: Double, left: Int)? {
+        guard total > 0, absent >= 0, absent <= total, (0...100).contains(limit) else { return nil }
+        let left = total * limit / 100 - absent
+        return (absent / total * 100, left >= 0 ? Int((left + 1e-9).rounded(.down)) : -Int((-left - 1e-9).rounded(.up)))
+    }
+
+    private func parse(_ input: String) -> Double? {
+        let text = input.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: ".")
+        guard !text.isEmpty, let v = Double(text), v.isFinite, v >= 0 else { return nil }
+        return v
+    }
+
+    private func number(_ v: Double, _ digits: Int) -> String {
+        var out = String(format: "%.\(digits)f", v)
+        if digits > 0 {
+            while out.hasSuffix("0") { out.removeLast() }
+            if out.hasSuffix(".") { out.removeLast() }
+        }
+        return out.replacingOccurrences(of: ".", with: String(s.common.decimal))
+    }
+
+    private func shown(_ v: Double?) -> String {
+        guard let v else { return "" }
+        return number((v * 10).rounded() / 10, 1)
     }
 }

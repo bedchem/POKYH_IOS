@@ -1,23 +1,29 @@
 import SwiftUI
+import PokyhCore
+import PokyhDesign
 
-/// Wiederverwendbare UI-Bausteine (entsprechen components/ui/* im Frontend).
+// Shared building blocks, styled after Android's ui/components.
 
-// ── Skeleton-Loader (Shimmer wie `.skeleton` im Web) ────────────────────────
+// MARK: - Skeletons
 
 struct Shimmer: ViewModifier {
     @State private var phase: CGFloat = -1
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     func body(content: Content) -> some View {
         content
-            .overlay(
-                GeometryReader { geo in
-                    LinearGradient(
-                        colors: [.clear, Color.white.opacity(0.18), .clear],
-                        startPoint: .leading, endPoint: .trailing
-                    )
-                    .frame(width: geo.size.width * 1.5)
-                    .offset(x: phase * geo.size.width * 1.5)
+            .overlay {
+                if !reduceMotion {
+                    GeometryReader { geo in
+                        LinearGradient(
+                            colors: [.clear, Color.white.opacity(0.18), .clear],
+                            startPoint: .leading, endPoint: .trailing
+                        )
+                        .frame(width: geo.size.width * 1.5)
+                        .offset(x: phase * geo.size.width * 1.5)
+                    }
                 }
-            )
+            }
             .clipped()
             .onAppear {
                 withAnimation(.linear(duration: 1.3).repeatForever(autoreverses: false)) { phase = 1 }
@@ -28,57 +34,67 @@ struct Shimmer: ViewModifier {
 struct SkeletonBlock: View {
     var height: CGFloat = 16
     var width: CGFloat? = nil
-    var radius: CGFloat = 8
+    var radius: CGFloat = Radius.xs
     var body: some View {
         RoundedRectangle(cornerRadius: radius, style: .continuous)
             .fill(Palette.cardAlt)
             .frame(width: width, height: height)
             .modifier(Shimmer())
+            .accessibilityHidden(true)
     }
 }
 
-/// Generische Listen-Skeleton (Karten-Reihen).
+/// Stands in for a list card: one card, hairline-separated rows, same height as the real ones.
 struct ListSkeleton: View {
     var rows = 6
     var body: some View {
-        VStack(spacing: 12) {
-            ForEach(0..<rows, id: \.self) { _ in
-                HStack(spacing: 12) {
-                    Circle().fill(Palette.cardAlt).frame(width: 42, height: 42).modifier(Shimmer())
-                    VStack(alignment: .leading, spacing: 6) {
-                        SkeletonBlock(height: 13, width: 160)
-                        SkeletonBlock(height: 10, width: 110)
+        VStack(spacing: 0) {
+            ForEach(0..<rows, id: \.self) { index in
+                if index > 0 { RowSeparator() }
+                HStack(spacing: Spacing.iconText) {
+                    Circle().fill(Palette.cardAlt).frame(width: 40, height: 40).modifier(Shimmer())
+                    VStack(alignment: .leading, spacing: Spacing.sm) {
+                        SkeletonBlock(height: 14, width: 150)
+                        SkeletonBlock(height: 11, width: 100)
                     }
-                    Spacer()
+                    Spacer(minLength: 0)
+                    SkeletonBlock(height: 14, width: 44)
                 }
-                .padding(14)
-                .background(Palette.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .padding(.horizontal, Spacing.card)
+                .frame(height: 72)
             }
         }
-        .padding(16)
+        .clipShape(.pokyh(Radius.xl))
+        .cardSurface()
+        .padding(.horizontal, Spacing.screenH)
+        .padding(.vertical, Spacing.md)
+        .accessibilityHidden(true)
     }
 }
 
+/// Stands in for the lesson rows: standalone tile rows with the leading accent bar.
 struct TimetableSkeleton: View {
     var body: some View {
         ScrollView {
-            VStack(spacing: 10) {
+            VStack(spacing: Spacing.rowGap) {
                 ForEach(0..<7, id: \.self) { _ in
-                    HStack(spacing: 12) {
-                        RoundedRectangle(cornerRadius: 3).fill(Palette.cardAlt).frame(width: 5, height: 42).modifier(Shimmer())
-                        VStack(alignment: .leading, spacing: 6) {
-                            SkeletonBlock(height: 13, width: 130)
-                            SkeletonBlock(height: 10, width: 90)
+                    HStack(spacing: Spacing.iconText) {
+                        SkeletonBlock(height: 40, width: 4, radius: 2)
+                        VStack(alignment: .leading, spacing: Spacing.sm) {
+                            SkeletonBlock(height: 14, width: 130)
+                            SkeletonBlock(height: 11, width: 90)
                         }
-                        Spacer()
-                        SkeletonBlock(height: 24, width: 40)
+                        Spacer(minLength: 0)
+                        SkeletonBlock(height: 14, width: 44)
                     }
-                    .padding(12)
-                    .background(Palette.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .padding(Spacing.row)
+                    .cardSurface(radius: Radius.lg)
                 }
             }
-            .padding(16)
+            .padding(.horizontal, Spacing.screenH)
+            .padding(.vertical, Spacing.md)
         }
+        .accessibilityHidden(true)
     }
 }
 
@@ -86,81 +102,109 @@ struct LoadingView: View {
     var body: some View { ListSkeleton() }
 }
 
-// ── Zustände ────────────────────────────────────────────────────────────────
+// MARK: - States
 
+/// Something went wrong and retrying is the answer. Says what kind of failure it was, then
+/// the technical reason in small type, like Android's ErrorStateView.
 struct ErrorStateView: View {
     let message: String
     var retry: (() -> Void)?
+    @Environment(\.strings) private var s
+
+    private enum Kind { case session, offline, generic }
+
+    private var kind: Kind {
+        let m = message.lowercased()
+        let session = ["session", "sitzung", "login", "auth", "unauthorized", "angemeldet", "anmelden", "sign in"]
+        let offline = ["network", "netzwerk", "fetch", "offline", "verbindung", "connection", "timeout", "internet"]
+        if session.contains(where: { m.contains($0) }) { return .session }
+        if offline.contains(where: { m.contains($0) }) { return .offline }
+        return .generic
+    }
+
+    private var title: String {
+        switch kind {
+        case .session: s.common.errSessionTitle
+        case .offline: s.common.errOfflineTitle
+        case .generic: s.common.errGenericTitle
+        }
+    }
+
+    private var note: String {
+        switch kind {
+        case .session: s.common.errSessionDetail
+        case .offline: s.common.errOfflineDetail
+        case .generic: s.common.errGenericDetail
+        }
+    }
+
+    private var symbol: String {
+        switch kind {
+        case .session: "lock"
+        case .offline: "wifi.slash"
+        case .generic: "exclamationmark.triangle"
+        }
+    }
+
+    /// The raw reason, without addresses and kept short.
+    private var reason: String? {
+        let cleaned = message
+            .replacingOccurrences(of: #"https?://\S+"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespaces)
+        return cleaned.isEmpty ? nil : String(cleaned.prefix(140))
+    }
+
     var body: some View {
-        VStack(spacing: 14) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 38)).foregroundStyle(Palette.orange)
-            Text(message).font(.callout).foregroundStyle(Palette.textSecondary)
-                .multilineTextAlignment(.center)
+        StateView(title, message: note, detail: reason) {
+            IconTile(symbol, color: kind == .session ? Palette.accent : Palette.orange, size: 64)
+        } actions: {
             if let retry {
-                Button { retry() } label: {
-                    Label("Erneut versuchen", systemImage: "arrow.clockwise")
+                Button(action: retry) {
+                    ButtonLabel(s.common.retry, symbol: "arrow.clockwise")
                 }
-                .buttonStyle(.glassProminent).tint(Palette.accent)
+                .buttonStyle(.secondary)
             }
         }
-        .padding(30).frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .fadeIn()
     }
 }
 
+/// Nothing to show, and that's fine.
 struct EmptyStateView: View {
     let systemImage: String
     let title: String
     var subtitle: String?
     var body: some View {
-        VStack(spacing: 12) {
-            Image(systemName: systemImage)
-                .font(.system(size: 44)).foregroundStyle(Palette.accent.opacity(0.7))
-                .symbolRenderingMode(.hierarchical)
-            Text(title).font(.headline).foregroundStyle(Palette.textSecondary)
-            if let subtitle {
-                Text(subtitle).font(.subheadline).foregroundStyle(Palette.textTertiary)
-                    .multilineTextAlignment(.center)
-            }
+        StateView(title, message: subtitle) {
+            IconTile(systemImage, color: Palette.accent, size: 64)
         }
-        .padding(40).frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .fadeIn()
     }
 }
 
-/// Detaillierte Meldung, wenn eine POKYH-Funktion (Todos/Erinnerungen/Klasse) nicht
-/// verfügbar ist — zeigt den konkreten Grund aus `AppState.backendStatus` statt eines
-/// generischen „benötigt ein Konto". Bei „Keine Klasse" gibt es einen Hinweis auf die
-/// Diagnose im Profil.
+/// Why a POKYH feature (Todos, Erinnerungen, Klasse) isn't available, with the concrete reason
+/// from `AppState.backendStatus` rather than one generic line: each has a different fix.
 struct BackendUnavailableView: View {
     @EnvironmentObject var app: AppState
+    @Environment(\.strings) private var s
     let feature: String
 
     var body: some View {
-        VStack(spacing: 18) {
-            ZStack {
-                Circle().fill(tint.opacity(0.14)).frame(width: 96, height: 96)
-                Image(systemName: icon).font(.system(size: 40, weight: .medium))
-                    .foregroundStyle(tint).symbolRenderingMode(.hierarchical)
-            }
-            VStack(spacing: 8) {
-                Text(title).font(.title3.bold()).foregroundStyle(Palette.textPrimary)
-                Text(message).font(.subheadline).foregroundStyle(Palette.textSecondary)
-                    .multilineTextAlignment(.center).lineSpacing(2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(.horizontal, 8)
-
+        StateView(title, message: message) {
+            IconTile(icon, color: tint, size: 64)
+        } actions: {
             if case .noClass = app.backendStatus {
-                Label("Profil → POKYH-Konto öffnen", systemImage: "person.crop.circle")
-                    .font(.caption.weight(.medium)).foregroundStyle(Palette.accent)
-                    .padding(.horizontal, 12).padding(.vertical, 7)
-                    .background(Palette.accent.opacity(0.12), in: Capsule())
+                Text(s.states.openAccount)
+                    .textStyle(.caption)
+                    .foregroundStyle(Palette.accentText)
+                    .padding(.horizontal, Spacing.lg)
+                    .padding(.vertical, Spacing.sm)
+                    .background(Palette.accentTint, in: .capsule)
             }
         }
-        .padding(32)
-        .frame(maxWidth: 360)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .fadeIn()
     }
@@ -168,8 +212,8 @@ struct BackendUnavailableView: View {
     private var icon: String {
         switch app.backendStatus {
         case .notStudent: return "person.fill.xmark"
-        case .noClass:    return "person.2.slash"
-        case .failed:     return "wifi.exclamationmark"
+        case .noClass:    return "magnifyingglass"
+        case .failed:     return "wifi.slash"
         default:          return "lock"
         }
     }
@@ -179,61 +223,73 @@ struct BackendUnavailableView: View {
     }
     private var title: String {
         switch app.backendStatus {
-        case .notStudent: return "Nur für Schülerkonten"
-        case .noClass:    return "Keine Klasse gefunden"
-        case .failed:     return "Verbindungsfehler"
-        default:          return "Nicht verfügbar"
+        case .notStudent: return s.states.notStudentTitle
+        case .noClass:    return s.states.noClassTitle
+        case .failed:     return s.states.failedTitle
+        default:          return s.states.unavailableTitle
         }
     }
     private var message: String {
         switch app.backendStatus {
-        case .notStudent:
-            return "\(feature) ist nur mit einem Schülerkonto verfügbar."
-        case .noClass:
-            return "Für \(feature) wird deine WebUntis-Klasse benötigt — sie konnte für dein Konto nicht ermittelt werden."
-        case .failed(let m):
-            return "\(feature) konnte nicht geladen werden:\n\(m)"
-        default:
-            return "\(feature) benötigt ein POKYH-Konto."
+        case .notStudent: return s.states.notStudent(feature)
+        case .noClass: return s.states.noClass(feature)
+        case .failed(let m): return s.states.failed(feature, m)
+        default: return s.states.needsAccount(feature)
         }
     }
 }
 
+// MARK: - Cards
+
+/// Android's PokyhCard: one radius, one padding, one elevation.
 struct Card<Content: View>: View {
     @ViewBuilder var content: Content
     var body: some View {
         content
-            .padding(16)
+            .padding(Spacing.card)
             .frame(maxWidth: .infinity, alignment: .leading)
             .cardSurface()
     }
 }
 
-/// Kopf-Aktionen oben rechts (auf jeder Seite): Nachrichten + Profil.
-/// Getrennte Toolbar-Items → native Abstände, kein Hit-Testing-Bug.
+// MARK: - Tab root actions
+
+/// Top right on every tab root: messages and the profile picture, like Android's TabRootActions.
+/// Separate toolbar items so they get native spacing.
 struct ProfileToolbar: ViewModifier {
     @EnvironmentObject var app: AppState
+    @Environment(\.strings) private var s
     @State private var showProfile = false
     @State private var showMessages = false
+
+    // WebUntis keeps the messages, so an account without it has no envelope.
+    private var hasUntis: Bool { app.session?.hasUntis ?? true }
+
     func body(content: Content) -> some View {
         content
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { showMessages = true } label: {
-                        Image(systemName: "envelope")
+                if hasUntis {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button { showMessages = true } label: {
+                            Image(systemName: "envelope")
+                        }
+                        .accessibilityLabel(s.nav.messages)
                     }
-                    .accessibilityLabel("Nachrichten")
+                    ToolbarSpacer(.fixed, placement: .topBarTrailing)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showProfile = true } label: {
                         if let s = app.session {
-                            AvatarView(url: s.imageUrl, name: s.personName ?? s.username, size: 28, colorSeed: s.username)
+                            AvatarView(url: s.imageUrl, name: s.personName ?? s.username, size: 36, colorSeed: s.username)
                         } else {
                             Image(systemName: "person.crop.circle")
                         }
                     }
-                    .accessibilityLabel("Profil")
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(s.nav.profile)
                 }
+                // The photo is already a circle; a glass disc around it only makes it look small.
+                .sharedBackgroundVisibility(.hidden)
             }
             .sheet(isPresented: $showProfile) {
                 NavigationStack { ProfileView() }
@@ -244,14 +300,15 @@ struct ProfileToolbar: ViewModifier {
     }
 }
 
-/// Nachrichten als Modal mit „Fertig"-Button.
+/// Messages as a sheet with a "Fertig" button.
 struct MessagesSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.strings) private var s
     var body: some View {
         NavigationStack {
             MessagesView()
                 .toolbar {
-                    ToolbarItem(placement: .topBarLeading) { Button("Fertig") { dismiss() } }
+                    ToolbarItem(placement: .topBarLeading) { Button(s.common.done) { dismiss() } }
                 }
         }
     }
@@ -261,10 +318,10 @@ extension View {
     func profileToolbar() -> some View { modifier(ProfileToolbar()) }
 }
 
-/// Avatar-Kreis mit Initiale.
-///
-/// `colorSeed` (z. B. der Benutzername) → persistierte Zufallsfarbe (Profil).
-/// Ohne Seed → namensbasierte Hash-Farbe (z. B. Nachrichten-Sender im Chat).
+// MARK: - Avatars
+
+/// Initial on a colored disc. With `colorSeed` (the username) the color is the persisted
+/// random one from the profile; without, it hashes the name (message senders).
 struct InitialAvatar: View {
     let name: String
     var size: CGFloat = 40
@@ -277,20 +334,19 @@ struct InitialAvatar: View {
 
     var body: some View {
         Circle()
-            .fill(LinearGradient(colors: [color, color.opacity(0.7)],
-                                 startPoint: .topLeading, endPoint: .bottomTrailing))
+            .fill(color)
             .frame(width: size, height: size)
             .overlay(
                 Text(String(name.prefix(1)).uppercased())
                     .font(.system(size: size * 0.42, weight: .bold))
                     .foregroundStyle(.white)
             )
+            .accessibilityHidden(true)
     }
 }
 
-/// Profilbild mit lokalem Cache (sofort sichtbar / offline) und Initial-Fallback.
-/// Der farbige Initial-Avatar dient als Platzhalter, bis das Bild geladen ist;
-/// das Bild blendet dezent ein.
+/// Profile picture from the local cache (instant, works offline) over the initial, which
+/// stays as the placeholder until the picture has loaded.
 struct AvatarView: View {
     let url: String?
     let name: String

@@ -4,6 +4,8 @@
 //
 
 import SwiftUI
+import PokyhCore
+import PokyhDesign
 
 @main
 struct POKYHApp: App {
@@ -25,6 +27,8 @@ struct POKYHApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(app)
+                // German, Italian or English: the phone's language unless one was picked in the app.
+                .environment(\.strings, Strings.of(LanguageChoice.current(in: .standard)))
                 .onAppear {
                     // Nutzungsstatistik (Vordergrundzeit) — liest nur das angemeldete Konto.
                     UsageReporter.shared.attach(app)

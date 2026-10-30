@@ -1,37 +1,38 @@
 import SwiftUI
+import PokyhCore
+import PokyhDesign
 
-/// Bottom-Navigation — Home · Stundenplan · Schule · Noten · Mensa.
+/// Home · Stundenplan · Schule · Noten · Mensa, in Android's order. A tab bar on the iPhone,
+/// a sidebar on wide iPad windows (Android's side rail).
 struct RootTabView: View {
     @EnvironmentObject var app: AppState
+    @Environment(\.strings) private var s
 
-    /// WebUntis-Konto verknüpft? Reine POKYH-Backend-Konten haben keinen
-    /// Stundenplan/Noten → diese Tabs werden ausgeblendet.
+    /// Accounts that only exist on the POKYH backend have no timetable or grades,
+    /// so those two tabs go away.
     private var hasUntis: Bool { app.session?.hasUntis ?? true }
 
     var body: some View {
         TabView(selection: tabSelection) {
-            tab("Home", "house.fill", .home) { HomeView() }
-            if hasUntis {
-                tab("Stundenplan", "calendar", .timetable) { TimetableView() }
-            }
-            tab("Schule", "graduationcap.fill", .school) { SchoolHubView() }
-            if hasUntis {
-                tab("Noten", "chart.bar.fill", .noten) { GradesView() }
-            }
-            tab("Mensa", "fork.knife", .mensa) { MensaView() }
+            tab(.home)
+            if hasUntis { tab(.timetable) }
+            tab(.school)
+            if hasUntis { tab(.noten) }
+            tab(.mensa)
         }
+        .tabViewStyle(.sidebarAdaptable)
+        .tabBarMinimizeBehavior(.onScrollDown)
         .tint(Palette.accent)
         .onAppear {
-            // Aktiver Tab gehört zu WebUntis, Konto hat aber keins → auf Home.
+            // The stored tab belongs to WebUntis but this account has none.
             if !hasUntis, app.selectedTab == .timetable || app.selectedTab == .noten {
                 app.selectedTab = .home
             }
         }
     }
 
-    /// Beim Antippen des Stundenplan-Tabs „heute" signalisieren (auch beim Re-Tap).
-    /// Zeigt die aktuelle Auswahl auf einen ausgeblendeten Tab (WebUntis fehlt),
-    /// wird sie auf „Home" korrigiert → nie ein leerer Bildschirm.
+    /// Tapping Stundenplan (again) jumps it back to today. A selection pointing at a hidden
+    /// tab falls back to Home, so there's never an empty screen.
     private var tabSelection: Binding<AppTab> {
         Binding(
             get: {
@@ -47,9 +48,58 @@ struct RootTabView: View {
         )
     }
 
-    private func tab<Content: View>(_ label: String, _ icon: String, _ value: AppTab, @ViewBuilder content: () -> Content) -> some View {
-        NavigationStack { content().appBackground() }
-            .tabItem { Label(label, systemImage: icon) }
-            .tag(value)
+    private func tab(_ value: AppTab) -> some TabContent<AppTab> {
+        Tab(value: value) {
+            NavigationStack { screen(value).appBackground(wide: value == .home || value == .timetable) }
+        } label: {
+            // Outline normally, filled when selected, like Android's Phosphor pair.
+            Label(title(value), systemImage: value == tabSelection.wrappedValue ? value.selectedSymbol : value.symbol)
+                .environment(\.symbolVariants, .none)
+        }
+    }
+
+    private func title(_ value: AppTab) -> String {
+        switch value {
+        case .home: s.nav.home
+        case .timetable: s.nav.timetable
+        case .school: s.nav.school
+        case .noten: s.nav.grades
+        case .mensa: s.nav.mensa
+        }
+    }
+
+    @ViewBuilder
+    private func screen(_ value: AppTab) -> some View {
+        switch value {
+        case .home: HomeView()
+        case .timetable: TimetableView()
+        case .school: SchoolHubView()
+        case .noten: GradesView()
+        case .mensa: MensaView()
+        }
+    }
+}
+
+private extension AppTab {
+    // Phosphor House, CalendarBlank, GraduationCap, ChartBar, ForkKnife.
+    // calendar and fork.knife have no filled twin; the tint carries their selection.
+    var symbol: String {
+        switch self {
+        case .home: "house"
+        case .timetable: "calendar"
+        case .school: "graduationcap"
+        case .noten: "chart.bar"
+        case .mensa: "fork.knife"
+        }
+    }
+
+    var selectedSymbol: String {
+        switch self {
+        case .home: "house.fill"
+        case .timetable: "calendar"
+        case .school: "graduationcap.fill"
+        case .noten: "chart.bar.fill"
+        case .mensa: "fork.knife"
+        }
     }
 }
