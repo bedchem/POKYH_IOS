@@ -608,6 +608,7 @@ struct DishDetailView: View {
                     load: { try await BackendClient.shared.dishComments(dishId: dish.id, token: $0) },
                     create: { try await BackendClient.shared.createDishComment(dishId: dish.id, body: $1, token: $0) },
                     delete: { try await BackendClient.shared.deleteDishComment(dishId: dish.id, commentId: $1, token: $0) },
+                    update: { try await BackendClient.shared.updateDishComment(dishId: dish.id, commentId: $1, body: $2, token: $0) },
                     ratings: ratings.ratings,
                     reportPath: "/canteen/\(dish.id)"
                 )

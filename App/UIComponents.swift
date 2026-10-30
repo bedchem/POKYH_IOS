@@ -177,9 +177,10 @@ struct EmptyStateView: View {
     let title: String
     var subtitle: String?
     var body: some View {
-        StateView(title, message: subtitle) {
+        // Labelled: a lone trailing closure would land in `actions`, under the text.
+        StateView(title, message: subtitle, art: {
             IconTile(systemImage, color: Palette.accent, size: 64)
-        }
+        })
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .fadeIn()
     }
@@ -252,28 +253,81 @@ struct Card<Content: View>: View {
     }
 }
 
+// MARK: - Unread messages
+
+extension AppState {
+    /// The badges' count, for the School tab and the envelope. Without WebUntis there's no inbox.
+    var unreadBadge: Int { session?.hasUntis == true ? unreadMessages : 0 }
+
+    /// An inbox loaded anywhere sets the count.
+    func noteInbox(_ inbox: [MessagePreview]) {
+        guard let name = session?.username else { return }
+        UnreadCheck.last[name] = Date()
+        unreadMessages = inbox.filter { !$0.isRead }.count
+    }
+
+    /// Counts the inbox again unless that was just done, so a tab switch doesn't ask WebUntis
+    /// every time.
+    func refreshUnread(force: Bool = false) async {
+        guard let s = session, s.hasUntis, !s.bearerToken.isEmpty else { return }
+        if !force, let last = UnreadCheck.last[s.username], Date().timeIntervalSince(last) < UnreadCheck.interval { return }
+        guard let inbox = try? await UntisClient.shared.messages(folder: .inbox, s),
+              session?.username == s.username else { return }
+        noteInbox(inbox)
+    }
+}
+
+private enum UnreadCheck {
+    static var last: [String: Date] = [:]
+    static let interval: TimeInterval = 30
+}
+
 // MARK: - Tab root actions
+
+extension EnvironmentValues {
+    /// The iPhone's tab bar has room for five tabs, so with all of them shown the search moves up
+    /// here, where Android has it too.
+    @Entry var searchInToolbar = false
+}
 
 /// Top right on every tab root: messages and the profile picture, like Android's TabRootActions.
 /// Separate toolbar items so they get native spacing.
 struct ProfileToolbar: ViewModifier {
     @EnvironmentObject var app: AppState
     @Environment(\.strings) private var s
+    @Environment(\.searchInToolbar) private var searchInToolbar
     @State private var showProfile = false
     @State private var showMessages = false
+    @State private var showSearch = false
 
     // WebUntis keeps the messages, so an account without it has no envelope.
     private var hasUntis: Bool { app.session?.hasUntis ?? true }
 
     func body(content: Content) -> some View {
+        let unread = app.unreadBadge
         content
             .toolbar {
+                if searchInToolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button { showSearch = true } label: {
+                            Image(systemName: "magnifyingglass")
+                        }
+                        .accessibilityLabel(s.search.title)
+                    }
+                    if !hasUntis { ToolbarSpacer(.fixed, placement: .topBarTrailing) }
+                }
                 if hasUntis {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button { showMessages = true } label: {
                             Image(systemName: "envelope")
+                                .overlay(alignment: .topTrailing) {
+                                    UnreadBadge(unread)
+                                        .fixedSize()
+                                        .offset(x: 11, y: -9)
+                                        .allowsHitTesting(false)
+                                }
                         }
-                        .accessibilityLabel(s.nav.messages)
+                        .accessibilityLabel(unread > 0 ? s.nav.messagesUnread(unread) : s.nav.messages)
                     }
                     ToolbarSpacer(.fixed, placement: .topBarTrailing)
                 }
@@ -294,7 +348,24 @@ struct ProfileToolbar: ViewModifier {
             .sheet(isPresented: $showProfile) {
                 NavigationStack { ProfileView() }
             }
-            .sheet(isPresented: $showMessages) {
+            .sheet(isPresented: $showSearch) {
+                NavigationStack {
+                    SearchView(focusOnAppear: true) { tab in
+                        showSearch = false
+                        app.selectedTab = tab
+                    }
+                    .appBackground()
+                    .toolbar {
+                        ToolbarItem(placement: .topBarLeading) {
+                            Button(role: .close) { showSearch = false }
+                        }
+                    }
+                }
+            }
+            // Whatever was read in there shows on the badge right away.
+            .sheet(isPresented: $showMessages, onDismiss: {
+                Task { await app.refreshUnread(force: true) }
+            }) {
                 MessagesSheet()
             }
     }

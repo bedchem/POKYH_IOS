@@ -4,8 +4,8 @@ import Foundation
 import BackgroundTasks
 
 /// Hintergrund-Aktualisierung: ruft periodisch (von iOS getaktet, „best effort")
-/// Nachrichten + Erinnerungen ab und feuert lokale Benachrichtigungen — auch wenn
-/// die App geschlossen ist. Kein Echtzeit-Push (das bräuchte server-seitiges APNs).
+/// Nachrichten + Erinnerungen ab und feuert lokale Benachrichtigungen, solange die App
+/// entsperrt im Hintergrund liegt. Everything else comes as APNs push from the backend.
 enum BackgroundRefresh {
     static let identifier = Config.bgRefreshId
 
@@ -33,15 +33,14 @@ enum BackgroundRefresh {
         task.expirationHandler = { work.cancel() }
     }
 
-    /// Leiser Abruf für das zuletzt aktive Konto (Passwort aus dem Keychain —
-    /// `AfterFirstUnlock` erlaubt den Zugriff im Hintergrund).
+    /// The signed-in session, handed over by AppState; nil while the app is locked.
+    static var liveSession: (() -> UserSession?)?
+
+    /// Leiser Abruf, but only while the app is unlocked: passwords sit behind Face ID, which
+    /// can't be asked for in the background, and a locked app shouldn't fetch anything.
     @MainActor
     private static func runSync() async {
-        let store = CredentialStore.shared
-        guard let username = store.lastActive ?? store.defaultUsername ?? store.accounts.first?.username,
-              let password = store.password(for: username),
-              let session = try? await UntisClient.shared.login(username: username, password: password)
-        else { return }
+        guard let session = liveSession?() else { return }
 
         if let inbox = try? await UntisClient.shared.messages(folder: .inbox, session) {
             NotificationManager.shared.checkNewMessages(inbox)
@@ -56,6 +55,7 @@ enum BackgroundRefresh {
 #else
 // macOS u. a.: kein BGTaskScheduler/BGAppRefreshTask → No-ops.
 enum BackgroundRefresh {
+    static var liveSession: (() -> UserSession?)?
     static func register() {}
     static func schedule() {}
 }

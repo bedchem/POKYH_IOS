@@ -1,7 +1,8 @@
 import WidgetKit
 import SwiftUI
 
-/// Home-Screen-Widget: ungelesene Nachrichten + neueste Betreffzeilen.
+/// Home-Screen-Widget: ungelesene Nachrichten + neueste Betreffzeilen. Senders and subjects are
+/// marked private, so a locked phone shows placeholders instead.
 struct MessagesEntry: TimelineEntry { let date: Date; let snapshot: MessagesSnapshot }
 
 struct MessagesProvider: TimelineProvider {
@@ -72,6 +73,7 @@ struct MessagesWidgetView: View {
                         }
                         Spacer(minLength: 0)
                     }
+                    .privacySensitive()
                 }
                 Spacer(minLength: 0)
             }

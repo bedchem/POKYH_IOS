@@ -2,8 +2,9 @@ import SwiftUI
 import PokyhCore
 import PokyhDesign
 
-/// Lock screen. Tries Face ID once on appear. The saved accounts and "Manuell anmelden" are
-/// always there; only the status line reacts to failed attempts. Same calm layout as sign-in.
+/// Lock screen. Tries Face ID once on appear (not right after signing out on purpose). The saved
+/// accounts and "Manuell anmelden" are always there; only the status line reacts to failed
+/// attempts. Same calm layout as sign-in. Nothing of the account's data is shown here.
 struct LockView: View {
     @EnvironmentObject var app: AppState
     @Environment(\.strings) private var s
@@ -29,7 +30,9 @@ struct LockView: View {
         .animation(.spring(response: 0.4, dampingFraction: 0.85), value: app.busy)
         .animation(.easeInOut(duration: Motion.standard), value: statusText)
         .task {
-            if !appeared { appeared = true; await attemptUnlock() }
+            guard !appeared else { return }
+            appeared = true
+            if app.consumeAutoUnlock() { await attemptUnlock() }
         }
         .onChange(of: app.showAddAccount) { _, open in
             // Signing in by hand: the failed unlock's message no longer applies.
@@ -106,7 +109,11 @@ struct LockView: View {
         if app.busy { return app.statusText.isEmpty ? s.login.signingIn : app.statusText }
         if let problem { return problem + "\n" + s.login.lockChoose }
         if showFallback { return s.login.lockUnavailable + "\n" + s.login.lockChoose }
-        return s.login.lockPrompt
+        let device = app.biometricInfo
+        // No passcode on the device: nothing can be unlocked, only signed into by hand.
+        if device.known && !device.available { return device.phrase(s.login.lockNoBiometric, s.lang) + "\n" + s.login.lockChoose }
+        // "Mit Face ID entsperren" rather than Android's generic "Biometrie".
+        return device.phrase(s.login.lockPrompt, s.lang)
     }
 
     private func attemptUnlock(_ username: String? = nil) async {
@@ -135,7 +142,8 @@ struct LockView: View {
                         if acc.username == app.defaultUsername {
                             MiniBadge(s.login.lockDefault, symbol: "star.fill", color: Palette.accent)
                         }
-                        Image(systemName: app.biometricInfo.symbol)
+                        // Face ID opens it, or the password has to be typed again.
+                        Image(systemName: app.accountHasPassword(acc.username) ? app.biometricInfo.symbol : "key")
                             .font(.system(size: 14, weight: .medium))
                             .foregroundStyle(Palette.textTertiary)
                             .accessibilityHidden(true)

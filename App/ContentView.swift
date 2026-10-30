@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import UIKit
 import PokyhCore
 import PokyhDesign
 
@@ -66,6 +67,10 @@ struct ContentView: View {
         .preferredColorScheme(appliedScheme)
         .onAppear { if appliedScheme == nil { appliedScheme = app.colorScheme } }
         .onChange(of: app.themeMode) { _, _ in crossfadeTheme() }
+        // App switcher, Control Center, a call: the app stays hidden until it's back on screen.
+        .onChange(of: app.privacyCover) { _, covered in
+            if covered { PrivacyShield.show() } else { PrivacyShield.hide() }
+        }
     }
 
     /// Fade in, switch the scheme underneath, fade out.
@@ -138,6 +143,52 @@ struct OfflineBanner: View {
 }
 
 extension AppState.Phase: Equatable {}
+
+/// A window over everything, sheets included, that blurs the app away under its logo. A plain
+/// overlay in the view tree wouldn't reach sheets, and those show up in the app switcher too.
+@MainActor
+enum PrivacyShield {
+    private static var windows: [ObjectIdentifier: UIWindow] = [:]
+
+    static func show() {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        // Forget windows of scenes that are gone (iPad windows closed).
+        let alive = Set(scenes.map(ObjectIdentifier.init))
+        windows = windows.filter { alive.contains($0.key) }
+        for scene in scenes {
+            let window = windows[ObjectIdentifier(scene)] ?? makeWindow(on: scene)
+            windows[ObjectIdentifier(scene)] = window
+            window.isHidden = false
+        }
+    }
+
+    static func hide() {
+        for window in windows.values { window.isHidden = true }
+    }
+
+    private static func makeWindow(on scene: UIWindowScene) -> UIWindow {
+        let window = UIWindow(windowScene: scene)
+        let host = UIHostingController(rootView: PrivacyCover())
+        host.view.backgroundColor = .clear
+        window.rootViewController = host
+        window.backgroundColor = .clear
+        window.windowLevel = .alert + 1
+        return window
+    }
+}
+
+/// What the app switcher shows instead of the app.
+private struct PrivacyCover: View {
+    var body: some View {
+        ZStack {
+            Rectangle().fill(.ultraThickMaterial)
+            Palette.bg.opacity(0.55)
+            AppLogo(size: 84)
+        }
+        .ignoresSafeArea()
+        .accessibilityHidden(true)
+    }
+}
 
 #Preview {
     ContentView().environmentObject(AppState())

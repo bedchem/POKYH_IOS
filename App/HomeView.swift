@@ -36,17 +36,18 @@ struct HomeView: View {
 
     @State private var width: CGFloat = 0
     @State private var route: Route?
+    @State private var arranging = false
+    /// Which blocks Home shows and in what order, by block name (see HomeLayout).
+    @AppStorage("pokyh_home_layout") private var storedLayout = ""
 
     struct MensaDay { let date: Date; let dishes: [Dish] }
 
     private enum Route: Hashable {
         case grades, absences, todos, reminders, messages, mensa
+        // The greeting's shortcuts open the sheet straight away.
+        case composeMessage, reportAbsence
         case message(Int)
         case gradeSubject(Int)
-    }
-
-    private enum Block: Hashable {
-        case shortcuts, nowNext, exam, today, changes, grades, average, messages, mensa, todos, reminders
     }
 
     private var wide: Bool { width >= 760 }
@@ -54,17 +55,26 @@ struct HomeView: View {
     private var hasBackend: Bool { app.session?.apiToken != nil }
     private var showsMensa: Bool { loadingMensa || mensaDay != nil }
 
-    private var blocks: [Block] {
-        var out: [Block] = [.shortcuts, .nowNext, .exam, .today, .changes, .grades, .average, .messages]
-        if showsMensa { out.append(.mensa) }
-        if hasBackend { out += [.todos, .reminders] }
-        return out
+    private var layout: Binding<HomeLayout> {
+        Binding(get: { HomeLayout(stored: storedLayout) }, set: { storedLayout = $0.stored })
+    }
+
+    /// The arranged blocks this account can fill: the Mensa only with a menu, the lists only
+    /// with a POKYH account.
+    private var blocks: [HomeSection] {
+        layout.wrappedValue.visible.filter { b in
+            switch b {
+            case .mensa: showsMensa
+            case .todos, .reminders: hasBackend
+            default: true
+            }
+        }
     }
 
     /// Shortcuts across the whole width, everything else in pairs.
-    private var wideRows: [[Block]] {
-        var rows: [[Block]] = []
-        var pending: Block?
+    private var wideRows: [[HomeSection]] {
+        var rows: [[HomeSection]] = []
+        var pending: HomeSection?
         for b in blocks {
             if b == .shortcuts {
                 if let p = pending { rows.append([p]); pending = nil }
@@ -86,7 +96,9 @@ struct HomeView: View {
                 if !hasUntis {
                     // Without WebUntis only what works without a school account.
                     noUntisBlock.fadeIn(delay: 0.04)
-                    if showsMensa { mensaBlock.fadeIn(delay: 0.08) }
+                    if blocks.contains(.mensa) { mensaBlock.fadeIn(delay: 0.08) }
+                } else if blocks.isEmpty {
+                    InlineNotice(s.home.noWidgets, symbol: "pencil").fadeIn(delay: 0.04)
                 } else if wide {
                     ForEach(Array(wideRows.enumerated()), id: \.offset) { index, row in
                         WeightedRow(weights: row.map { row.count == 1 ? 1 : ($0 == .exam || $0 == .mensa ? 5 : 7) }, spacing: Spacing.xxl) {
@@ -113,8 +125,16 @@ struct HomeView: View {
         .toolbar {
             // The greeting is the heading here; the title only names the back button.
             ToolbarItem(placement: .principal) { Color.clear.frame(width: 1, height: 1) }
+            if hasUntis {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { arranging = true } label: { Image(systemName: "pencil") }
+                        .accessibilityLabel(s.nav.arrangeHome)
+                }
+            }
         }
         .profileToolbar()
+        .sheet(isPresented: $arranging) { HomeArrangeSheet(layout: layout) }
+        .animation(.spring(response: 0.42, dampingFraction: 0.86), value: storedLayout)
         .navigationDestination(item: $route) { destination($0) }
         .task { await loadAll() }
         .refreshable { await loadAll() }
@@ -128,19 +148,22 @@ struct HomeView: View {
         case .todos: TodosView()
         case .reminders: RemindersView()
         case .messages: MessagesView()
+        case .composeMessage: MessagesView(startCompose: true)
+        case .reportAbsence: AbsencesView(openReport: true)
         case .mensa: MensaView()
         case .gradeSubject(let id): GradeSubjectView(lessonId: id, subjects: subjects)
         case .message(let id):
             if let m = messages.first(where: { $0.id == id }) {
                 MessageDetailScreen(preview: m, folder: .inbox) {
                     if let i = messages.firstIndex(where: { $0.id == id }) { messages[i].isRead = true }
+                    app.messageWasRead()
                 }
             }
         }
     }
 
     @ViewBuilder
-    private func block(_ b: Block) -> some View {
+    private func block(_ b: HomeSection) -> some View {
         switch b {
         case .shortcuts: shortcuts
         case .nowNext: nowNextBlock
@@ -201,7 +224,24 @@ struct HomeView: View {
 
     private static let wideHeading = TextStyle(44, 46, .heavy, tracking: -0.022, relativeTo: .largeTitle)
 
+    /// The heading and the web's two actions: beside it on wide windows, under it on phones.
+    @ViewBuilder
     private var greeting: some View {
+        if wide {
+            HStack(alignment: .bottom, spacing: Spacing.xxl) {
+                greetingText.frame(maxWidth: .infinity, alignment: .leading)
+                if hasUntis { greetingActions(fill: false) }
+            }
+        } else {
+            VStack(alignment: .leading, spacing: Spacing.md) {
+                greetingText
+                if hasUntis { greetingActions(fill: true) }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var greetingText: some View {
         VStack(alignment: .leading, spacing: Spacing.sm) {
             Text(heading)
                 .textStyle(wide ? Self.wideHeading : .display)
@@ -220,7 +260,14 @@ struct HomeView: View {
                     .padding(.top, Spacing.xs)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // Writing and reporting have no screens of their own yet, so they open the two lists.
+    private func greetingActions(fill: Bool) -> some View {
+        HStack(spacing: Spacing.sm) {
+            GreetingAction(s.home.writeMessage, symbol: "square.and.pencil", accent: true, fill: fill) { route = .composeMessage }
+            GreetingAction(s.home.reportAbsence, symbol: "person.badge.minus", accent: false, fill: fill) { route = .reportAbsence }
+        }
     }
 
     // ── Shortcuts ───────────────────────────────────────────────────────────
@@ -256,7 +303,10 @@ struct HomeView: View {
                     PokyhDesign.SkeletonBlock(height: 20).frame(width: 200)
                 }
             } else if let exam = nextExam {
-                Button { app.selectedTab = .timetable } label: {
+                Button {
+                    TimetableJump.shared.day = exam.date
+                    app.selectedTab = .timetable
+                } label: {
                     examPlate(tone) { examContent(exam, tone: tone) }
                 }
                 .buttonStyle(PressableStyle())
@@ -1057,6 +1107,7 @@ struct HomeView: View {
         do {
             let inbox = try await UntisClient.shared.messages(folder: .inbox, session)
             messages = Array(inbox.prefix(4))
+            app.noteInbox(inbox)
             messagesFailed = false
         } catch {
             messagesFailed = true
@@ -1157,5 +1208,288 @@ private struct HomeStars: View {
             }
         }
         .accessibilityHidden(true)
+    }
+}
+
+// ── Arranging Home (Android's ui/home/HomeLayout.kt) ────────────────────────
+
+/// One block of Home. The raw value is what gets stored, so a case is never renamed: a renamed
+/// one would silently drop out of every saved layout. Add and retire instead.
+/// `defaultVisible` decides what a block does the first time a layout meets it: the web's five
+/// are on for everyone, anything later starts in "Widgets hinzufügen".
+private enum HomeSection: String, CaseIterable, Identifiable {
+    case shortcuts = "Shortcuts"
+    case exam = "Exam"
+    case grades = "Grades"
+    case messages = "Messages"
+    case mensa = "Mensa"
+    case today = "Today"
+    case nowNext = "NowNext"
+    case changes = "Changes"
+    case average = "Average"
+    case todos = "OpenTodos"
+    case reminders = "UpcomingReminders"
+
+    var id: String { rawValue }
+
+    var defaultVisible: Bool {
+        switch self {
+        case .shortcuts, .exam, .grades, .messages, .mensa: true
+        default: false
+        }
+    }
+
+    static var defaultOrder: [HomeSection] { allCases.filter(\.defaultVisible) }
+
+    var symbol: String {
+        switch self {
+        case .shortcuts: "square.grid.2x2.fill"
+        case .exam: "pencil.and.list.clipboard"
+        case .grades: "chart.bar.fill"
+        case .messages: "envelope.fill"
+        case .mensa: "fork.knife"
+        case .today: "calendar"
+        case .nowNext: "clock.fill"
+        case .changes: "arrow.left.arrow.right"
+        case .average: "chart.line.uptrend.xyaxis"
+        case .todos: "checklist"
+        case .reminders: "bell.fill"
+        }
+    }
+
+    func title(_ t: HomeStrings) -> String {
+        switch self {
+        case .shortcuts: t.sectionShortcuts
+        case .exam: t.sectionExam
+        case .grades: t.sectionGrades
+        case .messages: t.sectionMessages
+        case .mensa: t.sectionMensa
+        case .today: t.sectionToday
+        case .nowNext: t.sectionNowNext
+        case .changes: t.sectionChanges
+        case .average: t.sectionAverage
+        case .todos: t.sectionTodos
+        case .reminders: t.sectionReminders
+        }
+    }
+
+    /// What the block is for, under its name in the arrange list.
+    func info(_ t: HomeStrings) -> String {
+        switch self {
+        case .shortcuts: t.sectionShortcutsInfo
+        case .exam: t.sectionExamInfo
+        case .grades: t.sectionGradesInfo
+        case .messages: t.sectionMessagesInfo
+        case .mensa: t.sectionMensaInfo
+        case .today: t.sectionTodayInfo
+        case .nowNext: t.sectionNowNextInfo
+        case .changes: t.sectionChangesInfo
+        case .average: t.sectionAverageInfo
+        case .todos: t.sectionTodosInfo
+        case .reminders: t.sectionRemindersInfo
+        }
+    }
+}
+
+/// Which blocks Home shows, and in what order. `order` arranges the shown ones, `hidden` is what
+/// was taken off; a block in neither is one this layout has never seen. Both by name, so a
+/// layout from an older or newer build still reads back.
+private struct HomeLayout: Codable, Equatable {
+    var order: [String] = HomeSection.defaultOrder.map(\.rawValue)
+    var hidden: [String] = []
+
+    init() {}
+
+    init(order: [String], hidden: [String]) {
+        self.order = order
+        self.hidden = hidden
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        order = try c.decodeIfPresent([String].self, forKey: .order) ?? HomeSection.defaultOrder.map(\.rawValue)
+        hidden = try c.decodeIfPresent([String].self, forKey: .hidden) ?? []
+    }
+
+    init(stored: String) {
+        self = stored.data(using: .utf8).flatMap { try? JSONDecoder().decode(HomeLayout.self, from: $0) } ?? HomeLayout()
+    }
+
+    var stored: String {
+        (try? JSONEncoder().encode(self)).flatMap { String(data: $0, encoding: .utf8) } ?? ""
+    }
+
+    private var hiddenSections: Set<HomeSection> { Set(hidden.compactMap(HomeSection.init(rawValue:))) }
+
+    /// Every block once, saved ones first; unknown names fall out.
+    private var sanitized: [HomeSection] {
+        var seen = Set<HomeSection>()
+        let known = order.compactMap(HomeSection.init(rawValue:)).filter { seen.insert($0).inserted }
+        return known + HomeSection.allCases.filter { !seen.contains($0) }
+    }
+
+    /// The blocks to show, in order.
+    var visible: [HomeSection] {
+        let placed = Set(order.compactMap(HomeSection.init(rawValue:)))
+        let off = hiddenSections
+        return sanitized.filter { !off.contains($0) && (placed.contains($0) || $0.defaultVisible) }
+    }
+
+    /// Everything not on Home, in the enum's order.
+    var available: [HomeSection] {
+        let shown = Set(visible)
+        return HomeSection.allCases.filter { !shown.contains($0) }
+    }
+
+    func moved(from source: IndexSet, to destination: Int) -> HomeLayout {
+        var list = visible
+        list.move(fromOffsets: source, toOffset: destination)
+        return HomeLayout(order: list.map(\.rawValue), hidden: hidden)
+    }
+
+    func removed(_ section: HomeSection) -> HomeLayout {
+        HomeLayout(order: visible.filter { $0 != section }.map(\.rawValue),
+                   hidden: (hiddenSections.union([section])).map(\.rawValue).sorted())
+    }
+
+    /// Added at the end, right above where it was picked.
+    func added(_ section: HomeSection) -> HomeLayout {
+        HomeLayout(order: (visible.filter { $0 != section } + [section]).map(\.rawValue),
+                   hidden: hiddenSections.subtracting([section]).map(\.rawValue).sorted())
+    }
+}
+
+/// The blocks on Home as a list to drag into order, a minus to take one off, and below it the
+/// rest with what each is for. "Standard" puts the web's five back.
+private struct HomeArrangeSheet: View {
+    @Binding var layout: HomeLayout
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.strings) private var s
+
+    var body: some View {
+        let t = s.home
+        NavigationStack {
+            List {
+                Section {
+                    if layout.visible.isEmpty {
+                        Text(t.noWidgets)
+                            .textStyle(.footnote)
+                            .foregroundStyle(Palette.textSecondary)
+                            .listRowBackground(Palette.card)
+                    }
+                    ForEach(layout.visible) { section in
+                        row(section) {
+                            Button { change { layout.removed(section) } } label: {
+                                Image(systemName: "minus.circle.fill")
+                                    .font(.system(size: 22))
+                                    .symbolRenderingMode(.palette)
+                                    .foregroundStyle(.white, Brand.danger)
+                            }
+                            .buttonStyle(.borderless)
+                            .accessibilityLabel(t.remove(section.title(t)))
+                        }
+                    }
+                    .onMove { from, to in change { layout.moved(from: from, to: to) } }
+                } header: {
+                    Text(s.nav.home)
+                }
+
+                Section {
+                    if layout.available.isEmpty {
+                        Label(t.allWidgetsShown, systemImage: "checkmark.circle.fill")
+                            .textStyle(.callout)
+                            .foregroundStyle(Brand.success)
+                            .listRowBackground(Palette.card)
+                    }
+                    ForEach(layout.available) { section in
+                        row(section) {
+                            Button { change { layout.added(section) } } label: {
+                                Image(systemName: "plus.circle.fill")
+                                    .font(.system(size: 22))
+                                    .symbolRenderingMode(.palette)
+                                    .foregroundStyle(.white, Brand.accent)
+                            }
+                            .buttonStyle(.borderless)
+                            .accessibilityLabel(section.title(t))
+                        }
+                    }
+                } header: {
+                    Text(t.addWidgets)
+                }
+            }
+            .environment(\.editMode, .constant(.active))
+            .scrollContentBackground(.hidden)
+            .background(Palette.bg.ignoresSafeArea())
+            .navigationTitle(s.nav.arrangeHome)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button(t.standard) { change { HomeLayout() } }
+                        .disabled(layout.visible == HomeLayout().visible)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(role: .confirm) { dismiss() }
+                }
+            }
+            .sensoryFeedback(.selection, trigger: layout)
+        }
+        .presentationDetents([.large])
+    }
+
+    private func change(_ next: () -> HomeLayout) {
+        withAnimation(.snappy(duration: 0.3)) { layout = next() }
+    }
+
+    private func row<Control: View>(_ section: HomeSection, @ViewBuilder control: () -> Control) -> some View {
+        HStack(spacing: Spacing.iconText) {
+            control()
+            IconTile(section.symbol, color: Brand.accent, size: 38)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(section.title(s.home))
+                    .textStyle(.headline)
+                    .foregroundStyle(Palette.textPrimary)
+                Text(section.info(s.home))
+                    .textStyle(.footnote)
+                    .foregroundStyle(Palette.textSecondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.vertical, 2)
+        .listRowBackground(Palette.card)
+    }
+}
+
+/// One of the greeting's pill buttons: the accent one first, the quiet one beside it.
+private struct GreetingAction: View {
+    let title: String
+    let symbol: String
+    let accent: Bool
+    let fill: Bool
+    let action: () -> Void
+
+    init(_ title: String, symbol: String, accent: Bool, fill: Bool, action: @escaping () -> Void) {
+        self.title = title
+        self.symbol = symbol
+        self.accent = accent
+        self.fill = fill
+        self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: Spacing.sm) {
+                Image(systemName: symbol).font(.system(size: 16, weight: .semibold))
+                Text(title)
+                    .textStyle(TextStyle.callout.weight(.semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+            }
+            .foregroundStyle(accent ? Palette.accentText : Palette.textPrimary)
+            .padding(.horizontal, fill ? Spacing.md : 18)
+            .frame(maxWidth: fill ? .infinity : nil, minHeight: 48)
+            .background(accent ? Palette.accentTint : Palette.cardAlt, in: .capsule)
+            .contentShape(.capsule)
+        }
+        .buttonStyle(PressableStyle())
     }
 }

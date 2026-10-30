@@ -1,7 +1,8 @@
 import WidgetKit
 import SwiftUI
 
-/// Kombiniertes Widget: nächste Stunde + Notenschnitt + ungelesene Nachrichten.
+/// Kombiniertes Widget: nächste Stunde + Notenschnitt + ungelesene Nachrichten. Grades are
+/// marked private, so a locked phone shows placeholders instead.
 struct OverviewEntry: TimelineEntry {
     let date: Date
     let timetable: TimetableSnapshot
@@ -51,6 +52,7 @@ struct OverviewWidgetView: View {
                 statTile("chart.bar.fill", "Schnitt",
                          hasGrades ? GradeFormat.string(entry.grades.average) : "–",
                          hasGrades ? Brand.grade(entry.grades.average) : .secondary)
+                    .privacySensitive()
                 statTile("envelope.fill", "Ungelesen", "\(entry.messages.unread)",
                          entry.messages.unread > 0 ? Brand.accent : .secondary)
             }
@@ -103,6 +105,7 @@ struct OverviewWidgetView: View {
                     Text(GradeFormat.string(g.value)).font(.subheadline.weight(.semibold).monospacedDigit())
                         .foregroundStyle(Brand.grade(g.value))
                 }
+                .privacySensitive()
             }
         }
         Spacer(minLength: 0)

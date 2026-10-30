@@ -3,7 +3,8 @@ import PokyhCore
 import PokyhDesign
 
 /// The comment thread under a reminder or a dish. One list card for the whole thread (it's one
-/// object, five cards made it look like five things), the composer right under it.
+/// object, five cards made it look like five things), the composer right under it. The own
+/// comments edit in a small sheet, from the pencil or a long press.
 struct CommentSection: View {
     @EnvironmentObject var app: AppState
     @Environment(\.strings) private var s
@@ -12,6 +13,8 @@ struct CommentSection: View {
     let load: (_ token: String) async throws -> [ApiComment]
     let create: (_ token: String, _ body: String) async throws -> ApiComment
     let delete: (_ token: String, _ id: String) async throws -> Void
+    /// Saves an edit of an own comment; without it there's no edit.
+    var update: ((_ token: String, _ id: String, _ body: String) async throws -> ApiComment)? = nil
     /// Stars per account (stableUid → 1–5), shown beside the author under a dish.
     var ratings: [String: Double] = [:]
     /// Where the thread lives on the website, for a report.
@@ -22,6 +25,9 @@ struct CommentSection: View {
     @State private var loading = true
     @State private var sending = false
     @State private var failed = false
+    @State private var editing: ApiComment?
+    @State private var confirmDelete: ApiComment?
+    @State private var sent = 0
 
     private static let maxLength = 2000
 
@@ -44,6 +50,19 @@ struct CommentSection: View {
             }
         }
         .task { await reload() }
+        .sheet(item: $editing) { c in
+            CommentEditSheet(comment: c, maxLength: Self.maxLength) { body in
+                try await save(c, body: body)
+            }
+        }
+        .alert(s.common.delete, isPresented: Binding(get: { confirmDelete != nil }, set: { if !$0 { confirmDelete = nil } }),
+               presenting: confirmDelete) { c in
+            Button(s.common.delete, role: .destructive) { Task { await remove(c) } }
+            Button(s.common.cancel, role: .cancel) {}
+        } message: { c in
+            Text(c.body.count > 120 ? String(c.body.prefix(120)) + "…" : c.body)
+        }
+        .sensoryFeedback(.success, trigger: sent)
     }
 
     @ViewBuilder private var thread: some View {
@@ -96,8 +115,15 @@ struct CommentSection: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             if mine {
-                IconButton("trash", label: s.common.delete, size: 32, tint: Palette.textTertiary) {
-                    Task { await remove(c) }
+                HStack(spacing: 0) {
+                    if update != nil {
+                        IconButton("pencil", label: s.common.editComment, size: 32, tint: Palette.textTertiary) {
+                            editing = c
+                        }
+                    }
+                    IconButton("trash", label: s.common.delete, size: 32, tint: Palette.textTertiary) {
+                        confirmDelete = c
+                    }
                 }
             } else if myUid != nil {
                 IconButton("flag", label: s.common.reportComment, size: 32, tint: Palette.textTertiary) {
@@ -106,6 +132,17 @@ struct CommentSection: View {
             }
         }
         .padding(Spacing.card)
+        .contentShape(.rect)
+        .contextMenu {
+            if mine {
+                if update != nil {
+                    Button { editing = c } label: { Label(s.common.editComment, systemImage: "pencil") }
+                }
+                Button(role: .destructive) { confirmDelete = c } label: { Label(s.common.delete, systemImage: "trash") }
+            } else if myUid != nil {
+                Button { report(c) } label: { Label(s.common.reportComment, systemImage: "flag") }
+            }
+        }
     }
 
     private var composer: some View {
@@ -177,6 +214,7 @@ struct CommentSection: View {
             let c = try await create(token, body)
             withAnimation(Motion.standardEase) { comments.append(c) }
             draft = ""
+            sent += 1
         } catch {
             failed = true
         }
@@ -185,7 +223,23 @@ struct CommentSection: View {
     private func remove(_ c: ApiComment) async {
         guard let token else { return }
         withAnimation(Motion.standardEase) { comments.removeAll { $0.id == c.id } }
-        try? await delete(token, c.id)
+        do {
+            try await delete(token, c.id)
+        } catch {
+            // Didn't go: it comes back.
+            await reload()
+        }
+    }
+
+    private func save(_ c: ApiComment, body: String) async throws {
+        guard let token, let update else { return }
+        var changed = try await update(token, c.id, body)
+        // An answer without the new time still counts as edited.
+        if changed.updatedAt == nil || changed.updatedAt == changed.createdAt { changed.updatedAt = ISO8601DateFormatter().string(from: Date()) }
+        if let i = comments.firstIndex(where: { $0.id == c.id }) {
+            withAnimation(Motion.standardEase) { comments[i] = changed }
+        }
+        sent += 1
     }
 
     /// A report (Art. 16 DSA), as on the web: the mail app opens with the notice filled in.
@@ -236,5 +290,98 @@ private struct CommentStars: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(s.common.ratedStars(value))
+    }
+}
+
+/// Edits an own comment: the text, save or cancel.
+private struct CommentEditSheet: View {
+    let comment: ApiComment
+    let maxLength: Int
+    let onSave: (_ body: String) async throws -> Void
+    @Environment(\.strings) private var s
+    @Environment(\.dismiss) private var dismiss
+    @State private var text: String
+    @State private var saving = false
+    @State private var failed = false
+    @FocusState private var focused: Bool
+
+    init(comment: ApiComment, maxLength: Int, onSave: @escaping (_ body: String) async throws -> Void) {
+        self.comment = comment
+        self.maxLength = maxLength
+        self.onSave = onSave
+        _text = State(initialValue: comment.body)
+    }
+
+    private var trimmed: String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: Spacing.sm) {
+                TextField("", text: Binding(get: { text }, set: { text = String($0.prefix(maxLength)); failed = false }),
+                          prompt: Text(s.common.writeComment).foregroundStyle(Palette.textTertiary), axis: .vertical)
+                    .textStyle(.body)
+                    .foregroundStyle(Palette.textPrimary)
+                    .tint(Brand.accent)
+                    .lineLimit(3...10)
+                    .focused($focused)
+                    .padding(.horizontal, Spacing.lg)
+                    .padding(.vertical, 15)
+                    .insetSurface(radius: Radius.md)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: Radius.md, style: .continuous)
+                            .strokeBorder(focused ? Brand.accent : .clear, lineWidth: 1.5)
+                    }
+                    .disabled(saving)
+                HStack {
+                    if failed {
+                        Text(s.common.commentFailed).textStyle(.caption).foregroundStyle(Brand.danger)
+                    }
+                    Spacer()
+                    if text.count > maxLength - 200 {
+                        Text("\(text.count)/\(maxLength)").textStyle(.caption)
+                            .foregroundStyle(text.count >= maxLength ? Brand.danger : Palette.textTertiary)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, Spacing.screenH)
+            .padding(.top, Spacing.sm)
+            .appBackground()
+            .navigationTitle(s.common.editComment)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button(role: .cancel) { dismiss() } label: { Text(s.common.cancel) }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    if saving {
+                        ProgressView().tint(Brand.accent)
+                    } else {
+                        Button(s.common.save) { Task { await save() } }
+                            .buttonStyle(.glassProminent)
+                            .tint(Brand.accent)
+                            .disabled(trimmed.isEmpty || trimmed == comment.body)
+                    }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .presentationSizing(.form)
+        .interactiveDismissDisabled(saving)
+        .onAppear { focused = true }
+    }
+
+    private func save() async {
+        guard !trimmed.isEmpty, !saving else { return }
+        saving = true
+        failed = false
+        defer { saving = false }
+        do {
+            try await onSave(trimmed)
+            dismiss()
+        } catch {
+            failed = true
+        }
     }
 }

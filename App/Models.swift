@@ -1,4 +1,5 @@
 import Foundation
+import PokyhCore
 
 // ── Session ────────────────────────────────────────────────────────────────
 
@@ -19,6 +20,10 @@ struct UserSession: Codable, Equatable {
     var classId: String?
     /// Profilbild-URL aus den WebUntis-App-Daten (`user.person.imageUrl`).
     var imageUrl: String?
+    /// The WebUntis school the account signs in at; nil for accounts from before the school search.
+    var school: School? = nil
+
+    var schoolRef: School { school ?? .fallback }
 
     /// Hat diese Sitzung ein verknüpftes WebUntis-Konto (Stundenplan/Noten)?
     /// Reine POKYH-Backend-Konten (Login-Fallback) haben `studentId == 0`. Gilt auch
@@ -42,6 +47,7 @@ struct SavedAccount: Codable, Equatable, Identifiable {
     var displayName: String        // Klassenname o. Benutzername
     var nickname: String?          // optionaler, lokal vergebener Spitzname
     var imageUrl: String?          // Profilbild-URL (WebUntis) für die Konten-Liste
+    var school: School? = nil      // nil: saved before the school search, so the default school
     var id: String { username }
 
     /// Primär anzuzeigender Name: Spitzname falls vorhanden, sonst Benutzername.
@@ -118,6 +124,105 @@ struct AbsenceEntry: Identifiable, Equatable {
     var subjectName: String?
 }
 
+// ── Abwesenheit melden / entschuldigen ─────────────────────────────────────
+
+struct AbsenceReason: Identifiable, Equatable, Hashable {
+    var id: Int
+    var name: String
+}
+
+/// What WebUntis' own report dialog starts with. Dates YYYYMMDD, times HHMM.
+struct AbsenceMeta: Equatable {
+    var reasons: [AbsenceReason]
+    var defaultReasonId: Int?
+    var defaultDate: Int?
+    var defaultStartTime: Int?
+    var defaultEndTime: Int?
+}
+
+/// An excuse sent to the class teachers, found again in "Gesendet". Times are YYYYMMDDHHMM.
+struct SentExcuse: Codable, Equatable {
+    var start: Int
+    var end: Int
+    var sentAt: String
+    var recipients: [String]
+    var messageId: Int?
+}
+
+/// How an excuse went out: as a message to the class teachers, or saved on the absence itself
+/// when the account may write to no teacher.
+struct ExcuseResult: Equatable {
+    var viaMessage: Bool
+    var sentTo: [String]
+    var failed: [String]
+    var excuse: SentExcuse?
+}
+
+// ── Schuljahr / Ferien ─────────────────────────────────────────────────────
+
+struct SchoolYear: Identifiable, Codable, Equatable {
+    var id: Int
+    var name: String
+    var startDate: Int   // YYYYMMDD
+    var endDate: Int     // YYYYMMDD
+}
+
+/// One of the school's breaks: days as YYYY-MM-DD, with the real names WebUntis has for it.
+struct SchoolHoliday: Codable, Equatable {
+    var start: String
+    var end: String
+    var names: [String] = []
+}
+
+/// getHolidays into the school's breaks. Naming one without a real name ("Ferien3") is the
+/// timetable's `SchoolHolidays.key`.
+enum HolidayList {
+    // "Ferien3", "Feiertag", "8.12.", "25/5/2026": a placeholder, not a name.
+    private static func isPlaceholder(_ name: String) -> Bool {
+        let n = name.trimmingCharacters(in: .whitespaces)
+        return n.isEmpty
+            || n.range(of: #"^(ferien|feiertag|holiday|vacanz[ae]|frei)\s*\d*$"#, options: [.regularExpression, .caseInsensitive]) != nil
+            || n.range(of: #"^[\d./\s-]+$"#, options: .regularExpression) != nil
+    }
+
+    private static func ymd(_ n: Int?) -> String? {
+        guard let n, n >= 10_000_000, n <= 99_999_999 else { return nil }
+        return String(format: "%04d-%02d-%02d", n / 10000, (n / 100) % 100, n % 100)
+    }
+
+    /// getHolidays' result into the breaks from `from` (YYYY-MM-DD) on, overlapping and
+    /// adjoining ones merged.
+    static func read(_ result: JSON, from: String) -> [SchoolHoliday] {
+        let entries = result.array.compactMap { r -> SchoolHoliday? in
+            guard let start = ymd(r.startDate.int), let end = ymd(r.endDate.int), end >= start else { return nil }
+            var names: [String] = []
+            for n in [r.longName.string, r.name.string].compactMap({ $0?.trimmingCharacters(in: .whitespaces) })
+            where !isPlaceholder(n) && !names.contains(n) { names.append(n) }
+            return SchoolHoliday(start: start, end: end, names: names)
+        }
+        .filter { $0.end >= from }
+        .sorted { $0.start != $1.start ? $0.start < $1.start : $0.end < $1.end }
+        var merged: [SchoolHoliday] = []
+        for h in entries {
+            if var last = merged.last, let lastEnd = DateFmt.iso.date(from: last.end),
+               let next = Calendar.current.date(byAdding: .day, value: 1, to: lastEnd), h.start <= DateFmt.isoString(next) {
+                last.end = max(last.end, h.end)
+                for n in h.names where !last.names.contains(n) { last.names.append(n) }
+                merged[merged.count - 1] = last
+            } else {
+                merged.append(h)
+            }
+        }
+        return merged
+    }
+
+    /// The break a YYYYMMDD day falls in, if any.
+    static func on(_ dayNum: Int, in holidays: [SchoolHoliday]) -> SchoolHoliday? {
+        guard let iso = ymd(dayNum) else { return nil }
+        return holidays.first { $0.start <= iso && iso <= $0.end }
+    }
+}
+
 // ── Nachrichten ────────────────────────────────────────────────────────────
 
 struct MessagePreview: Identifiable, Equatable {
@@ -129,6 +234,11 @@ struct MessagePreview: Identifiable, Equatable {
     var sentDate: String
     var isRead: Bool
     var hasAttachments: Bool
+    /// The sender asked this reader to confirm reading (inbox).
+    var needsConfirmation = false
+    /// How many recipients confirmed reading, of how many were asked (sent).
+    var readConfirmed: Int? = nil
+    var readTotal: Int? = nil
 }
 
 struct MessageDetail: Equatable {
@@ -144,6 +254,60 @@ struct MessageAttachment: Identifiable, Equatable {
     var id: String
     var name: String
     var size: Int
+    /// The storage UUID, the only id the MessageCenter's download URL takes.
+    var storageId = ""
+    /// WebUntis' numeric attachment id, 0 when it only has a storage id.
+    var fileId = 0
+}
+
+/// A file as it came down: the bytes and the type the server labelled them with.
+struct DownloadedAttachment: Equatable {
+    var name: String
+    var mimeType: String
+    var data: Data
+}
+
+/// A file picked on the device, to go out with a message.
+struct OutgoingAttachment: Equatable {
+    var name: String
+    var mimeType: String
+    var data: Data
+}
+
+/// Someone the account may write to. `type` is CLASS_TEACHERS, TEACHERS or OTHERS.
+struct MessageRecipient: Identifiable, Equatable, Hashable {
+    var id: Int
+    var type: String
+    var name: String
+    var role: String? = nil
+    var isClassTeacher = false
+}
+
+/// A saved draft to go on with.
+struct MessageDraft: Equatable {
+    var id: Int
+    var subject: String
+    var content: String
+    var recipients: [MessageRecipient]
+}
+
+/// The reply form WebUntis prefills: subject and who it goes back to.
+struct ReplyForm: Equatable {
+    var subject: String
+    var recipientName: String
+}
+
+/// Who of a sent message's recipients confirmed reading; a class lists its people.
+struct ReadStatusRecipient: Equatable {
+    var name: String
+    var className: String
+    var confirmedAt: String?
+    var people: [(name: String, confirmedAt: String?)]
+
+    static func == (a: Self, b: Self) -> Bool {
+        a.name == b.name && a.className == b.className && a.confirmedAt == b.confirmedAt
+            && a.people.map(\.name) == b.people.map(\.name) && a.people.map(\.confirmedAt) == b.people.map(\.confirmedAt)
+    }
 }
 
 enum MessageFolder: String, CaseIterable, Identifiable {
@@ -264,6 +428,9 @@ struct ApiUser: Codable, Equatable {
 
 struct AppError: LocalizedError {
     var message: String
+    /// The backend's HTTP status, where it answered.
+    var status: Int? = nil
     var errorDescription: String? { message }
     static let sessionExpired = AppError(message: "session_expired")
+    var isSessionExpired: Bool { message == Self.sessionExpired.message }
 }

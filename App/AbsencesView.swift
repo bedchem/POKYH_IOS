@@ -1,4 +1,5 @@
 import SwiftUI
+import QuickLook
 import PokyhCore
 import PokyhDesign
 
@@ -196,6 +197,9 @@ private struct MonthGroup: Identifiable {
 // ── Screen ──────────────────────────────────────────────────────────────────
 
 struct AbsencesView: View {
+    /// Opened from Home's "Abwesenheit melden": the report sheet once reporting is allowed.
+    var openReport = false
+
     @EnvironmentObject var app: AppState
     @Environment(\.strings) private var s
     @State private var absences: [AbsenceEntry] = []
@@ -207,6 +211,18 @@ struct AbsencesView: View {
     @State private var year = SchoolDates.currentSchoolYear
     @State private var exact = false
     @State private var wholeYear = false
+    @State private var canReport = false
+    @State private var reporting = false
+    @State private var reportOpened = false
+    @State private var excusing: AbsenceEntry?
+    // Excuses found in "Gesendet", and those sent just now; "Gesendet" wins, it knows the message.
+    @State private var excuses: [SentExcuse] = []
+    @State private var sentNow: [SentExcuse] = []
+    @State private var letterLoading = false
+    @State private var letterError: String?
+    @State private var letterURL: URL?
+    @State private var letterFile: URL?
+    @State private var openMessage: Int?
 
     private var canWhole: Bool { year == SchoolDates.currentSchoolYear }
     private func fmt(_ m: Int) -> String { formatAbsence(m, exact: exact) }
@@ -265,6 +281,37 @@ struct AbsencesView: View {
             wholeYear = false
             await load()
         }
+        .task { await loadPermissions() }
+        .onChange(of: canReport) {
+            if openReport && canReport && !reportOpened {
+                reportOpened = true
+                reporting = true
+            }
+        }
+        .sheet(isPresented: $reporting) {
+            ReportAbsenceSheet { await load() }
+        }
+        .sheet(item: $excusing) { a in
+            ExcuseAbsenceSheet(absence: a, summary: [AbsenceText.title(a, s.common), AbsenceText.sub(a)].filter { !$0.isEmpty }.joined(separator: " · ")) { result in
+                if let sent = result.excuse { sentNow.append(sent) }
+                // Saved in WebUntis instead of a message: the absence itself changed.
+                if result.viaMessage { await loadExcuses() } else { await load() }
+            }
+        }
+        .navigationDestination(item: $openMessage) { id in
+            MessageDetailScreen(preview: MessagePreview(id: id, subject: "", contentPreview: "", senderName: "", senderId: 0,
+                                                        sentDate: "", isRead: true, hasAttachments: false), folder: .sent)
+        }
+        .quickLookPreview($letterURL)
+        .onDisappear {
+            guard letterURL == nil, let letterFile else { return }
+            AttachmentFiles.discard([letterFile])
+            self.letterFile = nil
+        }
+    }
+
+    private var allExcuses: [SentExcuse] {
+        excuses + sentNow.filter { n in !excuses.contains { $0.start == n.start && $0.end == n.end } }
     }
 
     private var content: some View {
@@ -277,6 +324,7 @@ struct AbsencesView: View {
                         withAnimation(.easeInOut(duration: Motion.slow)) { proxy.scrollTo(key, anchor: .top) }
                     }
                     .fadeIn(delay: 0.03)
+                    actions.fadeIn(delay: 0.04)
                     NavigationLink {
                         AbsenceCalculatorView(
                             absent: canWhole ? Double(figures.minutes) / 60 : nil,
@@ -310,7 +358,11 @@ struct AbsencesView: View {
                             VStack(spacing: 0) {
                                 ForEach(Array(group.entries.enumerated()), id: \.element.id) { i, a in
                                     if i > 0 { RowSeparator(inset: Spacing.card).padding(.trailing, Spacing.card) }
-                                    AbsenceRow(absence: a, label: fmt(figures.perAbsence[a.id] ?? 0))
+                                    let sent = a.isExcused ? nil : AbsenceText.sentExcuse(for: a, in: allExcuses)
+                                    AbsenceRow(absence: a, label: fmt(figures.perAbsence[a.id] ?? 0), sent: sent,
+                                               canExcuse: canReport && !a.isExcused && sent == nil,
+                                               onExcuse: { excusing = a },
+                                               onOpenMessage: { openMessage = $0 })
                                 }
                             }
                             .cardSurface(radius: Radius.xl, fill: Palette.card)
@@ -325,6 +377,50 @@ struct AbsencesView: View {
                 .padding(.bottom, Spacing.xxxl)
             }
             .refreshable { await load() }
+        }
+    }
+
+    // ── Melden, Entschuldigungsschreiben ────────────────────────────────────
+
+    @ViewBuilder private var actions: some View {
+        let hasOpen = absences.contains { !$0.isExcused }
+        if canReport || hasOpen || letterError != nil {
+            VStack(alignment: .leading, spacing: Spacing.sm) {
+                if canReport {
+                    Button { reporting = true } label: {
+                        ButtonLabel(s.absences.report, symbol: "plus").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.primary)
+                }
+                if hasOpen {
+                    // A butter banner, as on the web: the open absences' letter, as WebUntis prints it.
+                    let tone = Decorative.butter
+                    Button { Task { await fetchLetter() } } label: {
+                        HStack(spacing: Spacing.md) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(s.absences.letter).textStyle(.headline).foregroundStyle(tone.ink)
+                                Text(s.absences.letterHint).textStyle(.footnote).foregroundStyle(tone.ink.opacity(0.8))
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            if letterLoading {
+                                ProgressView().tint(tone.ink)
+                            } else {
+                                Image(systemName: "doc.richtext").font(.system(size: 20, weight: .medium)).foregroundStyle(tone.ink)
+                            }
+                        }
+                        .padding(.horizontal, Spacing.lg)
+                        .padding(.vertical, Spacing.md)
+                        .background(tone.fill, in: .pokyh(Radius.xl))
+                        .contentShape(.rect)
+                    }
+                    .buttonStyle(.rowPress(radius: Radius.xl))
+                    .disabled(letterLoading)
+                }
+                if let letterError {
+                    Text(letterError).textStyle(.footnote).foregroundStyle(Brand.danger)
+                }
+            }
+            .sensoryFeedback(.success, trigger: letterURL) { _, url in url != nil }
         }
     }
 
@@ -435,6 +531,39 @@ struct AbsencesView: View {
 
     private var wholeYearMinutes: Int? {
         AbsenceCalc.hasWholeYear(calendar, year, whole: true) ? AbsenceCalc.possibleMinutes(calendar, year, whole: true) : nil
+    }
+
+    private func loadPermissions() async {
+        guard let session = app.session, session.hasUntis, !app.isOffline else { return }
+        async let excused: Void = loadExcuses()
+        canReport = await UntisClient.shared.canReportAbsence(session)
+        await excused
+    }
+
+    private func loadExcuses() async {
+        guard let session = app.session else { return }
+        if let list = try? await UntisClient.shared.sentExcuses(session) { excuses = list }
+    }
+
+    /// The year's letter for the open absences, shown in QuickLook (which also shares it).
+    private func fetchLetter() async {
+        guard let session = app.session, !letterLoading else { return }
+        letterLoading = true
+        letterError = nil
+        defer { letterLoading = false }
+        let open = absences.filter { !$0.isExcused }.map(\.id)
+        do {
+            let file = try await UntisClient.shared.excuseLetter(startDate: year * 10000 + 901, endDate: (year + 1) * 10000 + 630,
+                                                                 absenceIds: open, session)
+            if let old = letterFile { AttachmentFiles.discard([old]) }
+            guard let url = AttachmentFiles.write(file) else { letterError = s.absences.letterFailed; return }
+            letterFile = url
+            letterURL = url
+        } catch let e as AppError where e.isSessionExpired {
+            app.handleSessionExpired()
+        } catch {
+            letterError = (error as? AppError)?.message ?? s.absences.letterFailed
+        }
     }
 
     private func recompute() {
@@ -599,10 +728,16 @@ private struct MonthBars: View {
 struct AbsenceRow: View {
     let absence: AbsenceEntry
     let label: String
+    /// An excuse sent to the class teachers for it, waiting for them.
+    var sent: SentExcuse? = nil
+    var canExcuse = false
+    var onExcuse: (() -> Void)? = nil
+    var onOpenMessage: ((Int) -> Void)? = nil
     @Environment(\.strings) private var s
 
     var body: some View {
-        let tone = absence.isExcused ? Decorative.sage : Decorative.blush
+        // Excused in WebUntis, an excuse sent and waiting, or open.
+        let tone = absence.isExcused ? Decorative.sage : sent != nil ? Decorative.butter : Decorative.blush
         let start = AbsenceCalc.date(absence.startDate)
         VStack(alignment: .leading, spacing: Spacing.sm) {
             HStack(alignment: .top, spacing: Spacing.md) {
@@ -620,81 +755,136 @@ struct AbsenceRow: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(alignment: .top) {
-                        Text(title).textStyle(.headline).foregroundStyle(Palette.textPrimary)
+                        Text(AbsenceText.title(absence, s.common)).textStyle(.headline).foregroundStyle(Palette.textPrimary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                         Text(label).textStyle(TextStyle.headline.tabularDigits).foregroundStyle(Palette.textPrimary)
                     }
-                    if !subText.isEmpty {
-                        Text(subText).textStyle(.footnote).foregroundStyle(Palette.textSecondary)
+                    let sub = AbsenceText.sub(absence)
+                    if !sub.isEmpty {
+                        Text(sub).textStyle(.footnote).foregroundStyle(Palette.textSecondary)
                     }
                     let extra = [absence.reasonName, absence.note].compactMap { $0 }.filter { !$0.isEmpty }
                     if !extra.isEmpty {
                         Text(extra.joined(separator: " · ")).textStyle(.footnote).foregroundStyle(Palette.textSecondary)
                     }
+                    if let sent, let line = sentLine(sent) {
+                        Text(line).textStyle(.footnote).foregroundStyle(Palette.textSecondary)
+                    }
                 }
             }
             HStack(spacing: Spacing.sm) {
-                HStack(spacing: 6) {
-                    Image(systemName: absence.isExcused ? "checkmark.circle.fill" : "xmark.circle.fill")
-                        .font(.system(size: 13, weight: .semibold))
-                    Text(absence.isExcused ? s.absences.statusExcused : s.absences.statusOpen)
-                        .textStyle(TextStyle.footnote.weight(.semibold))
-                        .lineLimit(1)
+                if let sent {
+                    // Stays until the class teachers mark it excused; opens the message.
+                    chip(s.absences.exSent, symbol: "paperplane.fill", tone: tone,
+                         action: sent.messageId.flatMap { id in onOpenMessage.map { open in { open(id) } } })
+                } else {
+                    chip(absence.isExcused ? s.absences.statusExcused : s.absences.statusOpen,
+                         symbol: absence.isExcused ? "checkmark.circle.fill" : "xmark.circle.fill", tone: tone, action: nil)
                 }
-                .foregroundStyle(tone.ink)
-                .padding(.horizontal, Spacing.md)
-                .frame(height: 32)
-                .background(tone.fill, in: .capsule)
+                // As in WebUntis: only who may report absences excuses them.
+                if canExcuse, let onExcuse {
+                    chip(s.absences.exAction, symbol: nil, tone: Decorative.periwinkle, action: onExcuse)
+                }
             }
             .padding(.leading, 48 + Spacing.md)
         }
         .padding(.horizontal, Spacing.card)
         .padding(.vertical, Spacing.md)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
     }
 
-    private func weekdayIndex(_ d: Date?) -> Int? {
+    @ViewBuilder private func chip(_ text: String, symbol: String?, tone: Tone, action: (() -> Void)?) -> some View {
+        let content = HStack(spacing: 6) {
+            if let symbol {
+                Image(systemName: symbol).font(.system(size: 13, weight: .semibold))
+            }
+            Text(text).textStyle(TextStyle.footnote.weight(.semibold)).lineLimit(1)
+        }
+        .foregroundStyle(tone.ink)
+        .padding(.horizontal, Spacing.md)
+        .frame(height: 32)
+        .background(tone.fill, in: .capsule)
+        if let action {
+            Button(action: action) { content.contentShape(.capsule) }
+                .buttonStyle(.rowPress(radius: 16))
+        } else {
+            content
+        }
+    }
+
+    private func sentLine(_ e: SentExcuse) -> String? {
+        let names = e.recipients.joined(separator: ", ")
+        let date = MessageFormat.parse(e.sentAt).map {
+            let c = Calendar.current.dateComponents([.day, .month], from: $0)
+            return s.common.dayMonthShort(c.day ?? 1, c.month ?? 1)
+        } ?? ""
+        if !names.isEmpty && !date.isEmpty { return s.absences.exSentTo(names, date) }
+        if !names.isEmpty { return s.absences.exDoneTo(names) }
+        return date.isEmpty ? nil : date
+    }
+
+    private func weekdayShort(_ d: Date?) -> String {
+        guard let i = AbsenceText.weekdayIndex(d), s.common.weekdaysShort.indices.contains(i) else { return "" }
+        return s.common.weekdaysShort[i]
+    }
+}
+
+/// How an absence reads: the title, the times line, and which excuse belongs to it.
+enum AbsenceText {
+    static func weekdayIndex(_ d: Date?) -> Int? {
         guard let d else { return nil }
         return (AbsenceCalc.cal.component(.weekday, from: d) + 5) % 7   // Monday = 0
     }
 
-    private func weekdayShort(_ d: Date?) -> String {
-        guard let i = weekdayIndex(d), s.common.weekdaysShort.indices.contains(i) else { return "" }
-        return s.common.weekdaysShort[i]
-    }
-
     /// "Mittwoch, 17. Dezember" for one day, "17. Dez. – 19. Dez." for several.
-    private var title: String {
-        let c = s.common
-        let sd = absence.startDate % 100, sm = (absence.startDate / 100) % 100
-        guard (1...12).contains(sm) else { return Fmt.dateShort(absence.startDate) }
-        if absence.startDate != absence.endDate {
-            let ed = absence.endDate % 100, em = (absence.endDate / 100) % 100
-            guard (1...12).contains(em) else { return Fmt.dateShort(absence.startDate) }
+    static func title(_ a: AbsenceEntry, _ c: CommonStrings) -> String {
+        let sd = a.startDate % 100, sm = (a.startDate / 100) % 100
+        guard (1...12).contains(sm) else { return Fmt.dateShort(a.startDate) }
+        if a.startDate != a.endDate {
+            let ed = a.endDate % 100, em = (a.endDate / 100) % 100
+            guard (1...12).contains(em) else { return Fmt.dateShort(a.startDate) }
             return "\(c.dayMonthShort(sd, sm)) – \(c.dayMonthShort(ed, em))"
         }
-        guard let i = weekdayIndex(AbsenceCalc.date(absence.startDate)), c.weekdays.indices.contains(i) else {
+        guard let i = weekdayIndex(AbsenceCalc.date(a.startDate)), c.weekdays.indices.contains(i) else {
             return c.dayMonth(sd, sm)
         }
         let weekday = c.weekdays[i]
         return "\(weekday.prefix(1).uppercased())\(weekday.dropFirst()), \(c.dayMonth(sd, sm))"
     }
 
-    private var subText: String {
+    static func sub(_ a: AbsenceEntry) -> String {
         var parts: [String] = []
-        if absence.startTime != 0 || absence.endTime != 0 {
-            parts.append("\(time(absence.startTime)) – \(time(absence.endTime))")
+        if a.startTime != 0 || a.endTime != 0 {
+            parts.append("\(time(a.startTime)) – \(time(a.endTime))")
         }
-        if let sub = absence.subjectName, !sub.isEmpty { parts.append(sub) }
-        if let t = absence.teacherName, !t.isEmpty { parts.append(t) }
+        if let sub = a.subjectName, !sub.isEmpty { parts.append(sub) }
+        if let t = a.teacherName, !t.isEmpty { parts.append(t) }
         return parts.joined(separator: " · ")
     }
 
-    private func time(_ t: Int) -> String {
+    static func time(_ t: Int) -> String {
         if t == 0 { return "" }
         let m = AbsenceCalc.toMinutes(t)
         return String(format: "%02d:%02d", m / 60, m % 60)
+    }
+
+    /// From and to as YYYYMMDDHHMM, a day without times running to 23:59, as the excuse subject has it.
+    static func span(_ a: AbsenceEntry) -> (start: Int, end: Int) {
+        let hasTimes = a.startTime > 0 || a.endTime > 0
+        let s = max(0, AbsenceCalc.toMinutes(a.startTime))
+        let e = hasTimes ? AbsenceCalc.toMinutes(a.endTime) : 23 * 60 + 59
+        return (a.startDate * 10_000 + (s / 60) * 100 + s % 60, a.endDate * 10_000 + (e / 60) * 100 + e % 60)
+    }
+
+    /// The newest excuse whose span overlaps the absence.
+    static func sentExcuse(for a: AbsenceEntry, in excuses: [SentExcuse]) -> SentExcuse? {
+        let span = span(a)
+        var found: SentExcuse?
+        for e in excuses where e.start < span.end && e.end > span.start {
+            if found.map({ e.sentAt > $0.sentAt }) ?? true { found = e }
+        }
+        return found
     }
 }
 
@@ -889,4 +1079,645 @@ private struct AbsenceCalculatorView: View {
         guard let v else { return "" }
         return number((v * 10).rounded() / 10, 1)
     }
+}
+
+// ── Abwesenheit melden ──────────────────────────────────────────────────────
+
+// The web's two absence sheets, built like the compose sheet: fields on the sheet, the reason list
+// and the lesson picker pushed inside it, the action below, a confirmation before it leaves.
+// Reasons and presets come from WebUntis' own report dialog. Nothing shows as saved unless
+// WebUntis saved it.
+
+/// Dates as YYYYMMDD and times as HHMM, the way WebUntis takes them.
+private enum AbsenceClock {
+    static func day(_ d: Date) -> Int { AbsenceCalc.num(d) }
+
+    static func hhmm(_ t: Date) -> Int {
+        let c = Calendar.current.dateComponents([.hour, .minute], from: t)
+        return (c.hour ?? 0) * 100 + (c.minute ?? 0)
+    }
+
+    /// A clock time on some day; only hour and minute count.
+    static func time(_ hhmm: Int) -> Date? {
+        guard hhmm >= 0, hhmm / 100 < 24, hhmm % 100 < 60 else { return nil }
+        return Calendar.current.date(bySettingHour: hhmm / 100, minute: hhmm % 100, second: 0, of: Date())
+    }
+
+    static func label(_ t: Date) -> String { TaskDates.time(t) }
+
+    /// "Mi., 29.10." for the confirmation.
+    static func short(_ d: Date, _ c: CommonStrings) -> String {
+        let parts = AbsenceCalc.cal.dateComponents([.day, .month], from: d)
+        let i = AbsenceText.weekdayIndex(d) ?? 0
+        let weekday = c.weekdaysShort.indices.contains(i) ? c.weekdaysShort[i] : ""
+        return "\(weekday) \(c.dayMonthShort(parts.day ?? 1, parts.month ?? 1))"
+    }
+
+    static func monday(_ d: Date) -> String { DateFmt.isoString(AbsenceCalc.monday(d)) }
+}
+
+private struct ReportAbsenceSheet: View {
+    let onDone: () async -> Void
+
+    @EnvironmentObject var app: AppState
+    @Environment(\.strings) private var s
+    @Environment(\.dismiss) private var dismiss
+    @State private var meta: AbsenceMeta?
+    @State private var metaFailed = false
+    @State private var startDate = Date()
+    @State private var endDate = Date()
+    @State private var startTime: Date?
+    @State private var endTime: Date?
+    @State private var reason: AbsenceReason?
+    @State private var text = ""
+    @State private var saving = false
+    @State private var error: String?
+    @State private var done = false
+    @State private var started = false
+
+    private var t: AbsencesStrings { s.absences }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: Spacing.lg) {
+                    if done {
+                        SheetDone(text: t.reported, detail: reportedRange)
+                    } else {
+                        form
+                    }
+                }
+                .padding(.horizontal, Spacing.screenH)
+                .padding(.top, Spacing.sm)
+                .padding(.bottom, Spacing.xxxl)
+                .animation(Motion.standardEase, value: done)
+                .animation(Motion.standardEase, value: error)
+            }
+            .scrollDismissesKeyboard(.interactively)
+            .appBackground()
+            .navigationTitle(t.reportTitle)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button(role: .close) { dismiss() }
+                        .accessibilityLabel(s.common.close)
+                }
+            }
+        }
+        .interactiveDismissDisabled(saving)
+        .presentationDetents([.large])
+        .presentationSizing(.form)
+        .sensoryFeedback(.success, trigger: done) { _, now in now }
+        .task {
+            guard !started else { return }
+            started = true
+            await loadPresets()
+        }
+    }
+
+    @ViewBuilder private var form: some View {
+        // Who it is for.
+        let name = app.session?.personName.flatMap { $0.isEmpty ? nil : $0 } ?? t.me
+        VStack(alignment: .leading, spacing: Spacing.sm) {
+            EyebrowLabel(t.forLabel, color: Palette.textSecondary)
+            HStack(spacing: Spacing.iconText) {
+                InitialAvatar(name: name, size: 36, colorSeed: app.session?.username)
+                Text(name).textStyle(.body).foregroundStyle(Palette.textPrimary)
+            }
+            .padding(.horizontal, Spacing.md)
+            .padding(.vertical, Spacing.sm)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .nestedSurface(radius: Radius.lg)
+        }
+
+        // Moving the start keeps the end on the same day and never before the start, as the web does.
+        DateTimeField(label: t.from, date: $startDate, time: $startTime, enabled: !saving)
+            .onChange(of: startDate) {
+                endDate = startDate
+                if let s = startTime, let e = endTime, AbsenceClock.hhmm(e) < AbsenceClock.hhmm(s) { endTime = s }
+            }
+            .onChange(of: startTime) {
+                if let s = startTime, let e = endTime, startDate.isSameDay(as: endDate), AbsenceClock.hhmm(e) < AbsenceClock.hhmm(s) {
+                    endTime = s
+                }
+            }
+        DateTimeField(label: t.until, date: $endDate, time: $endTime, enabled: !saving, from: startDate)
+
+        NavigationLink {
+            LessonPicker(initial: startDate) { day, from, to in
+                startDate = day
+                endDate = day
+                startTime = AbsenceClock.time(from)
+                endTime = AbsenceClock.time(to)
+            }
+        } label: {
+            Label(t.fromTimetable, systemImage: "calendar")
+                .textStyle(.headline)
+                .foregroundStyle(Palette.accentText)
+                .padding(.vertical, Spacing.xs)
+        }
+        .disabled(saving)
+
+        NavigationLink {
+            ReasonList(reasons: meta?.reasons, failed: metaFailed, selected: $reason)
+        } label: {
+            SheetField(label: t.reason, value: reason?.name ?? t.choose, placeholder: reason == nil)
+        }
+        .buttonStyle(.rowPress(radius: Radius.lg))
+        .disabled(saving)
+
+        TaskTextArea(label: t.text, placeholder: t.textPlaceholder, text: Binding(get: { text }, set: { text = String($0.prefix(1000)) }))
+            .disabled(saving)
+
+        if let error { SheetNote(error, color: Brand.danger) }
+
+        Button { Task { await report() } } label: {
+            ButtonLabel(t.reportAction, symbol: "paperplane.fill", busy: saving).frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.primary)
+        .disabled(saving)
+    }
+
+    /// What was reported, under "Gemeldet".
+    private var reportedRange: String? {
+        guard let from = startTime, let to = endTime else { return nil }
+        let c = s.common
+        if startDate.isSameDay(as: endDate) {
+            return "\(AbsenceClock.short(startDate, c)) \(AbsenceClock.label(from)) – \(AbsenceClock.label(to))"
+        }
+        return "\(AbsenceClock.short(startDate, c)) \(AbsenceClock.label(from)) – \(AbsenceClock.short(endDate, c)) \(AbsenceClock.label(to))"
+    }
+
+    /// The dialog's presets once they arrive, without overwriting what was already picked; else
+    /// today's lessons from the timetable.
+    private func loadPresets() async {
+        guard let session = app.session else { return }
+        var found = try? await UntisClient.shared.absenceMeta(session)
+        if found == nil, let reasons = try? await UntisClient.shared.absenceReasons(session), !reasons.isEmpty {
+            found = AbsenceMeta(reasons: reasons, defaultReasonId: nil, defaultDate: nil, defaultStartTime: nil, defaultEndTime: nil)
+        }
+        meta = found
+        metaFailed = found == nil
+        if reason == nil, let m = found { reason = m.reasons.first { $0.id == m.defaultReasonId } }
+        if let m = found, let day = m.defaultDate.flatMap(AbsenceCalc.date),
+           let from = m.defaultStartTime.flatMap(AbsenceClock.time), let to = m.defaultEndTime.flatMap(AbsenceClock.time) {
+            if startTime == nil { startDate = day; startTime = from }
+            if endTime == nil { endDate = day; endTime = to }
+            return
+        }
+        let today = Date()
+        guard let week = try? await UntisClient.shared.timetable(date: AbsenceClock.monday(today), session) else { return }
+        let lessons = week.filter { $0.date == AbsenceClock.day(today) && !$0.isCancelled }
+        guard let first = lessons.map(\.startTime).min(), let last = lessons.map(\.endTime).max() else { return }
+        if startTime == nil { startTime = AbsenceClock.time(first) }
+        if endTime == nil { endTime = AbsenceClock.time(last) }
+    }
+
+    private func report() async {
+        guard let session = app.session, !saving else { return }
+        guard let from = startTime, let to = endTime else { error = t.errChooseRange; return }
+        let sd = AbsenceClock.day(startDate), ed = AbsenceClock.day(endDate)
+        let st = AbsenceClock.hhmm(from), et = AbsenceClock.hhmm(to)
+        if ed * 10_000 + et <= sd * 10_000 + st { error = t.errEndAfterStart; return }
+        guard let chosen = reason else { error = t.errChooseReason; return }
+        saving = true
+        error = nil
+        defer { saving = false }
+        do {
+            try await UntisClient.shared.reportAbsence(startDate: sd, startTime: st, endDate: ed, endTime: et, reasonId: chosen.id,
+                                                       text: text.trimmingCharacters(in: .whitespacesAndNewlines), session)
+            done = true
+            await onDone()
+            // The confirmation stays a moment, then the sheet leaves.
+            try? await Task.sleep(for: .milliseconds(1600))
+            dismiss()
+        } catch let e as AppError where e.isSessionExpired {
+            app.handleSessionExpired()
+            error = s.common.sessionExpired
+        } catch {
+            self.error = (error as? AppError)?.message ?? s.errors.reportFailed
+        }
+    }
+}
+
+// ── Entschuldigen ───────────────────────────────────────────────────────────
+
+/// "Entschuldigen" for absences that are over: WebUntis takes no reason for those, so the excuse
+/// goes to the class teachers as a message and they mark it excused. A partial send stays open, so
+/// the names it missed can be read.
+private struct ExcuseAbsenceSheet: View {
+    let absence: AbsenceEntry
+    let summary: String
+    let onDone: (ExcuseResult) async -> Void
+
+    @EnvironmentObject var app: AppState
+    @Environment(\.strings) private var s
+    @Environment(\.dismiss) private var dismiss
+    @State private var meta: AbsenceMeta?
+    @State private var metaFailed = false
+    @State private var teachers: [String]?
+    @State private var teachersFailed = false
+    @State private var reason: AbsenceReason?
+    @State private var note = ""
+    @State private var saving = false
+    @State private var error: String?
+    @State private var result: ExcuseResult?
+    @State private var started = false
+
+    private var t: AbsencesStrings { s.absences }
+    private var noTeacher: Bool { teachers?.isEmpty == true && !teachersFailed }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: Spacing.lg) {
+                    if let result {
+                        SheetDone(text: result.viaMessage ? t.exDone : t.exSavedInUntis,
+                                  detail: result.viaMessage ? t.exDoneTo(result.sentTo.joined(separator: ", ")) : reason?.name,
+                                  warning: result.failed.isEmpty ? nil : t.exPartial(result.failed.joined(separator: ", ")))
+                    } else {
+                        form
+                    }
+                }
+                .padding(.horizontal, Spacing.screenH)
+                .padding(.top, Spacing.sm)
+                .padding(.bottom, Spacing.xxxl)
+                .animation(Motion.standardEase, value: result)
+                .animation(Motion.standardEase, value: error)
+            }
+            .scrollDismissesKeyboard(.interactively)
+            .appBackground()
+            .navigationTitle(t.exTitle)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button(role: .close) { dismiss() }
+                        .accessibilityLabel(s.common.close)
+                }
+            }
+        }
+        .interactiveDismissDisabled(saving)
+        .presentationDetents([.large])
+        .presentationSizing(.form)
+        .sensoryFeedback(trigger: result) { _, r in
+            guard let r else { return nil }
+            return r.failed.isEmpty ? .success : .warning
+        }
+        .task {
+            guard !started else { return }
+            started = true
+            await load()
+        }
+    }
+
+    @ViewBuilder private var form: some View {
+        Text(t.exLead).textStyle(.footnote).foregroundStyle(Palette.textSecondary)
+
+        VStack(alignment: .leading, spacing: Spacing.sm) {
+            EyebrowLabel(t.exAbsence, color: Palette.textSecondary)
+            HStack(spacing: Spacing.iconText) {
+                Image(systemName: "calendar.badge.exclamationmark")
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(Brand.danger)
+                Text(summary).textStyle(.body).foregroundStyle(Palette.textPrimary)
+                Spacer(minLength: 0)
+            }
+            .padding(Spacing.md)
+            .insetSurface(radius: Radius.lg)
+        }
+
+        // Who it goes to: the class teachers WebUntis names for the class.
+        VStack(alignment: .leading, spacing: Spacing.sm) {
+            EyebrowLabel(t.exTo, color: Palette.textSecondary)
+            HStack(spacing: Spacing.iconText) {
+                if let teachers, !teachers.isEmpty {
+                    TeacherStack(names: teachers)
+                } else {
+                    Image(systemName: "person.2").font(.system(size: 17, weight: .medium)).foregroundStyle(Palette.textSecondary)
+                }
+                Text(teacherText)
+                    .textStyle(.body)
+                    .foregroundStyle(teachers?.isEmpty == false ? Palette.textPrimary : Palette.textTertiary)
+                Spacer(minLength: 0)
+            }
+            .padding(Spacing.md)
+            .insetSurface(radius: Radius.lg)
+            if noTeacher {
+                Text(t.exNoTeacher).textStyle(.footnote).foregroundStyle(Brand.danger)
+            }
+        }
+
+        NavigationLink {
+            ReasonList(reasons: meta?.reasons, failed: metaFailed, selected: $reason)
+        } label: {
+            SheetField(label: t.reason, value: reason?.name ?? t.choose, placeholder: reason == nil)
+        }
+        .buttonStyle(.rowPress(radius: Radius.lg))
+        .disabled(saving)
+
+        TaskTextArea(label: t.exNote, placeholder: s.common.optional, text: Binding(get: { note }, set: { note = String($0.prefix(1000)) }))
+            .disabled(saving)
+
+        if let error { SheetNote(error, color: Brand.danger) }
+
+        Button { Task { await excuse() } } label: {
+            ButtonLabel(saving ? t.exSaving : t.exSave, symbol: "paperplane.fill", busy: saving).frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.primary)
+        .disabled(saving || noTeacher)
+    }
+
+    private var teacherText: String {
+        guard let teachers else { return "…" }
+        if teachersFailed { return t.exToSchool }
+        return teachers.isEmpty ? t.notAvailable : teachers.joined(separator: ", ")
+    }
+
+    private func load() async {
+        guard let session = app.session else { return }
+        async let people = UntisClient.shared.messageRecipients(session)
+        var found = try? await UntisClient.shared.absenceMeta(session)
+        if found == nil, let reasons = try? await UntisClient.shared.absenceReasons(session), !reasons.isEmpty {
+            found = AbsenceMeta(reasons: reasons, defaultReasonId: nil, defaultDate: nil, defaultStartTime: nil, defaultEndTime: nil)
+        }
+        meta = found
+        metaFailed = found == nil
+        if reason == nil, let m = found { reason = m.reasons.first { $0.id == m.defaultReasonId } }
+        do {
+            var seen = Set<Int>()
+            teachers = try await people.filter { $0.isClassTeacher && seen.insert($0.id).inserted }.map(\.name)
+        } catch {
+            teachers = []
+            teachersFailed = true
+        }
+    }
+
+    private func excuse() async {
+        guard let session = app.session, !saving, result == nil else { return }
+        guard let chosen = reason else { error = t.exPick; return }
+        saving = true
+        error = nil
+        defer { saving = false }
+        do {
+            let r = try await UntisClient.shared.excuseByMessage(absences: [absence], reason: chosen,
+                                                                  note: note.trimmingCharacters(in: .whitespacesAndNewlines), session)
+            result = r
+            await onDone(r)
+            guard r.failed.isEmpty else { return }
+            try? await Task.sleep(for: .milliseconds(1600))
+            dismiss()
+        } catch let e as AppError where e.isSessionExpired {
+            app.handleSessionExpired()
+            error = s.common.sessionExpired
+        } catch {
+            self.error = (error as? AppError)?.message ?? t.exSendFailed
+        }
+    }
+}
+
+/// Up to three class teachers' initials, overlapping.
+private struct TeacherStack: View {
+    let names: [String]
+
+    var body: some View {
+        let shown = Array(names.prefix(3))
+        let tone = Decorative.periwinkle
+        ZStack(alignment: .leading) {
+            ForEach(Array(shown.enumerated()), id: \.offset) { i, name in
+                Text(Self.initials(name))
+                    .textStyle(TextStyle.caption.weight(.semibold))
+                    .foregroundStyle(tone.ink)
+                    .frame(width: 30, height: 30)
+                    .background(tone.fill, in: .circle)
+                    .padding(2)
+                    .background(Palette.cardAlt, in: .circle)
+                    .offset(x: CGFloat(i) * 22)
+            }
+        }
+        .frame(width: CGFloat(34 + (shown.count - 1) * 22), height: 34, alignment: .leading)
+        .accessibilityHidden(true)
+    }
+
+    static func initials(_ name: String) -> String {
+        name.split(whereSeparator: { $0.isWhitespace || $0 == "," }).prefix(2).compactMap(\.first).map { String($0).uppercased() }.joined()
+    }
+}
+
+// ── Sheet parts ─────────────────────────────────────────────────────────────
+
+/// Label, then the day and the time on one recessed strip, as in the reminders.
+private struct DateTimeField: View {
+    let label: String
+    @Binding var date: Date
+    @Binding var time: Date?
+    var enabled = true
+    /// The first day the end may be on.
+    var from: Date? = nil
+    @Environment(\.strings) private var s
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Spacing.sm) {
+            EyebrowLabel(label, color: Palette.textSecondary)
+            HStack(spacing: Spacing.sm) {
+                Image(systemName: "calendar").foregroundStyle(Palette.accentText)
+                Group {
+                    if let from {
+                        DatePicker("", selection: $date, in: Calendar.current.startOfDay(for: from)..., displayedComponents: .date)
+                    } else {
+                        DatePicker("", selection: $date, displayedComponents: .date)
+                    }
+                }
+                .labelsHidden()
+                Spacer(minLength: 0)
+                Image(systemName: "clock").foregroundStyle(time == nil ? Palette.textTertiary : Palette.accentText)
+                if let value = time {
+                    DatePicker("", selection: Binding(get: { value }, set: { time = $0 }), displayedComponents: .hourAndMinute)
+                        .labelsHidden()
+                } else {
+                    // No time yet: the next full hour to start from.
+                    Button(s.absences.time) {
+                        let hour = Calendar.current.component(.hour, from: Date())
+                        time = AbsenceClock.time(min(23, hour + 1) * 100)
+                    }
+                    .textStyle(.headline)
+                    .foregroundStyle(Palette.textTertiary)
+                    .padding(.horizontal, Spacing.sm)
+                }
+            }
+            .environment(\.locale, s.lang.locale)
+            .padding(.horizontal, Spacing.md)
+            .padding(.vertical, Spacing.sm)
+            .insetSurface(radius: Radius.md)
+            .disabled(!enabled)
+        }
+    }
+}
+
+/// The reasons WebUntis offers; picking one goes back to the form.
+private struct ReasonList: View {
+    let reasons: [AbsenceReason]?
+    let failed: Bool
+    @Binding var selected: AbsenceReason?
+    @Environment(\.strings) private var s
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: Spacing.rowGap) {
+                if let reasons, !reasons.isEmpty {
+                    ForEach(reasons) { r in
+                        let on = r.id == selected?.id
+                        Button {
+                            selected = r
+                            dismiss()
+                        } label: {
+                            HStack {
+                                Text(r.name)
+                                    .textStyle(on ? TextStyle.body.weight(.semibold) : .body)
+                                    .foregroundStyle(Palette.textPrimary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                if on {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .font(.system(size: 20))
+                                        .foregroundStyle(Brand.accent)
+                                        .accessibilityLabel(s.absences.selected)
+                                }
+                            }
+                            .padding(Spacing.md)
+                            .background(on ? Palette.accentTint : .clear, in: .pokyh(Radius.lg))
+                            .contentShape(.rect)
+                        }
+                        .buttonStyle(.rowPress(radius: Radius.lg))
+                        .accessibilityAddTraits(on ? .isSelected : [])
+                    }
+                } else {
+                    Text(failed ? s.absences.reasonsFailed : reasons == nil ? s.absences.reasonsLoading : s.absences.noReasons)
+                        .textStyle(.footnote)
+                        .foregroundStyle(Palette.textTertiary)
+                        .padding(.vertical, Spacing.xl)
+                }
+            }
+            .padding(.horizontal, Spacing.screenH)
+            .padding(.bottom, Spacing.xxxl)
+        }
+        .appBackground()
+        .navigationTitle(s.absences.reason)
+        .navigationBarTitleDisplayMode(.inline)
+        .sensoryFeedback(.selection, trigger: selected)
+    }
+}
+
+/// "Aus Stundenplan wählen": one day's lessons to tick; the range runs from the first picked
+/// lesson's start to the last one's end. The day moves back and forth.
+private struct LessonPicker: View {
+    let initial: Date
+    let onTake: (_ day: Date, _ from: Int, _ to: Int) -> Void
+
+    @EnvironmentObject var app: AppState
+    @Environment(\.strings) private var s
+    @Environment(\.dismiss) private var dismiss
+    @State private var day: Date
+    @State private var lessons: [TimetableEntry]?
+    @State private var picked: Set<Int> = []
+
+    init(initial: Date, onTake: @escaping (_ day: Date, _ from: Int, _ to: Int) -> Void) {
+        self.initial = initial
+        self.onTake = onTake
+        _day = State(initialValue: initial)
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: Spacing.md) {
+                HStack {
+                    IconButton("chevron.left", label: s.absences.prevDay) { move(-1) }
+                    Text(TaskDates.dayLong(day, s))
+                        .textStyle(TextStyle.callout.weight(.semibold))
+                        .foregroundStyle(Palette.textPrimary)
+                        .frame(maxWidth: .infinity)
+                        .contentTransition(.numericText())
+                    IconButton("chevron.right", label: s.absences.nextDay) { move(1) }
+                }
+                .padding(Spacing.xs)
+                .nestedSurface(radius: Radius.lg)
+
+                if let lessons {
+                    if lessons.isEmpty {
+                        Text(s.absences.noLessonsDay).textStyle(.callout).foregroundStyle(Palette.textSecondary)
+                            .padding(.vertical, Spacing.md)
+                    } else {
+                        VStack(spacing: 6) {
+                            ForEach(Array(lessons.enumerated()), id: \.offset) { i, l in lessonRow(i, l) }
+                        }
+                    }
+                } else {
+                    SkeletonBlock(height: 48)
+                }
+
+                Button {
+                    let chosen = picked.compactMap { lessons?.indices.contains($0) == true ? lessons?[$0] : nil }
+                    guard let from = chosen.map(\.startTime).min(), let to = chosen.map(\.endTime).max() else { return }
+                    onTake(day, from, to)
+                    dismiss()
+                } label: {
+                    ButtonLabel(s.absences.takeLessons(picked.count)).frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.primary)
+                .disabled(picked.isEmpty)
+                .padding(.top, Spacing.sm)
+            }
+            .padding(.horizontal, Spacing.screenH)
+            .padding(.bottom, Spacing.xxxl)
+        }
+        .appBackground()
+        .navigationTitle(s.absences.chooseLessons)
+        .navigationBarTitleDisplayMode(.inline)
+        .task(id: day) { await load() }
+        .sensoryFeedback(.selection, trigger: picked)
+    }
+
+    private func lessonRow(_ i: Int, _ l: TimetableEntry) -> some View {
+        let on = picked.contains(i)
+        return Button {
+            if on { picked.remove(i) } else { picked.insert(i) }
+        } label: {
+            HStack(spacing: Spacing.md) {
+                Image(systemName: on ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 20))
+                    .foregroundStyle(on ? Brand.accent : Palette.textTertiary)
+                Text("\(AbsenceText.time(l.startTime)) – \(AbsenceText.time(l.endTime))")
+                    .textStyle(TextStyle.footnote.weight(.semibold).tabularDigits)
+                    .foregroundStyle(Palette.textSecondary)
+                Text((l.subjectName.isEmpty ? l.subjectLong : l.subjectName) + (l.isCancelled ? s.absences.cancelledSuffix : ""))
+                    .textStyle(.callout)
+                    .foregroundStyle(Palette.textPrimary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.horizontal, Spacing.md)
+            .padding(.vertical, 10)
+            .background(on ? Palette.accentTint : Palette.nested, in: .pokyh(Radius.lg))
+            .contentShape(.rect)
+        }
+        .buttonStyle(.rowPress(radius: Radius.lg))
+        .accessibilityAddTraits(on ? .isSelected : [])
+    }
+
+    private func move(_ days: Int) {
+        guard let next = Calendar.current.date(byAdding: .day, value: days, to: day) else { return }
+        withAnimation(Motion.standardEase) { day = next }
+    }
+
+    private func load() async {
+        guard let session = app.session else { return }
+        lessons = nil
+        picked = []
+        let num = AbsenceClock.day(day)
+        let week = (try? await UntisClient.shared.timetable(date: AbsenceClock.monday(day), session)) ?? []
+        var seen = Set<Int>()
+        lessons = week.filter { $0.date == num && seen.insert($0.startTime).inserted }.sorted { $0.startTime < $1.startTime }
+    }
+}
+
+private extension Date {
+    func isSameDay(as other: Date) -> Bool { Calendar.current.isDate(self, inSameDayAs: other) }
 }

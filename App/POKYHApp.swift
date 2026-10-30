@@ -13,7 +13,11 @@ struct POKYHApp: App {
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
-        // Größerer Bild-/Daten-Cache für flüssige Mensa-Bilder (Performance).
+        // Plain files from older builds go before anything reads or writes the sealed ones.
+        SecureStorage.prepare()
+
+        // Größerer Bild-/Daten-Cache für flüssige Mensa-Bilder (Performance). Only public dish
+        // photos go through it; pictures of people use the sealed ImageCache.
         let cache = URLCache(memoryCapacity: 32 * 1024 * 1024,
                              diskCapacity: 256 * 1024 * 1024)
         URLCache.shared = cache
@@ -35,16 +39,19 @@ struct POKYHApp: App {
                     UsageReporter.shared.appBecameActive()
                 }
         }
-        .onChange(of: scenePhase) { _, phase in
+        .onChange(of: scenePhase) { old, phase in
             switch phase {
             case .background:
                 UsageReporter.shared.appEnteredBackground()
                 app.appDidEnterBackground()
                 BackgroundRefresh.schedule()   // periodischen Abruf nachlegen
+            case .inactive:
+                // Leaving the screen, not arriving on it at launch.
+                if old == .active { app.appWillResignActive() }   // Sichtschutz im App-Umschalter
             case .active:
                 app.appDidBecomeActive()        // Auto-Sperre nach langer Inaktivität
                 UsageReporter.shared.appBecameActive()
-            default:
+            @unknown default:
                 break
             }
         }

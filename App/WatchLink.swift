@@ -193,7 +193,7 @@ enum WatchSync {
     }
 
     static func signedIn(username: String, displayName: String, password: String) {
-        let account = StoredAccount(username: username, displayName: displayName, school: DefaultSchool.school, secret: password)
+        let account = StoredAccount(username: username, displayName: displayName, school: SchoolChoice.read() ?? DefaultSchool.school, secret: password)
         try? accounts.save(account)
         link.signedIn(account)
     }
@@ -204,7 +204,7 @@ enum WatchSync {
     static func pairNow(username: String? = nil, displayName: String? = nil, password: String? = nil) -> PairResult {
         var account = accounts.load()
         if let username, let password, !password.isEmpty, account?.username != username {
-            account = StoredAccount(username: username, displayName: displayName ?? username, school: DefaultSchool.school, secret: password)
+            account = StoredAccount(username: username, displayName: displayName ?? username, school: SchoolChoice.read() ?? DefaultSchool.school, secret: password)
         }
         guard let account else { return .noAccount }
         // A fresh timestamp, so the watch takes it even over a sign-out it heard earlier.

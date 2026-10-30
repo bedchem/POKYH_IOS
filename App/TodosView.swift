@@ -3,7 +3,7 @@ import PokyhCore
 import PokyhDesign
 
 /// Personal to-dos: rows standing on their own (each one swipes on its own, a grouped card would
-/// tear), open first, then done, and "Neu" floating at the bottom.
+/// tear), open first, then done, and "Neu" floating at the bottom. A tap or a swipe edits.
 struct TodosView: View {
     @EnvironmentObject var app: AppState
     @Environment(\.strings) private var s
@@ -11,10 +11,14 @@ struct TodosView: View {
     @State private var loading = true
     @State private var error: String?
     @State private var showAdd = false
+    @State private var editing: ApiTodo?
+    @State private var actionFailed = false
+    @State private var saves = 0
 
     private var hasBackend: Bool { app.session?.apiToken != nil }
-    private var open: [ApiTodo] { todos.filter { !$0.done } }
-    private var done: [ApiTodo] { todos.filter { $0.done } }
+    private var arranged: [ApiTodo] { TodoOrder.arranged(todos) }
+    private var open: [ApiTodo] { arranged.filter { !$0.done } }
+    private var done: [ApiTodo] { arranged.filter { $0.done } }
 
     var body: some View {
         Group {
@@ -47,10 +51,19 @@ struct TodosView: View {
             }
         }
         .sheet(isPresented: $showAdd) {
-            AddTodoSheet { title, details, dueAt in
+            TodoSheet { title, details, dueAt in
                 try await add(title: title, details: details, dueAt: dueAt)
             }
         }
+        .sheet(item: $editing) { todo in
+            TodoSheet(editing: todo) { title, details, dueAt in
+                try await edit(todo, title: title, details: details, dueAt: dueAt)
+            }
+        }
+        .alert(s.tasks.saveFailed, isPresented: $actionFailed) {
+            Button(s.common.ok, role: .cancel) {}
+        }
+        .sensoryFeedback(.success, trigger: saves)
         .task { if hasBackend { await load() } }
         .refreshable { await load() }
     }
@@ -73,12 +86,16 @@ struct TodosView: View {
     }
 
     private func row(_ todo: ApiTodo) -> some View {
-        TodoRow(todo: todo) { Task { await toggle(todo) } }
+        TodoRow(todo: todo, onToggle: { Task { await toggle(todo) } }, onEdit: { editing = todo })
             .taskListRow()
             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                 Button(role: .destructive) { Task { await delete(todo) } } label: {
                     Label(s.common.delete, systemImage: "trash")
                 }
+                Button { editing = todo } label: {
+                    Label(s.tasks.edit, systemImage: "pencil")
+                }
+                .tint(Brand.accent)
             }
             .swipeActions(edge: .leading, allowsFullSwipe: true) {
                 Button { Task { await toggle(todo) } } label: {
@@ -102,27 +119,75 @@ struct TodosView: View {
         guard let s = app.session, let token = s.apiToken else { return }
         let iso = dueAt.map { ISO8601DateFormatter().string(from: $0) }
         _ = try await BackendClient.shared.createTodo(username: s.username, title: title, details: details, dueAt: iso, token: token)
+        saves += 1
         await load()
     }
 
+    private func edit(_ todo: ApiTodo, title: String, details: String, dueAt: Date?) async throws {
+        guard let s = app.session, let token = s.apiToken else { return }
+        let iso = dueAt.map { ISO8601DateFormatter().string(from: $0) }
+        try await BackendClient.shared.editTodo(username: s.username, id: todo.id, title: title, details: details, dueAt: iso, token: token)
+        if let i = todos.firstIndex(where: { $0.id == todo.id }) {
+            todos[i].title = title
+            todos[i].details = details
+            todos[i].dueAt = iso
+        }
+        saves += 1
+        await load()
+    }
+
+    /// Ticked off with the time, as the web sends it: done ones leave the list a day later.
     private func toggle(_ todo: ApiTodo) async {
         guard let s = app.session, let token = s.apiToken else { return }
-        if let i = todos.firstIndex(where: { $0.id == todo.id }) { todos[i].done.toggle() }
-        try? await BackendClient.shared.updateTodo(username: s.username, id: todo.id, done: !todo.done, token: token)
+        let done = !todo.done
+        let doneAt = done ? ISO8601DateFormatter().string(from: Date()) : nil
+        if let i = todos.firstIndex(where: { $0.id == todo.id }) {
+            todos[i].done = done
+            todos[i].doneAt = doneAt
+        }
+        do {
+            try await BackendClient.shared.updateTodo(username: s.username, id: todo.id, done: done, doneAt: doneAt, token: token)
+        } catch {
+            actionFailed = true
+        }
         await load()
     }
 
     private func delete(_ todo: ApiTodo) async {
         guard let s = app.session, let token = s.apiToken else { return }
         todos.removeAll { $0.id == todo.id }
-        try? await BackendClient.shared.deleteTodo(username: s.username, id: todo.id, token: token)
+        do {
+            try await BackendClient.shared.deleteTodo(username: s.username, id: todo.id, token: token)
+        } catch {
+            actionFailed = true
+        }
         await load()
+    }
+}
+
+/// As on the web: the open ones by due date (none last), then newest first; the done ones after
+/// them, last ticked off first, each gone a day after it was ticked off.
+enum TodoOrder {
+    static func arranged(_ todos: [ApiTodo], now: Date = Date()) -> [ApiTodo] {
+        func at(_ raw: String?) -> Date? { raw.flatMap(MessageFormat.parse) }
+        let kept = todos.filter { t in
+            guard t.done, let done = at(t.doneAt) else { return true }
+            return now.timeIntervalSince(done) < 86_400
+        }
+        let open = kept.filter { !$0.done }.sorted { a, b in
+            let da = at(a.dueAt) ?? .distantFuture, db = at(b.dueAt) ?? .distantFuture
+            if da != db { return da < db }
+            return (at(a.createdAt) ?? .distantPast) > (at(b.createdAt) ?? .distantPast)
+        }
+        let done = kept.filter(\.done).sorted { (at($0.doneAt) ?? .distantPast) > (at($1.doneAt) ?? .distantPast) }
+        return open + done
     }
 }
 
 struct TodoRow: View {
     let todo: ApiTodo
     let onToggle: () -> Void
+    var onEdit: (() -> Void)? = nil
     @Environment(\.strings) private var s
 
     var body: some View {
@@ -157,6 +222,10 @@ struct TodoRow: View {
             }
             .padding(.top, Spacing.xs)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(.rect)
+            .onTapGesture { onEdit?() }
+            .accessibilityAddTraits(onEdit != nil ? .isButton : [])
+            .accessibilityAction(named: s.tasks.edit) { onEdit?() }
         }
     }
 
@@ -194,22 +263,34 @@ private struct DuePills: View {
     }
 }
 
-/// The add sheet: title, details, an optional due date with its time, add.
-private struct AddTodoSheet: View {
-    let onAdd: (_ title: String, _ details: String, _ dueAt: Date?) async throws -> Void
+/// The add sheet, and the same sheet to edit one: title, details, an optional due date with its
+/// time, add or save.
+private struct TodoSheet: View {
+    var editing: ApiTodo? = nil
+    let onSave: (_ title: String, _ details: String, _ dueAt: Date?) async throws -> Void
     @Environment(\.strings) private var s
     @Environment(\.dismiss) private var dismiss
-    @State private var title = ""
-    @State private var details = ""
-    @State private var hasDue = false
-    @State private var due = TaskDates.defaultDue()
+    @State private var title: String
+    @State private var details: String
+    @State private var hasDue: Bool
+    @State private var due: Date
     @State private var submitting = false
     @State private var error: String?
+
+    init(editing: ApiTodo? = nil, onSave: @escaping (_ title: String, _ details: String, _ dueAt: Date?) async throws -> Void) {
+        self.editing = editing
+        self.onSave = onSave
+        let due = editing?.dueAt.flatMap(MessageFormat.parse)
+        _title = State(initialValue: editing?.title ?? "")
+        _details = State(initialValue: editing?.details ?? "")
+        _hasDue = State(initialValue: due != nil)
+        _due = State(initialValue: due ?? TaskDates.defaultDue())
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Spacing.lg) {
-                Text(s.tasks.newTodo)
+                Text(editing == nil ? s.tasks.newTodo : s.tasks.editTodo)
                     .textStyle(.title1)
                     .foregroundStyle(Palette.textPrimary)
                 PokyhTextField(s.tasks.titleField, placeholder: s.tasks.title, text: $title)
@@ -239,7 +320,7 @@ private struct AddTodoSheet: View {
                     TextLinkButton(s.common.cancel, color: Palette.textSecondary) { dismiss() }
                     Spacer()
                     Button { Task { await submit() } } label: {
-                        ButtonLabel(s.tasks.add, busy: submitting)
+                        ButtonLabel(editing == nil ? s.tasks.add : s.tasks.saveChanges, busy: submitting)
                     }
                     .buttonStyle(.primary)
                     .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty || submitting)
@@ -251,8 +332,11 @@ private struct AddTodoSheet: View {
             .padding(.bottom, Spacing.xxl)
         }
         .scrollBounceBehavior(.basedOnSize)
+        .scrollDismissesKeyboard(.interactively)
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
+        .presentationSizing(.form)
+        .interactiveDismissDisabled(submitting)
     }
 
     private func submit() async {
@@ -260,7 +344,7 @@ private struct AddTodoSheet: View {
         error = nil
         defer { submitting = false }
         do {
-            try await onAdd(title.trimmingCharacters(in: .whitespaces), details, hasDue ? due : nil)
+            try await onSave(title.trimmingCharacters(in: .whitespaces), details, hasDue ? due : nil)
             dismiss()
         } catch {
             self.error = (error as? AppError)?.message ?? s.tasks.saveFailed

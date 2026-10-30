@@ -169,6 +169,117 @@ struct LessonDetailItem: Identifiable {
     var id: UUID { slot.id }
 }
 
+/// A day another screen wants the timetable to open on (a search result, Home's exam).
+/// The timetable takes it when it next shows and clears it.
+@Observable
+final class TimetableJump {
+    static let shared = TimetableJump()
+    /// YYYYMMDD
+    var day: Int?
+}
+
+// ── Holidays (Android's core/util/SchoolHolidays) ───────────────────────────
+
+/// Names the breaks an empty timetable stands for. WebUntis often calls them only "Ferien3",
+/// so a break is named by when it is: the holidays of the Italian (and South Tyrolean) school
+/// year and the public holidays around them. Gives a key into `holidayNames`.
+enum SchoolHolidays {
+    /// Easter Sunday (anonymous Gregorian algorithm).
+    static func easterSunday(_ year: Int) -> Date {
+        let a = year % 19, b = year / 100, c = year % 100
+        let d = b / 4, e = b % 4, f = (b + 8) / 25, g = (b - f + 1) / 3
+        let h = (19 * a + b - d - g + 15) % 30
+        let i = c / 4, k = c % 4
+        let l = (32 + 2 * e + 2 * i - h - k) % 7
+        let m = (a + 11 * h + 22 * l) / 451
+        let month = (h + l - 7 * m + 114) / 31
+        let day = ((h + l - 7 * m + 114) % 31) + 1
+        return calendar.date(from: DateComponents(year: year, month: month, day: day)) ?? Date()
+    }
+
+    private static let calendar = Calendar(identifier: .gregorian)
+
+    private static let fixed: [String: String] = [
+        "01-01": "newYear", "01-06": "epiphany", "04-25": "liberation", "05-01": "labour",
+        "06-02": "republic", "08-15": "assumption", "11-01": "allSaints", "12-08": "immaculate",
+        "12-25": "christmasDay", "12-26": "stStephen",
+    ]
+
+    static func publicHoliday(on date: Date) -> String? {
+        let c = calendar.dateComponents([.year, .month, .day], from: date)
+        if let key = fixed[String(format: "%02d-%02d", c.month ?? 0, c.day ?? 0)] { return key }
+        let fromEaster = calendar.dateComponents([.day], from: easterSunday(c.year ?? 0), to: calendar.startOfDay(for: date)).day
+        switch fromEaster {
+        case 1: return "easterMonday"
+        case 39: return "ascension"
+        case 50: return "pentecost"
+        case 60: return "corpusChristi"
+        default: return nil
+        }
+    }
+
+    /// What kind of break the days from `start` to `end` are (the web's holidayKey). A week
+    /// that's empty from Monday to Sunday doesn't show how long the break really is, so there
+    /// the time of year decides.
+    static func key(from start: Date, to end: Date, wholeWeek: Bool = false) -> String {
+        let start = calendar.startOfDay(for: start), end = calendar.startOfDay(for: end)
+        let length = (calendar.dateComponents([.day], from: start, to: end).day ?? 0) + 1
+        let startYear = calendar.component(.year, from: start)
+        let month = calendar.component(.month, from: start)
+        func covers(_ d: Date) -> Bool { d >= start && d <= end }
+        func inside(_ m: Int, _ d: Int) -> Bool {
+            [startYear, startYear + 1].contains { y in
+                calendar.date(from: DateComponents(year: y, month: m, day: d)).map(covers) ?? false
+            }
+        }
+
+        if inside(12, 25) || inside(1, 1) { return length >= 3 ? "christmas" : inside(12, 25) ? "christmasDay" : "newYear" }
+        let easter = easterSunday(startYear)
+        let easterMonday = calendar.date(byAdding: .day, value: 1, to: easter) ?? easter
+        if length >= 3, covers(easter) || covers(easterMonday) { return "easter" }
+        if wholeWeek {
+            // The first days of January still belong to Christmas; a free week in summer is summer.
+            if month == 1, calendar.component(.day, from: start) <= 7 { return "christmas" }
+            let thursday = calendar.date(byAdding: .day, value: 3, to: start) ?? start
+            if (6...9).contains(calendar.component(.month, from: thursday)) { return "summer" }
+        }
+        if length >= 3 {
+            if length >= 21, (6...8).contains(month) { return "summer" }
+            if month == 10 || month == 11 { return "autumn" }
+            if month == 2 || (month == 3 && calendar.component(.day, from: start) <= 7) { return "carnival" }
+        }
+        var day = start
+        while day <= end {
+            if let key = publicHoliday(on: day) { return key }
+            day = calendar.date(byAdding: .day, value: 1, to: day) ?? end.addingTimeInterval(1)
+        }
+        return length >= 3 ? "break" : "dayOff"
+    }
+
+    /// A whole week without lessons, Monday to Sunday.
+    static func weekKey(_ monday: Date) -> String {
+        key(from: monday, to: calendar.date(byAdding: .day, value: 6, to: monday) ?? monday, wholeWeek: true)
+    }
+
+    /// The key for each holiday day of a week, taken over the run of free weekdays it sits in,
+    /// so a Wednesday-to-Friday break is named as one.
+    static func dayKeys(dayNums: [Int], kinds: [DayKind]) -> [String?] {
+        var out = [String?](repeating: nil, count: kinds.count)
+        var i = 0
+        while i < kinds.count {
+            guard kinds[i] == .holiday else { i += 1; continue }
+            var j = i
+            while j + 1 < kinds.count, kinds[j + 1] == .holiday { j += 1 }
+            if let a = Timetable.date(dayNums[i]), let b = Timetable.date(dayNums[j]) {
+                let k = key(from: a, to: b)
+                for d in i...j { out[d] = k }
+            }
+            i = j + 1
+        }
+        return out
+    }
+}
+
 // ── Screen ──────────────────────────────────────────────────────────────────
 
 struct TimetableView: View {
@@ -222,10 +333,11 @@ struct TimetableView: View {
         .navigationBarTitleDisplayMode(.inline)
         .profileToolbar()
         .task(id: weekOffset) { await load() }
-        .onAppear { selectInitialDay() }
+        .onAppear { if !takeJump() { selectInitialDay() } }
         .onChange(of: app.timetableHomeSignal) {
             withAnimation(.snappy(duration: 0.3)) { weekOffset = 0; selectInitialDay() }
         }
+        .onChange(of: TimetableJump.shared.day) { _ = takeJump() }
         .sheet(item: $detail) { LessonDetailView(item: $0) }
         .sheet(item: $shareItem) { ShareSheet(items: [$0.url]) }
         .toolbar {
@@ -265,6 +377,8 @@ struct TimetableView: View {
 
     // ── Week stepper ────────────────────────────────────────────────────────
 
+    /// Android's phone header: the week in the middle, and beside it the school year, or the
+    /// way back to today once another week is showing.
     private var weekHeader: some View {
         HStack(spacing: Spacing.sm) {
             IconButton("chevron.left", label: s.timetable.prevWeek, tinted: true, tint: Palette.accentText) { step(-1) }
@@ -274,22 +388,29 @@ struct TimetableView: View {
                     .foregroundStyle(Palette.textPrimary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
-                if weekOffset != 0 {
-                    Button(s.timetable.toToday) {
-                        withAnimation(.snappy(duration: 0.34, extraBounce: 0.08)) { weekOffset = 0; selectInitialDay() }
-                    }
-                    .buttonStyle(.plain)
-                    .textStyle(TextStyle.caption.weight(.semibold))
-                    .foregroundStyle(Palette.accentText)
-                } else {
-                    Text(verbatim: "\(s.timetable.cw(weekNumber)) · \(s.timetable.thisWeek)")
-                        .textStyle(.caption)
-                        .foregroundStyle(Palette.textSecondary)
-                }
+                Text(verbatim: weekOffset == 0 ? "\(s.timetable.cw(weekNumber)) · \(s.timetable.thisWeek)" : s.timetable.cw(weekNumber))
+                    .textStyle(.caption)
+                    .foregroundStyle(Palette.textSecondary)
+                    .contentTransition(.numericText())
             }
             .frame(maxWidth: .infinity)
+            if weekOffset != 0 {
+                Button(s.timetable.toToday) {
+                    withAnimation(.snappy(duration: 0.34, extraBounce: 0.08)) { weekOffset = 0; selectInitialDay() }
+                }
+                .buttonStyle(.plain)
+                .textStyle(TextStyle.footnote.weight(.semibold))
+                .foregroundStyle(Palette.accentText)
+                .padding(.horizontal, Spacing.md)
+                .frame(minHeight: 36)
+                .background(Palette.accentTint, in: .capsule)
+                .transition(.opacity.combined(with: .scale(scale: 0.9)))
+            } else {
+                yearMenu.transition(.opacity.combined(with: .scale(scale: 0.9)))
+            }
             IconButton("chevron.right", label: s.timetable.nextWeek, tinted: true, tint: Palette.accentText) { step(1) }
         }
+        .animation(Motion.standardEase, value: weekOffset == 0)
         .padding(.horizontal, Spacing.screenH)
         .padding(.top, Spacing.xs)
         .padding(.bottom, Spacing.md)
@@ -297,6 +418,87 @@ struct TimetableView: View {
 
     private func step(_ by: Int) {
         withAnimation(.snappy(duration: 0.34, extraBounce: 0.08)) { weekOffset += by }
+    }
+
+    // ── School year ─────────────────────────────────────────────────────────
+
+    /// The school year (from 1 September) the week at `offset` belongs to. Thursday decides,
+    /// like the ISO week number, so a week across 1 September counts toward the new year.
+    private func schoolYear(of offset: Int) -> Int {
+        let cal = Calendar.current
+        let thursday = cal.date(byAdding: .day, value: offset * 7 + 3, to: thisMonday) ?? thisMonday
+        let year = cal.component(.year, from: thursday)
+        return cal.component(.month, from: thursday) >= 9 ? year : year - 1
+    }
+
+    private func yearLabel(_ year: Int, short: Bool) -> String {
+        short ? String(format: "%02d/%02d", year % 100, (year + 1) % 100) : "\(year)/\(String(format: "%02d", (year + 1) % 100))"
+    }
+
+    /// The current school year goes back to today, any other to the same week shifted into that year.
+    private func selectSchoolYear(_ year: Int) {
+        let shown = schoolYear(of: weekOffset)
+        guard year != shown else { return }
+        withAnimation(.snappy(duration: 0.34)) {
+            if year == SchoolDates.currentSchoolYear {
+                weekOffset = 0
+                selectInitialDay()
+                return
+            }
+            let cal = Calendar.current
+            var c = cal.dateComponents([.year, .month, .day], from: monday)
+            c.year = (c.year ?? 0) + (year - shown)
+            if let target = cal.date(from: c) { weekOffset = offset(to: target) }
+        }
+    }
+
+    private var yearMenu: some View {
+        let shown = schoolYear(of: weekOffset)
+        return Menu {
+            Picker(s.common.schoolYear(shown), selection: Binding(get: { shown }, set: selectSchoolYear)) {
+                ForEach(SchoolDates.availableYears, id: \.self) { y in
+                    Text(verbatim: yearLabel(y, short: false)).tag(y)
+                }
+            }
+            .pickerStyle(.inline)
+        } label: {
+            HStack(spacing: Spacing.xs) {
+                Text(verbatim: yearLabel(shown, short: compact))
+                    .textStyle(TextStyle.footnote.weight(.semibold))
+                    .monospacedDigit()
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 10, weight: .bold))
+            }
+            .foregroundStyle(Palette.textPrimary)
+            .padding(.horizontal, Spacing.md)
+            .frame(minHeight: 36)
+            .background(Palette.cardAlt, in: .capsule)
+            .contentShape(.capsule)
+        }
+        .accessibilityLabel(s.common.schoolYear(shown))
+    }
+
+    // ── Jumping to a day ────────────────────────────────────────────────────
+
+    /// Weeks from this week to the one holding `date`.
+    private func offset(to date: Date) -> Int {
+        var cal = Calendar(identifier: .iso8601); cal.firstWeekday = 2
+        let comps = cal.dateComponents([.yearForWeekOfYear, .weekOfYear], from: date)
+        let target = cal.date(from: comps) ?? date
+        let days = Calendar.current.dateComponents([.day], from: thisMonday, to: target).day ?? 0
+        return Int((Double(days) / 7).rounded())
+    }
+
+    /// Opens the week and day another screen asked for; false when nothing was asked.
+    private func takeJump() -> Bool {
+        guard let day = TimetableJump.shared.day else { return false }
+        TimetableJump.shared.day = nil
+        guard let date = Timetable.date(day) else { return false }
+        withAnimation(.snappy(duration: 0.34)) {
+            weekOffset = offset(to: date)
+            selectedDay = min(5, Timetable.weekdayIndex(date))
+        }
+        return true
     }
 
     private var weekNumber: Int { Calendar(identifier: .iso8601).component(.weekOfYear, from: monday) }
@@ -308,8 +510,8 @@ struct TimetableView: View {
         return "\(a) – \(b) \(cal.component(.year, from: end))"
     }
 
-    // A wide range of weeks feels endless; pages are light and only visible ones load.
-    private let pageSpan = 40
+    // Wide enough for every school year in the year menu; pages are light and only visible ones load.
+    private let pageSpan = 220
     private var weekRange: ClosedRange<Int> { -pageSpan...pageSpan }
 
     @ViewBuilder
@@ -401,7 +603,7 @@ struct TimetableView: View {
         } else if entries.isEmpty && app.isOffline {
             OfflineWeekState { Task { await load() } }
         } else if !anyDayHasEntries {
-            SpecialDayCard(kind: .holiday, compact: false, plate: true)
+            SpecialDayCard(kind: .holiday, compact: false, plate: true, holidayKey: SchoolHolidays.weekKey(monday))
         } else {
             let slots = Timetable.buildSlots(de)
             let kind = Timetable.dayKind(de, slots: slots, hasOtherDayEntries: anyDayHasEntries, index: selectedDay)
@@ -411,7 +613,8 @@ struct TimetableView: View {
                 InlineNotice(s.timetable.noLessons, symbol: "checkmark.circle.fill", tint: Brand.success)
             } else if kind != .normal {
                 let tappable = kind != .allCancelled && kind != .holiday
-                SpecialDayCard(kind: kind, compact: false, plate: true)
+                SpecialDayCard(kind: kind, compact: false, plate: true,
+                               holidayKey: kind == .holiday ? holidayKey(selectedDay) : nil)
                     .contentShape(.rect)
                     .onTapGesture {
                         if tappable, let first = slots.first {
@@ -431,6 +634,13 @@ struct TimetableView: View {
                 }
             }
         }
+    }
+
+    /// The break a free weekday of the shown week belongs to.
+    private func holidayKey(_ day: Int) -> String? {
+        let nums = (0..<6).map(dayNum)
+        let kinds = (0..<6).map { Timetable.dayKind(entriesFor($0), hasOtherDayEntries: anyDayHasEntries, index: $0) }
+        return SchoolHolidays.dayKeys(dayNums: nums, kinds: kinds)[day]
     }
 
     private func selectInitialDay() {
@@ -509,7 +719,7 @@ struct WeekTimetablePage: View {
                 // An empty week off the disk isn't proof of holidays.
                 OfflineWeekState { Task { await load() } }
             } else if entries.isEmpty {
-                HolidayWeek(month: Calendar.current.component(.month, from: monday))
+                HolidayWeek(month: Calendar.current.component(.month, from: monday), holidayKey: SchoolHolidays.weekKey(monday))
             } else {
                 let cal = Calendar.current
                 let dates = (0..<6).map { dayDate($0) }
@@ -667,6 +877,7 @@ struct WeekGrid: View, Equatable {
     // Worked out once, so scrolling recomputes nothing.
     private let daySlots: [[MergedSlot]]
     private let dayKinds: [DayKind]
+    private let holidayKeys: [String?]
     private let dayCells: [[GridCell]]
     private let hues: SubjectHues
     private let minMins: Int
@@ -701,6 +912,7 @@ struct WeekGrid: View, Equatable {
         }
         daySlots = slots
         dayKinds = kinds
+        holidayKeys = SchoolHolidays.dayKeys(dayNums: dayNums, kinds: kinds)
         dayCells = cells
 
         let periods = Timetable.periods
@@ -818,7 +1030,7 @@ struct WeekGrid: View, Equatable {
             } else if kind != .normal {
                 let first = daySlots[d].first
                 let tappable = kind != .allCancelled && kind != .holiday
-                SpecialDayCard(kind: kind, compact: true, plate: true)
+                SpecialDayCard(kind: kind, compact: true, plate: true, holidayKey: holidayKeys[d])
                     .frame(width: colW, height: max(0, totalHeight - 4))
                     .offset(y: 2)
                     .contentShape(.rect)
@@ -1073,13 +1285,15 @@ struct SpecialDayCard: View {
     let kind: DayKind
     var compact: Bool
     var plate: Bool
+    /// Which break a holiday is, so it carries its name ("Herbstferien") instead of just "Ferien".
+    var holidayKey: String? = nil
     @Environment(\.strings) private var s
     @Environment(\.colorScheme) private var scheme
 
     private var config: (color: Color, icon: String, title: String, subtitle: String) {
         let t = s.timetable
         switch kind {
-        case .holiday:        return (Brand.orange, "beach.umbrella.fill", t.holiday, t.noLessons)
+        case .holiday:        return (Brand.orange, "beach.umbrella.fill", holidayKey.flatMap { t.holidayNames[$0] } ?? t.holiday, t.noLessons)
         case .weekend:        return (Brand.success, "sun.max.fill", t.weekend, t.free)
         case .allCancelled:   return (Brand.danger, "xmark.circle.fill", t.cancelled, t.allCancelled)
         case .allReplacement: return (Brand.accent, "arrow.left.arrow.right", t.substitution, t.allReplaced)
@@ -1125,6 +1339,7 @@ struct SpecialDayCard: View {
 /// A week without school, large, in the mood of the time of year.
 struct HolidayWeek: View {
     let month: Int
+    var holidayKey: String? = nil
     @Environment(\.strings) private var s
 
     private var symbol: String {
@@ -1144,7 +1359,7 @@ struct HolidayWeek: View {
                     .foregroundStyle(Brand.orange)
                     .frame(width: 160, height: 160)
                     .background(Brand.orange.opacity(0.12), in: .circle)
-                Text(s.timetable.holiday)
+                Text(holidayKey.flatMap { s.timetable.holidayNames[$0] } ?? s.timetable.holiday)
                     .textStyle(.largeTitle)
                     .foregroundStyle(Palette.textPrimary)
                     .padding(.top, 28)

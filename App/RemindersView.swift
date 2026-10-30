@@ -3,7 +3,7 @@ import PokyhCore
 import PokyhDesign
 
 /// Class reminders: the same swipeable tile rows as the to-dos next door, what's due first, then
-/// one section per day.
+/// one section per day. The own ones (all of them for an admin) swipe to edit or delete.
 struct RemindersView: View {
     @EnvironmentObject var app: AppState
     @Environment(\.strings) private var s
@@ -13,6 +13,10 @@ struct RemindersView: View {
     @State private var error: String?
     @State private var showAdd = false
     @State private var selectedId: String?
+    @State private var editing: ApiReminder?
+    @State private var isAdmin = false
+    @State private var actionFailed = false
+    @State private var saves = 0
 
     private var hasBackend: Bool { app.session?.apiToken != nil }
 
@@ -44,14 +48,25 @@ struct RemindersView: View {
         }
         .navigationDestination(item: $selectedId) { id in
             if let r = reminders.first(where: { $0.id == id }), let c = myClass {
-                ReminderDetailView(reminder: r, classId: c.id) { await delete(r) }
+                ReminderDetailView(reminder: r, classId: c.id, onDelete: { await delete(r) }, onEdited: { changed in
+                    if let i = reminders.firstIndex(where: { $0.id == changed.id }) { reminders[i] = changed }
+                })
             }
         }
         .sheet(isPresented: $showAdd) {
-            AddReminderSheet { title, body, remindAt in
+            ReminderSheet { title, body, remindAt in
                 try await add(title: title, body: body, remindAt: remindAt)
             }
         }
+        .sheet(item: $editing) { r in
+            ReminderSheet(editing: r) { title, body, remindAt in
+                try await edit(r, title: title, body: body, remindAt: remindAt)
+            }
+        }
+        .alert(s.tasks.saveFailed, isPresented: $actionFailed) {
+            Button(s.common.ok, role: .cancel) {}
+        }
+        .sensoryFeedback(.success, trigger: saves)
         .task { if hasBackend { await load() } }
         .refreshable { await load() }
     }
@@ -96,8 +111,14 @@ struct RemindersView: View {
         .listRowBackground(Color.clear)
         .listRowSeparator(.hidden)
         .swipeActions(allowsFullSwipe: true) {
-            Button(role: .destructive) { Task { await delete(r) } } label: {
-                Label(s.common.delete, systemImage: "trash")
+            if isMine(r) || isAdmin {
+                Button(role: .destructive) { Task { await delete(r) } } label: {
+                    Label(s.common.delete, systemImage: "trash")
+                }
+                Button { editing = r } label: {
+                    Label(s.tasks.edit, systemImage: "pencil")
+                }
+                .tint(Brand.accent)
             }
         }
     }
@@ -126,6 +147,7 @@ struct RemindersView: View {
         guard let s = app.session, let token = s.apiToken else { return }
         loading = reminders.isEmpty
         error = nil
+        if let me = try? await BackendClient.shared.me(token: token) { isAdmin = me.isAdmin }
         do {
             myClass = try await BackendClient.shared.myClass(token: token)
             if let c = myClass {
@@ -141,6 +163,16 @@ struct RemindersView: View {
         guard let s = app.session, let token = s.apiToken, let c = myClass else { return }
         let iso = ISO8601DateFormatter().string(from: remindAt)
         _ = try await BackendClient.shared.createReminder(classId: c.id, title: title, body: body, remindAt: iso, token: token)
+        saves += 1
+        await load()
+    }
+
+    private func edit(_ r: ApiReminder, title: String, body: String, remindAt: Date) async throws {
+        guard let s = app.session, let token = s.apiToken, let c = myClass else { return }
+        let iso = ISO8601DateFormatter().string(from: remindAt)
+        let changed = try await BackendClient.shared.editReminder(classId: c.id, id: r.id, title: title, body: body, remindAt: iso, token: token)
+        if let i = reminders.firstIndex(where: { $0.id == r.id }) { reminders[i] = changed }
+        saves += 1
         await load()
     }
 
@@ -155,19 +187,35 @@ struct RemindersView: View {
     private func delete(_ reminder: ApiReminder) async {
         guard let s = app.session, let token = s.apiToken, let c = myClass else { return }
         reminders.removeAll { $0.id == reminder.id }
-        try? await BackendClient.shared.deleteReminder(classId: c.id, id: reminder.id, token: token)
+        do {
+            try await BackendClient.shared.deleteReminder(classId: c.id, id: reminder.id, token: token)
+        } catch {
+            actionFailed = true
+        }
         await load()
     }
 }
 
 struct ReminderDetailView: View {
-    let reminder: ApiReminder
     let classId: String
-    var onDelete: (() async -> Void)? = nil
+    var onDelete: (() async -> Void)?
+    var onEdited: ((ApiReminder) -> Void)?
     @EnvironmentObject var app: AppState
     @Environment(\.strings) private var s
     @Environment(\.dismiss) private var dismiss
+    @State private var reminder: ApiReminder
     @State private var deleting = false
+    @State private var editing = false
+    @State private var isAdmin = false
+    @State private var failed = false
+    @State private var saves = 0
+
+    init(reminder: ApiReminder, classId: String, onDelete: (() async -> Void)? = nil, onEdited: ((ApiReminder) -> Void)? = nil) {
+        self.classId = classId
+        self.onDelete = onDelete
+        self.onEdited = onEdited
+        _reminder = State(initialValue: reminder)
+    }
 
     private var at: Date? { MessageFormat.parse(reminder.remindAt) }
     private var overdue: Bool { (at ?? .distantFuture) < Date() }
@@ -190,18 +238,21 @@ struct ReminderDetailView: View {
 
                 card.fadeIn()
 
-                if mine, let onDelete {
-                    Button {
-                        deleting = true
-                        Task {
-                            await onDelete()
-                            dismiss()
+                if mine || isAdmin {
+                    HStack(spacing: Spacing.sm) {
+                        Button { editing = true } label: {
+                            ButtonLabel(s.tasks.edit, symbol: "pencil")
                         }
-                    } label: {
-                        ButtonLabel(s.tasks.deleteItem, symbol: "trash", busy: deleting)
+                        .buttonStyle(.secondary(compact: true))
+                        Button { Task { await remove() } } label: {
+                            ButtonLabel(isAdmin && !mine ? s.tasks.deleteAsAdmin : s.tasks.deleteItem, symbol: "trash", busy: deleting)
+                        }
+                        .buttonStyle(.secondary(compact: true))
+                        .disabled(deleting)
                     }
-                    .buttonStyle(.secondary(compact: true))
-                    .disabled(deleting)
+                    if failed {
+                        Text(s.tasks.saveFailed).textStyle(.footnote).foregroundStyle(Brand.danger)
+                    }
                 }
 
                 CommentSection(
@@ -209,6 +260,7 @@ struct ReminderDetailView: View {
                     load: { try await BackendClient.shared.reminderComments(classId: classId, reminderId: reminder.id, token: $0) },
                     create: { try await BackendClient.shared.createReminderComment(classId: classId, reminderId: reminder.id, body: $1, token: $0) },
                     delete: { try await BackendClient.shared.deleteReminderComment(classId: classId, reminderId: reminder.id, commentId: $1, token: $0) },
+                    update: { try await BackendClient.shared.updateReminderComment(classId: classId, reminderId: reminder.id, commentId: $1, body: $2, token: $0) },
                     reportPath: "/reminders"
                 )
                 .fadeIn(delay: 0.04)
@@ -220,6 +272,44 @@ struct ReminderDetailView: View {
         .navigationSubtitle(s.tasks.reminder)
         .navigationBarTitleDisplayMode(.large)
         .appBackground()
+        .sheet(isPresented: $editing) {
+            ReminderSheet(editing: reminder) { title, body, remindAt in
+                try await save(title: title, body: body, remindAt: remindAt)
+            }
+        }
+        .sensoryFeedback(.success, trigger: saves)
+        .task {
+            guard let token = app.session?.apiToken, let me = try? await BackendClient.shared.me(token: token) else { return }
+            isAdmin = me.isAdmin
+        }
+    }
+
+    private func save(title: String, body: String, remindAt: Date) async throws {
+        guard let token = app.session?.apiToken else { return }
+        let iso = ISO8601DateFormatter().string(from: remindAt)
+        let changed = try await BackendClient.shared.editReminder(classId: classId, id: reminder.id, title: title, body: body, remindAt: iso, token: token)
+        withAnimation(Motion.standardEase) { reminder = changed }
+        saves += 1
+        onEdited?(changed)
+    }
+
+    /// Through the list when it opened this, else straight to the backend.
+    private func remove() async {
+        deleting = true
+        failed = false
+        defer { deleting = false }
+        if let onDelete {
+            await onDelete()
+            dismiss()
+            return
+        }
+        guard let token = app.session?.apiToken else { return }
+        do {
+            try await BackendClient.shared.deleteReminder(classId: classId, id: reminder.id, token: token)
+            dismiss()
+        } catch {
+            failed = true
+        }
     }
 
     /// The reminder itself, blush once it's due.
@@ -300,20 +390,30 @@ private struct CountdownPill: View {
     }
 }
 
-private struct AddReminderSheet: View {
-    let onAdd: (_ title: String, _ body: String, _ remindAt: Date) async throws -> Void
+/// Adds a reminder, or edits one: title, text, the day and time it fires.
+private struct ReminderSheet: View {
+    var editing: ApiReminder? = nil
+    let onSave: (_ title: String, _ body: String, _ remindAt: Date) async throws -> Void
     @Environment(\.strings) private var s
     @Environment(\.dismiss) private var dismiss
-    @State private var title = ""
-    @State private var text = ""
-    @State private var remindAt = Date()
+    @State private var title: String
+    @State private var text: String
+    @State private var remindAt: Date
     @State private var submitting = false
     @State private var error: String?
+
+    init(editing: ApiReminder? = nil, onSave: @escaping (_ title: String, _ body: String, _ remindAt: Date) async throws -> Void) {
+        self.editing = editing
+        self.onSave = onSave
+        _title = State(initialValue: editing?.title ?? "")
+        _text = State(initialValue: editing?.body ?? "")
+        _remindAt = State(initialValue: editing.flatMap { MessageFormat.parse($0.remindAt) } ?? Date())
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Spacing.lg) {
-                Text(s.tasks.newReminder)
+                Text(editing == nil ? s.tasks.newReminder : s.tasks.editReminder)
                     .textStyle(.title1)
                     .foregroundStyle(Palette.textPrimary)
                 PokyhTextField(s.tasks.titleField, placeholder: s.tasks.title, text: $title)
@@ -342,7 +442,7 @@ private struct AddReminderSheet: View {
                     TextLinkButton(s.common.cancel, color: Palette.textSecondary) { dismiss() }
                     Spacer()
                     Button { Task { await submit() } } label: {
-                        ButtonLabel(s.tasks.add, busy: submitting)
+                        ButtonLabel(editing == nil ? s.tasks.add : s.tasks.saveChanges, busy: submitting)
                     }
                     .buttonStyle(.primary)
                     .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty || submitting)
@@ -354,8 +454,11 @@ private struct AddReminderSheet: View {
             .padding(.bottom, Spacing.xxl)
         }
         .scrollBounceBehavior(.basedOnSize)
+        .scrollDismissesKeyboard(.interactively)
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
+        .presentationSizing(.form)
+        .interactiveDismissDisabled(submitting)
     }
 
     private func submit() async {
@@ -363,7 +466,7 @@ private struct AddReminderSheet: View {
         error = nil
         defer { submitting = false }
         do {
-            try await onAdd(title.trimmingCharacters(in: .whitespaces), text, remindAt)
+            try await onSave(title.trimmingCharacters(in: .whitespaces), text, remindAt)
             dismiss()
         } catch {
             self.error = (error as? AppError)?.message ?? s.tasks.saveFailed

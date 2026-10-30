@@ -1,11 +1,13 @@
 import SwiftUI
 import Combine
+import LocalAuthentication
+import PokyhCore
 #if canImport(WidgetKit)
 import WidgetKit
 #endif
 
 /// Zentraler App-Zustand: Phasen (Sperre / Login / angemeldet), Mehrbenutzer,
-/// Face-ID-Entsperrung. Passwörter liegen im Keychain, nicht im Klartext.
+/// Face-ID-Entsperrung. Passwörter liegen im Keychain hinter Face ID, nicht im Klartext.
 /// Bottom-Navigation-Tabs (top-level `nonisolated` → sichere Hashable-Vergleiche).
 nonisolated enum AppTab: Hashable { case home, timetable, school, noten, mensa }
 
@@ -71,16 +73,29 @@ final class AppState: ObservableObject {
         didSet { if selectedTab != oldValue { UsageReporter.shared.noteScreen() } }
     }
     @Published var backendStatus: BackendStatus = .unknown
+    /// Unread inbox messages, for the badges. Refreshed with the notification sync.
+    @Published var unreadMessages = 0
     /// Biometrie-Status (Face ID / Touch ID). Wird off-main ermittelt (siehe init),
     /// startet mit einem günstigen Default → kein Hänger beim ersten Render.
-    @Published var biometricInfo = Biometric.Info(available: false, typeName: "Code", symbol: "lock.fill")
+    @Published var biometricInfo = Biometric.Info.unknown
     /// Erhöht sich, wenn der Stundenplan-Tab angetippt wird → Ansicht springt auf „heute".
     @Published var timetableHomeSignal = 0
     @Published var themeMode: ThemeMode {
         didSet { UserDefaults.standard.set(themeMode.rawValue, forKey: "pokyh_theme") }
     }
+    /// The Face ID / passcode sheet is up. It makes the app inactive, which must not bring up
+    /// the privacy cover over it.
+    @Published private(set) var authenticating = false
+    /// Hides the app in the app switcher and whenever it isn't the active app.
+    @Published private(set) var privacyCover = false
 
     private let store = CredentialStore.shared
+    private var unlockText: UnlockStrings { .of(Strings.current.lang) }
+    /// The lock screen tries Face ID by itself on launch and after the auto-lock, not right
+    /// after someone signed out on purpose.
+    private var autoUnlockArmed = true
+    /// Goes up with every lock, so a sign-in still running from before can't open the app again.
+    private var lockEpoch = 0
 
     init() {
         accounts = store.accounts
@@ -94,6 +109,7 @@ final class AppState: ObservableObject {
             let info = Biometric.info
             await MainActor.run { self.biometricInfo = info }
         }
+        BackgroundRefresh.liveSession = { [weak self] in self?.sessionForBackgroundWork() }
     }
 
     var colorScheme: ColorScheme? {
@@ -114,33 +130,83 @@ final class AppState: ObservableObject {
     }
 
     // ── Sperrbildschirm: Face ID → automatischer Login ───────────────────────
-    /// Gibt zurück, ob die biometrische Prüfung erfolgreich war (für Fehlversuch-Zählung).
+
+    /// Whether the lock screen should try Face ID by itself this time.
+    func consumeAutoUnlock() -> Bool {
+        defer { autoUnlockArmed = true }
+        return autoUnlockArmed
+    }
+
+    /// One Face ID / passcode check covers the unlock and reading the password behind it.
+    /// Returns whether the app is signed in afterwards.
     @discardableResult
     func unlock(into username: String? = nil) async -> Bool {
         error = nil
         let target = username ?? store.defaultUsername ?? accounts.first?.username
         guard let target else { phase = .login; return false }
-        let ok = await Biometric.authenticate(reason: "Entsperre POKYH, um dich anzumelden.")
-        guard ok else { error = nil; return false }
+        guard store.hasPassword(target) else {
+            // Signed out: tapping the account asks for its password, the automatic try doesn't.
+            if username != nil { askForPassword(target) }
+            return false
+        }
+        guard let ctx = await authenticate(reason: unlockText.unlockReason) else { return false }
+        UnlockSession.begin(ctx)
         store.lastActive = target
-        await loginSaved(username: target)
+        await loginSaved(username: target, context: ctx)
+        if session == nil { UnlockSession.end() }
         return session != nil
     }
 
-    func loginSaved(username: String) async {
-        guard let password = store.password(for: username) else {
-            // Kein Passwort gespeichert (abgemeldet) → Passwort-Neueingabe anbieten.
-            prefillUsername = username
-            showAddAccount = true
+    private func loginSaved(username: String, context: LAContext) async {
+        guard let password = store.password(for: username, context: context) else {
+            // Nothing readable behind the check: ask for the password again.
+            askForPassword(username)
             return
         }
         await performLogin(username: username, password: password, save: false, allowOffline: true)
     }
 
+    private func askForPassword(_ username: String) {
+        busy = false; statusText = ""
+        prefillUsername = username
+        showAddAccount = true
+    }
+
+    private func authenticate(reason: String) async -> LAContext? {
+        authenticating = true
+        defer { authenticating = false }
+        return await Biometric.authenticate(reason: reason)
+    }
+
+    /// A saved password: without asking while the app is unlocked, otherwise after one more check.
+    private func savedPassword(for username: String) async -> String? {
+        if let password = store.password(for: username, context: UnlockSession.context) { return password }
+        guard let ctx = await authenticate(reason: unlockText.confirmReason) else { return nil }
+        UnlockSession.begin(ctx)
+        return store.password(for: username, context: ctx)
+    }
+
     // ── Neuer / manueller Login ──────────────────────────────────────────────
 
-    func loginNew(username: String, password: String, save: Bool) async {
+    /// The school picked on the sign-in screen, for the sign-in under way only: a failed one at
+    /// the wrong school must not stick to later silent or Face ID re-logins.
+    private var loginSchool: (username: String, school: School)?
+
+    /// Where `username` signs in: the school just picked, the saved account's, or the fallback.
+    func school(for username: String) -> School {
+        if let pick = loginSchool, pick.username.caseInsensitiveCompare(username) == .orderedSame { return pick.school }
+        return accounts.first { $0.username.caseInsensitiveCompare(username) == .orderedSame }?.school ?? .fallback
+    }
+
+    func loginNew(username: String, password: String, save: Bool, school: School? = nil) async {
+        loginSchool = school.map { (username.trimmingCharacters(in: .whitespaces).lowercased(), $0) }
         await performLogin(username: username, password: password, save: save, fresh: true)
+        loginSchool = nil
+    }
+
+    /// Called when messages were opened or marked read, so the badge drops at once.
+    func messageWasRead(count: Int = 1) {
+        unreadMessages = max(0, unreadMessages - count)
     }
 
     /// Zeit, nach der ohne Login-Antwort (kein Internet) in den Offline-Modus
@@ -155,12 +221,14 @@ final class AppState: ObservableObject {
         // Wurde der Login aus dem „Konto hinzufügen“/„Passwort nötig“-Sheet gestartet?
         // (Dann müssen wir den Sheet-Wechsel sorgfältig sequenzieren – siehe finalize.)
         let viaSheet = showAddAccount
+        let epoch = lockEpoch
         busy = true; error = nil
         statusText = "Verbinde mit WebUntis…"
 
         // Offline-Fallback nur für wiederkehrende Konten mit vorhandenem Cache.
         let snap: UserSession? = allowOffline ? Self.offlineCandidate(username: username) : nil
-        let loginTask = Task { try await self.buildSession(username: username, password: password) }
+        let school = school(for: username)
+        let loginTask = Task { try await self.buildSession(username: username, password: password, school: school, renewal: !fresh) }
 
         // Ohne Offline-Option: normal auf das Ergebnis warten. Mit Option: 5-s-Rennen.
         let outcome: LoginOutcome
@@ -178,24 +246,27 @@ final class AppState: ObservableObject {
             }
         }
 
+        // Locked while this ran: it doesn't get to open the app again.
+        guard epoch == lockEpoch else { busy = false; statusText = ""; return }
+
         switch outcome {
         case .done(let s):
-            await finalize(s, save: save, password: password, viaSheet: viaSheet, fresh: fresh)
+            await finalize(s, save: save, password: password, viaSheet: viaSheet, fresh: fresh, epoch: epoch)
             busy = false; statusText = ""
         case .timedOut:
             // Kein Internet rechtzeitig → Offline-Modus aus dem Snapshot, Login läuft
             // im Hintergrund weiter und „upgradet" die Sitzung bei Erfolg.
             guard let snap else { busy = false; statusText = ""; return }
-            enterOffline(snap, viaSheet: viaSheet)
+            await enterOffline(snap, viaSheet: viaSheet, epoch: epoch)
             Task { [weak self] in
                 if let s = try? await loginTask.value {
-                    await self?.upgradeFromBackground(s, save: save, password: password)
+                    await self?.upgradeFromBackground(s, save: save, password: password, epoch: epoch)
                 }
             }
         case .failed(let e):
             // Schneller Netzwerkfehler (z. B. Flugmodus) + Cache → ebenfalls offline.
             if let snap, e is URLError {
-                enterOffline(snap, viaSheet: viaSheet)
+                await enterOffline(snap, viaSheet: viaSheet, epoch: epoch)
             } else {
                 self.error = (e as? AppError)?.message ?? e.localizedDescription
             }
@@ -205,12 +276,15 @@ final class AppState: ObservableObject {
 
     /// Eigentlicher Netzwerk-Login: WebUntis → Fallback POKYH-Backend → Backend-Konto
     /// beziehen. Baut die fertige Sitzung inkl. Tokens und setzt `backendStatus`.
-    private func buildSession(username: String, password: String) async throws -> UserSession {
+    private func buildSession(username: String, password: String, school: School, renewal: Bool) async throws -> UserSession {
         var s: UserSession
         var backendOnly = false
+        let withKey = AppKey.isKey(password)
         do {
-            s = try await UntisClient.shared.login(username: username, password: password)
+            s = try await UntisClient.shared.login(username: username, password: password, school: school)
         } catch let untisError {
+            // An app key is never a POKYH password.
+            if withKey { throw untisError }
             // Kein (funktionierendes) WebUntis-Konto? → direkter POKYH-Backend-Login
             // als Fallback (gleiche Zugangsdaten). Das Backend kennt reine POKYH-Konten.
             do {
@@ -236,7 +310,8 @@ final class AppState: ObservableObject {
             if s.isStudent || s.isParent {
                 let role = s.isParent ? "parent" : "student"
                 switch await BackendClient.shared.loginWithUntis(
-                    username: s.username, klasseId: s.klasseId, klasseName: s.klasseName, role: role) {
+                    username: s.username, klasseId: s.klasseId, klasseName: s.klasseName, role: role,
+                    renewal: renewal, school: s.school, method: withKey ? "office" : nil) {
                 case .ok(let token, let refresh):
                     s.apiToken = token
                     s.apiRefresh = refresh
@@ -249,6 +324,13 @@ final class AppState: ObservableObject {
                     backendStatus = .noClass
                 case .failed(let msg):
                     backendStatus = .failed(msg)
+                case .revoked(let msg):
+                    // Signed out from another device: the saved password goes, so this phone
+                    // asks for it again instead of signing itself back in.
+                    WatchSync.signedOut(username: s.username)
+                    store.signOut(s.username)
+                    accounts = store.accounts
+                    throw AppError(message: msg)
                 }
             } else {
                 backendStatus = .notStudent
@@ -259,14 +341,15 @@ final class AppState: ObservableObject {
 
     /// Abschluss eines erfolgreichen Online-Logins: Konto sichern, Offline-Snapshot
     /// persistieren, Sitzung übernehmen (mit sorgfältiger Sheet-Sequenzierung).
-    private func finalize(_ s: UserSession, save: Bool, password: String, viaSheet: Bool, fresh: Bool) async {
+    private func finalize(_ s: UserSession, save: Bool, password: String, viaSheet: Bool, fresh: Bool, epoch: Int) async {
         // Konto + Passwort sichern, BEVOR die Session getauscht wird, damit es
         // auch dann lokal gespeichert ist, wenn der View-Wechsel dazwischenkommt.
         if save {
             let account = SavedAccount(
                 username: s.username,
                 displayName: s.klasseName.isEmpty ? s.username : s.klasseName,
-                imageUrl: s.imageUrl)
+                imageUrl: s.imageUrl,
+                school: s.school)
             store.save(account, password: password)
         }
         // The watch signs in with the same account and stays signed in.
@@ -280,15 +363,9 @@ final class AppState: ObservableObject {
         if s.hasUntis { DiskCache.save(Self.offlineSnapshot(s), key: Self.sessionKey(s.username)) }
 
         if viaSheet {
-            // Bereits eingeloggt + Login lief über ein Sheet (Konto hinzufügen /
-            // Passwort-Neueingabe): ERST das Sheet schließen und die Dismiss-
-            // Animation abwarten, DANN die Session tauschen. Sonst kollidiert der
-            // View-Identitätswechsel (ContentView: `RootTabView().id(username)`)
-            // mit der noch laufenden Sheet-Animation → das Modal hängt auf echten
-            // Geräten („nichts passiert / lässt sich nicht schließen“).
-            showAddAccount = false
             busy = false; statusText = ""
-            try? await Task.sleep(for: .milliseconds(420))
+            await closeSheetBeforeSwap()
+            guard epoch == lockEpoch else { return }
         }
         session = s
         phase = .authed
@@ -298,10 +375,23 @@ final class AppState: ObservableObject {
         Task { await checkPrivacyNotice(fresh: fresh) }
     }
 
+    /// Login lief über ein Sheet (Konto hinzufügen / Passwort-Neueingabe): ERST das Sheet
+    /// schließen und die Dismiss-Animation abwarten, DANN die Session tauschen. Sonst kollidiert
+    /// der View-Identitätswechsel (ContentView: `RootTabView().id(username)`, oder Sperre →
+    /// angemeldet) mit der noch laufenden Sheet-Animation → das Modal hängt auf echten Geräten.
+    private func closeSheetBeforeSwap() async {
+        showAddAccount = false
+        try? await Task.sleep(for: .milliseconds(420))
+    }
+
     /// Wechselt in den Offline-Modus: gecachte (token-lose) Sitzung anzeigen.
-    private func enterOffline(_ snap: UserSession, viaSheet: Bool) {
+    private func enterOffline(_ snap: UserSession, viaSheet: Bool, epoch: Int) async {
         busy = false; statusText = ""
-        if viaSheet { showAddAccount = false }
+        // Same sequencing as a normal sign-in; the offline path used to swap at once and hang.
+        if viaSheet {
+            await closeSheetBeforeSwap()
+            guard epoch == lockEpoch else { return }
+        }
         session = snap
         phase = .authed
         isOffline = true
@@ -309,13 +399,15 @@ final class AppState: ObservableObject {
     }
 
     /// Hintergrund-Login nach Offline-Restore erfolgreich → Sitzung „upgraden".
-    private func upgradeFromBackground(_ s: UserSession, save: Bool, password: String) async {
-        guard session?.username == s.username else { return }   // Konto noch aktiv?
+    private func upgradeFromBackground(_ s: UserSession, save: Bool, password: String, epoch: Int) async {
+        // Same account still on screen, and not locked in between?
+        guard epoch == lockEpoch, let current = session, AccountRoster.same(current.username, s.username) else { return }
         if save {
             let account = SavedAccount(
                 username: s.username,
                 displayName: s.klasseName.isEmpty ? s.username : s.klasseName,
-                imageUrl: s.imageUrl)
+                imageUrl: s.imageUrl,
+                school: s.school)
             store.save(account, password: password)
             accounts = store.accounts
         }
@@ -387,24 +479,24 @@ final class AppState: ObservableObject {
             klasseId: s.klasseId, klasseName: s.klasseName, username: s.username,
             personName: s.personName, personType: s.personType, isParent: s.isParent,
             apiToken: nil, apiRefresh: nil, stableUid: nil, classId: nil,
-            imageUrl: s.imageUrl)
+            imageUrl: s.imageUrl, school: s.school)
     }
 
     // ── Kontowechsel / -verwaltung ───────────────────────────────────────────
 
-    /// Sauberer Wechsel mit Face-ID-Bestätigung + Loading (über `busy`).
+    /// Sauberer Wechsel mit Face-ID-Bestätigung + Loading (über `busy`). The check is also what
+    /// opens the other account's password, so it's never skipped.
     func switchAccount(username: String) async {
-        guard username != session?.username else { return }
+        guard !busy, !AccountRoster.same(username, session?.username ?? "") else { return }
         // Ohne gespeichertes Passwort → direkt Passwort-Neueingabe (kein Face ID nötig).
-        guard store.hasPassword(username) else {
-            prefillUsername = username; showAddAccount = true; return
+        guard store.hasPassword(username) else { askForPassword(username); return }
+        busy = true; statusText = unlockText.confirming
+        let name = AccountRoster.find(username, in: accounts)?.title ?? username
+        guard let ctx = await authenticate(reason: unlockText.switchReason(name)) else {
+            busy = false; statusText = ""; return
         }
-        busy = true; statusText = "Bestätige Identität…"
-        if biometricInfo.available {
-            let ok = await Biometric.authenticate(reason: "Kontowechsel zu \(username) bestätigen.")
-            guard ok else { busy = false; statusText = ""; return }
-        }
-        await loginSaved(username: username)
+        UnlockSession.begin(ctx)
+        await loginSaved(username: username, context: ctx)
     }
 
     func accountHasPassword(_ username: String) -> Bool { store.hasPassword(username) }
@@ -413,7 +505,8 @@ final class AppState: ObservableObject {
     /// Standard gesetzt, zählt das aktive Konto (Einzelnutzer-Fall).
     var isDefaultAccountActive: Bool {
         guard let active = session?.username else { return false }
-        return store.defaultUsername == nil || store.defaultUsername == active
+        guard let fallback = store.defaultUsername else { return true }
+        return AccountRoster.same(fallback, active)
     }
 
     /// Live Activity (laufende/nächste Stunde) anhand des Stundenplans aktualisieren.
@@ -434,16 +527,16 @@ final class AppState: ObservableObject {
     ///   unberührt (eigene ephemere Cookies pro Sitzung).
     /// Ohne gespeichertes Passwort → Passwort-Neueingabe anbieten.
     func refreshAccount(username: String) async {
-        guard store.hasPassword(username), let password = store.password(for: username) else {
-            prefillUsername = username; showAddAccount = true; return
-        }
-        if session?.username == username {
+        guard store.hasPassword(username) else { askForPassword(username); return }
+        // Cancelled Face ID: leave it be.
+        guard let password = await savedPassword(for: username) else { return }
+        if AccountRoster.same(session?.username ?? "", username) {
             // performLogin(save: true) erneuert Sitzung + aktualisiert Anzeigenamen/Keychain.
             await performLogin(username: username, password: password, save: true)
         } else {
             busy = true; statusText = "Aktualisiere \(username)…"
             defer { busy = false; statusText = "" }
-            if let s = try? await UntisClient.shared.login(username: username, password: password) {
+            if let s = try? await UntisClient.shared.login(username: username, password: password, school: school(for: username)) {
                 store.updateDisplayName(s.klasseName.isEmpty ? s.username : s.klasseName, for: username)
                 accounts = store.accounts
             } else {
@@ -457,27 +550,52 @@ final class AppState: ObservableObject {
         WatchSync.signedOut(username: username)
         store.signOut(username)
         accounts = store.accounts
-        if session?.username == username {
-            session = nil
-            isOffline = false
-            phase = accounts.isEmpty ? .login : .lock
-        }
+        if isActive(username) { lock(deliberate: true) }
         objectWillChange.send()
     }
 
-    /// Konto komplett vom Gerät entfernen.
+    /// Konto komplett vom Gerät entfernen, mit seinem Offline-Stand. Showed the widgets its
+    /// data (default account) or was it the last one, they go blank too.
     func removeAccount(username: String) {
         WatchSync.signedOut(username: username)
+        let wasDefault = AccountRoster.same(store.defaultUsername ?? "", username)
+        let wasActive = isActive(username)
         store.remove(username)
+        DiskCache.remove(key: Self.sessionKey(username))
         accounts = store.accounts
-        if session?.username == username {
-            session = nil
-            isOffline = false
-            phase = accounts.isEmpty ? .login : .lock
+        if accounts.isEmpty {
+            DiskCache.purge()
+            ImageCache.purge()
+        }
+        if wasDefault || accounts.isEmpty {
+            SharedStore.purgeAll()
+            #if canImport(WidgetKit)
+            WidgetCenter.shared.reloadAllTimelines()
+            #endif
+        }
+        if wasActive {
+            LiveActivityManager.endAll()
+            lock(deliberate: true)
         }
     }
 
     func logout() {
+        lock(deliberate: true)
+    }
+
+    private func isActive(_ username: String) -> Bool {
+        guard let active = session?.username else { return false }
+        return AccountRoster.same(active, username)
+    }
+
+    /// Back to the lock screen, or to sign-in when nothing is saved. The unlock goes with the
+    /// session, so the passwords need Face ID again.
+    private func lock(deliberate: Bool) {
+        lockEpoch += 1
+        UnlockSession.end()
+        autoUnlockArmed = !deliberate
+        busy = false; statusText = ""
+        unreadMessages = 0
         session = nil
         isOffline = false
         phase = accounts.isEmpty ? .login : .lock
@@ -488,18 +606,25 @@ final class AppState: ObservableObject {
     /// In-Memory-Caches und alle App-Einstellungen. Danach: zurück zum Login.
     func clearAllData() {
         WatchSync.signedOut()
+        lockEpoch += 1
+        UnlockSession.end()
         // 1. In-Memory-Caches
         UntisClient.shared.clearCaches()
         BackendClient.shared.clearCaches()
         ImageCache.purge()
-        // 2. Keychain (alle Passwörter + Master-Key)
+        URLCache.shared.removeAllCachedResponses()
+        // 2. Keychain (alle Passwörter)
         Keychain.purgeAll()
-        // 3. Offline-Disk-Cache + geteilte Snapshots (App Group)
+        // 3. Offline-Disk-Cache + geteilte Snapshots (App Group), then the key they were sealed with
         DiskCache.purge()
         SharedStore.purgeAll()
-        // 4. Alle eigenen UserDefaults-Schlüssel (kein Hardcoding einzelner Keys)
+        LocalVault.destroy()
+        // 4. Alle eigenen UserDefaults-Schlüssel (kein Hardcoding einzelner Keys). The storage
+        //    format markers stay: without them the next launch would treat what's saved after
+        //    this as left over from an old build and wipe it.
         let defaults = UserDefaults.standard
-        for key in defaults.dictionaryRepresentation().keys where key.hasPrefix("pokyh_") {
+        let keep = Set([CredentialStore.formatDefaultsKey, SecureStorage.formatDefaultsKey])
+        for key in defaults.dictionaryRepresentation().keys where key.hasPrefix("pokyh_") && !keep.contains(key) {
             defaults.removeObject(forKey: key)
         }
         // 5. Live Activity beenden + Widgets leeren
@@ -512,32 +637,40 @@ final class AppState: ObservableObject {
         isOffline = false
         accounts = []
         backendStatus = .unknown
+        unreadMessages = 0
         themeMode = .system
         phase = .login
     }
 
     func handleSessionExpired() {
-        session = nil
-        isOffline = false
-        phase = accounts.isEmpty ? .login : .lock
+        lock(deliberate: false)
     }
 
-    // ── Auto-Sperre nach Inaktivität im Hintergrund ───────────────────────────
-    /// Nach so langer Zeit im Hintergrund wird automatisch gesperrt (Face-ID-Login
-    /// nötig). 10 Minuten — übliche Größenordnung für sensible Apps.
-    private let autoLockInterval: TimeInterval = 600
-    private var backgroundedAt: Date?
+    // ── Auto-Sperre nach Inaktivität im Hintergrund, Sichtschutz ──────────────
+    /// Ten minutes in the background lock the app (Face ID again), as on Android.
+    private var autoLock = AutoLock()
+
+    /// Leaving the screen for a moment (app switcher, Control Center, a call): cover it.
+    func appWillResignActive() {
+        if !authenticating { privacyCover = true }
+    }
 
     func appDidEnterBackground() {
-        backgroundedAt = (phase == .authed) ? Date() : nil
+        privacyCover = true
+        autoLock.didLeave(signedIn: phase == .authed)
     }
 
     func appDidBecomeActive() {
-        defer { backgroundedAt = nil }
-        guard phase == .authed, let since = backgroundedAt,
-              Date().timeIntervalSince(since) >= autoLockInterval else { return }
-        // Zu lange weg → ausloggen und zum Sperr-/Login-Bildschirm.
-        handleSessionExpired()
+        // Lock first, lift the cover after, so the content never shows in between.
+        if autoLock.didReturn(), phase == .authed { lock(deliberate: false) }
+        privacyCover = false
+    }
+
+    /// For background refresh: the live session, unless the app should have locked by now.
+    private func sessionForBackgroundWork() -> UserSession? {
+        if phase == .authed, autoLock.isDue() { lock(deliberate: false) }
+        guard phase == .authed, !isOffline else { return nil }
+        return session
     }
 
     // ── Nach erfolgreichem Login: Benachrichtigungen einrichten ───────────────
@@ -571,6 +704,7 @@ final class AppState: ObservableObject {
         lastNotifSync = Date()
 
         if let inbox = try? await UntisClient.shared.messages(folder: .inbox, s) {
+            unreadMessages = inbox.filter { !$0.isRead }.count
             NotificationManager.shared.checkNewMessages(inbox)
             if isDefaultAccountActive { WidgetBridge.publishMessages(inbox) }   // nur Standard-Konto
         }

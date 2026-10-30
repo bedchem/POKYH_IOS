@@ -1,7 +1,8 @@
 import WidgetKit
 import SwiftUI
 
-/// Home-Screen- & Lock-Screen-Widget: Gesamtschnitt + zuletzt eingetragene Noten.
+/// Home-Screen- & Lock-Screen-Widget: Gesamtschnitt + zuletzt eingetragene Noten. The grades
+/// are marked private, so a locked phone shows placeholders instead.
 struct GradesEntry: TimelineEntry { let date: Date; let snapshot: GradesSnapshot }
 
 struct GradesProvider: TimelineProvider {
@@ -39,6 +40,7 @@ struct GradesWidgetView: View {
                 .font(.system(size: 42, weight: .bold, design: .rounded))
                 .foregroundStyle(hasData ? Brand.grade(snap.average) : .secondary)
                 .minimumScaleFactor(0.5).lineLimit(1)
+                .privacySensitive()
             Spacer(minLength: 4)
             ratioRow
         }
@@ -53,6 +55,7 @@ struct GradesWidgetView: View {
                     .font(.system(size: 44, weight: .bold, design: .rounded))
                     .foregroundStyle(hasData ? Brand.grade(snap.average) : .secondary)
                     .minimumScaleFactor(0.5).lineLimit(1)
+                    .privacySensitive()
                 Spacer(minLength: 4)
                 ratioRow
             }
@@ -69,6 +72,7 @@ struct GradesWidgetView: View {
                                 .font(.subheadline.weight(.semibold).monospacedDigit())
                                 .foregroundStyle(Brand.grade(g.value))
                         }
+                        .privacySensitive()
                     }
                 } else {
                     Text("Keine Noten").font(.subheadline).foregroundStyle(.secondary)
@@ -87,6 +91,7 @@ struct GradesWidgetView: View {
                 .foregroundStyle(Brand.danger)
         }
         .font(.caption.weight(.semibold).monospacedDigit())
+        .privacySensitive()
     }
 
     // ── Lock Screen ─────────────────────────────────────────────────────────────
@@ -99,6 +104,7 @@ struct GradesWidgetView: View {
         }
         .gaugeStyle(.accessoryCircular)
         .widgetAccentable()
+        .privacySensitive()
     }
 
     private var rectangularView: some View {
@@ -106,8 +112,10 @@ struct GradesWidgetView: View {
             Text("NOTENSCHNITT").font(.caption2.weight(.semibold)).foregroundStyle(.secondary).widgetAccentable()
             Text(hasData ? GradeFormat.string(snap.average) : "–")
                 .font(.system(.title2, design: .rounded).weight(.bold))
+                .privacySensitive()
             Text("\(snap.positive) positiv · \(snap.negative) negativ")
                 .font(.caption2).foregroundStyle(.secondary)
+                .privacySensitive()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

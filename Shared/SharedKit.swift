@@ -1,4 +1,6 @@
 import Foundation
+import PokyhCore
+import Security
 #if os(iOS)
 import ActivityKit
 #endif
@@ -167,8 +169,63 @@ struct MessagesSnapshot: Codable, Sendable {
     static let empty = MessagesSnapshot(generatedAt: .distantPast, unread: 0, latest: [])
 }
 
-// ── Geteilter JSON-Store im App-Group-Container ───────────────────────────────
+// ── Vault key (app + widgets) ────────────────────────────────────────────────
 
+/// The key that seals every file this app writes. It sits in the Keychain group the app and
+/// its widgets share, readable after the first unlock so widgets and background refresh work
+/// while the phone is locked, and never leaves the device. The app makes it, widgets only read.
+nonisolated enum LocalVault {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var cached: Vault?
+
+    static let isExtension = Bundle.main.bundlePath.hasSuffix(".appex")
+
+    private static var service: String { AppConfig.current.appBundleID + ".vault" }
+
+    static func current() -> Vault? {
+        lock.withLock {
+            if let cached { return cached }
+            let vault = load()
+            // A widget reads the key fresh each time, so it notices when the app made a new one.
+            if !isExtension { cached = vault }
+            return vault
+        }
+    }
+
+    /// Forgets the key (clearing all data); whatever is still sealed with it can't be opened.
+    static func destroy() {
+        lock.withLock {
+            cached = nil
+            for store in stores { try? VaultKeyStore(store: store).destroy() }
+        }
+    }
+
+    private static func load() -> Vault? {
+        for store in stores {
+            do {
+                return try VaultKeyStore(store: store).vault(create: !isExtension)
+            } catch let error as KeychainError where error.status == errSecMissingEntitlement {
+                // A build without the shared group (unsigned run): the app keeps the key alone.
+                continue
+            } catch {
+                // Locked before the first unlock: no key now, ask again later.
+                return nil
+            }
+        }
+        return nil
+    }
+
+    private static var stores: [KeychainStore] {
+        let group = AppConfig.current.keychainGroup
+        let own = KeychainStore(service: service)
+        return group.isEmpty ? [own] : [KeychainStore(service: service, accessGroup: group), own]
+    }
+}
+
+// ── Geteilter Store im App-Group-Container ────────────────────────────────────
+
+/// What the widgets show, sealed with the vault key. Only the default account's data lands
+/// here; its file protection lets widgets read it while the phone is locked.
 enum SharedStore {
     private static let encoder: JSONEncoder = {
         let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601; return e
@@ -176,32 +233,42 @@ enum SharedStore {
     private static let decoder: JSONDecoder = {
         let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601; return d
     }()
-    private static func url(_ name: String) -> URL { AppGroup.containerURL.appendingPathComponent(name) }
+    private static let files = SealedFiles(
+        directory: AppGroup.containerURL.appendingPathComponent("Sealed/widgets", isDirectory: true),
+        protection: .untilFirstUnlock,
+        dropsUnreadable: !LocalVault.isExtension
+    ) { LocalVault.current() }
 
     private static func write<T: Encodable>(_ value: T, to name: String) {
         guard let data = try? encoder.encode(value) else { return }
-        try? data.write(to: url(name), options: .atomic)
+        files.write(data, name: name)
     }
     private static func read<T: Decodable>(_ type: T.Type, from name: String, fallback: T) -> T {
-        guard let data = try? Data(contentsOf: url(name)),
+        guard let data = files.read(name),
               let value = try? decoder.decode(type, from: data) else { return fallback }
         return value
     }
 
     // Stundenplan
-    static func writeSnapshot(_ s: TimetableSnapshot) { write(s, to: "timetable_snapshot.json") }
-    static func readSnapshot() -> TimetableSnapshot { read(TimetableSnapshot.self, from: "timetable_snapshot.json", fallback: .empty) }
+    static func writeSnapshot(_ s: TimetableSnapshot) { write(s, to: "timetable") }
+    static func readSnapshot() -> TimetableSnapshot { read(TimetableSnapshot.self, from: "timetable", fallback: .empty) }
     // Noten
-    static func writeGrades(_ s: GradesSnapshot) { write(s, to: "grades_snapshot.json") }
-    static func readGrades() -> GradesSnapshot { read(GradesSnapshot.self, from: "grades_snapshot.json", fallback: .empty) }
+    static func writeGrades(_ s: GradesSnapshot) { write(s, to: "grades") }
+    static func readGrades() -> GradesSnapshot { read(GradesSnapshot.self, from: "grades", fallback: .empty) }
     // Nachrichten
-    static func writeMessages(_ s: MessagesSnapshot) { write(s, to: "messages_snapshot.json") }
-    static func readMessages() -> MessagesSnapshot { read(MessagesSnapshot.self, from: "messages_snapshot.json", fallback: .empty) }
+    static func writeMessages(_ s: MessagesSnapshot) { write(s, to: "messages") }
+    static func readMessages() -> MessagesSnapshot { read(MessagesSnapshot.self, from: "messages", fallback: .empty) }
 
     /// Löscht alle geteilten Snapshots (Stundenplan/Noten/Nachrichten).
     static func purgeAll() {
+        files.removeAll()
+        dropLegacyFiles()
+    }
+
+    /// The plain JSON snapshots builds before the vault wrote.
+    static func dropLegacyFiles() {
         for name in ["timetable_snapshot.json", "grades_snapshot.json", "messages_snapshot.json"] {
-            try? FileManager.default.removeItem(at: url(name))
+            try? FileManager.default.removeItem(at: AppGroup.containerURL.appendingPathComponent(name))
         }
     }
 }
