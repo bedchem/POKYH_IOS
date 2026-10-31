@@ -140,7 +140,7 @@ final class BackendClient {
     var tokenRenewal: ((_ expired: String) async -> String?)?
 
     /// The access token lasts an hour, so a 401 gets one more try with a fresh one, as on Android.
-    private func request(_ path: String, method: String = "GET", token: String?, body: [String: Any]? = nil) async throws -> Data {
+    func request(_ path: String, method: String = "GET", token: String?, body: [String: Any]? = nil) async throws -> Data {
         do {
             return try await send(path, method: method, token: token, body: body)
         } catch let error as AppError where error.status == 401 {

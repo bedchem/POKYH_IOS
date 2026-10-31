@@ -54,3 +54,14 @@ struct AccountStoreTests {
         #expect(store.load()?.username == "anna.beispiel")
     }
 }
+
+struct SchoolDecodingTests {
+    // The shape /webuntis/schools really answers with (checked against production).
+    @Test func decodesTheSchoolSearchAnswer() throws {
+        let json = #"[{"id":42,"loginName":"lbs-brixen","name":"LBS Brixen","address":"Brixen","server":"lbs-brixen.webuntis.com"}]"#
+        let schools = try JSONDecoder().decode([School].self, from: Data(json.utf8))
+        #expect(schools.first?.loginName == "lbs-brixen")
+        #expect(schools.first?.server == "lbs-brixen.webuntis.com")
+        #expect(schools.first?.base?.absoluteString == "https://lbs-brixen.webuntis.com/WebUntis")
+    }
+}
