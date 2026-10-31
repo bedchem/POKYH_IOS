@@ -48,6 +48,8 @@ private struct QrText {
 struct WebSignInHost: ViewModifier {
     @Binding var scanning: Bool
     @Binding var working: Bool
+    /// The app shell's copy answers codes opened from the camera; the settings' one scans.
+    var takesLinks = false
     @EnvironmentObject var app: AppState
     @Environment(\.strings) private var s
     @State private var scanned: String?
@@ -67,6 +69,11 @@ struct WebSignInHost: ViewModifier {
 
     func body(content: Content) -> some View {
         content
+            .onChange(of: app.pendingWebSignIn, initial: true) { _, code in
+                guard takesLinks, let code else { return }
+                app.pendingWebSignIn = nil
+                Task { await lookUp(code) }
+            }
             .fullScreenCover(isPresented: $scanning, onDismiss: handleScan) {
                 QrScannerScreen { text in
                     scanned = text

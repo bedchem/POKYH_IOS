@@ -65,6 +65,8 @@ final class AppState: ObservableObject {
     }
     /// Die Datenschutzerklärung, die gerade bestätigt werden soll (siehe PrivacyNotice.swift).
     @Published var privacyNotice: PrivacyNoticePrompt?
+    /// A website sign-in opened from the phone's camera, waiting for the signed-in app.
+    @Published var pendingWebSignIn: String?
     @Published var accounts: [SavedAccount]
     @Published var busy = false
     /// Offline-Modus aktiv (gecachte Daten, Login kam nicht durch).

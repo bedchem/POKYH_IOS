@@ -107,7 +107,8 @@ targets:
           NSAllowsLocalNetworking: true
         CFBundleURLTypes:
           - CFBundleURLName: $(POKYH_BUNDLE_ID)
-            CFBundleURLSchemes: [pokyh]
+            # pokyh-login: the website's QR code, read with the phone's own camera.
+            CFBundleURLSchemes: [pokyh, pokyh-login]
     entitlements:
       path: App/POKYH.entitlements
       properties:

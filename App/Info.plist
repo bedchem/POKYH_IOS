@@ -36,6 +36,7 @@
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>pokyh</string>
+				<string>pokyh-login</string>
 			</array>
 		</dict>
 	</array>

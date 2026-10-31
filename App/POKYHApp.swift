@@ -29,12 +29,23 @@ struct POKYHApp: App {
         WatchSync.start()
     }
 
+    /// Comes up as soon as the app is signed in: at once when it was open, else after the lock screen.
+    private func offerWebSignIn(_ url: URL) {
+        if let code = WebSignInCode.of(url.absoluteString, host: AppConfig.current.websiteURL.host()) {
+            app.pendingWebSignIn = code
+        }
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .environmentObject(app)
                 // German, Italian or English: the phone's language unless one was picked in the app.
                 .environment(\.strings, Strings.of(LanguageChoice.current(in: .standard)))
+                .onOpenURL { offerWebSignIn($0) }
+                .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
+                    if let url = activity.webpageURL { offerWebSignIn(url) }
+                }
                 .modifier(PushRouteHost(app: app))
                 .onAppear {
                     // Nutzungsstatistik (Vordergrundzeit) — liest nur das angemeldete Konto.
