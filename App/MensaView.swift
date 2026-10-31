@@ -761,13 +761,7 @@ struct DishImage: View {
             .frame(height: height)
             .overlay {
                 if let urlStr = dish.imageUrl, let url = URL(string: urlStr) {
-                    AsyncImage(url: url, transaction: Transaction(animation: .easeIn(duration: 0.25))) { phase in
-                        if let img = phase.image {
-                            img.resizable().scaledToFill()
-                        } else {
-                            placeholder
-                        }
-                    }
+                    CachedImage(url: url) { placeholder }
                 } else {
                     placeholder
                 }

@@ -57,7 +57,11 @@ final class AppState: ObservableObject {
     @Published var phase: Phase
     @Published var session: UserSession? {
         // Ein anderes Konto (oder abgemeldet): dessen Hinweis gilt nicht mehr.
-        didSet { if session?.username != privacyNotice?.username { privacyNotice = nil } }
+        didSet {
+            if session?.username != privacyNotice?.username { privacyNotice = nil }
+            UntisImageAuth.current = UntisImageAuth(session)
+            ensureProfileImageUrl()
+        }
     }
     /// Die Datenschutzerklärung, die gerade bestätigt werden soll (siehe PrivacyNotice.swift).
     @Published var privacyNotice: PrivacyNoticePrompt?
@@ -608,6 +612,7 @@ final class AppState: ObservableObject {
     /// Konto komplett vom Gerät entfernen, mit seinem Offline-Stand. Showed the widgets its
     /// data (default account) or was it the last one, they go blank too.
     func removeAccount(username: String) {
+        ImageCache.forget(ImageCache.avatarKey(username))
         WatchSync.signedOut(username: username)
         let wasDefault = AccountRoster.same(store.defaultUsername ?? "", username)
         let wasActive = isActive(username)
@@ -729,6 +734,23 @@ final class AppState: ObservableObject {
 
     func handleSessionExpired() {
         lock(deliberate: false)
+    }
+
+    // ── Profile picture ───────────────────────────────────────────────────────
+    private var profileImageAttempted: Set<String> = []
+
+    /// Sign-in only learns the picture's address when it happened to need app data for something
+    /// else, so it's asked for here, once per account, as on Android.
+    private func ensureProfileImageUrl() {
+        guard let current = session, current.imageUrl == nil, current.hasUntis, !current.sessionId.isEmpty,
+              profileImageAttempted.insert(AccountRoster.key(current.username)).inserted else { return }
+        Task {
+            guard let resolved = await UntisClient.shared.fetchProfileImageUrl(current),
+                  let latest = session, AccountRoster.same(latest.username, current.username) else { return }
+            session?.imageUrl = resolved
+            store.updateImageUrl(resolved, for: latest.username)
+            accounts = store.accounts
+        }
     }
 
     // ── Backend token ─────────────────────────────────────────────────────────

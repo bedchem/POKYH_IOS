@@ -413,9 +413,13 @@ struct AvatarView: View {
     var size: CGFloat = 40
     var colorSeed: String? = nil
 
-    @State private var image: UIImage?
+    @State private var loaded: UIImage?
+
+    private var owner: String { colorSeed ?? name }
+    private var key: String { ImageCache.avatarKey(owner) }
 
     var body: some View {
+        let image = loaded ?? ImageCache.inMemory(key)
         ZStack {
             InitialAvatar(name: name, size: size, colorSeed: colorSeed)
                 .opacity(image == nil ? 1 : 0)
@@ -428,12 +432,18 @@ struct AvatarView: View {
             }
         }
         .frame(width: size, height: size)
-        .task(id: url) {
-            image = nil
-            guard let url, let u = URL(string: url) else { return }
-            if let loaded = await ImageCache.image(for: u) {
-                withAnimation(.easeOut(duration: 0.25)) { image = loaded }
-            }
-        }
+        .task(id: "\(key)|\(url ?? "")") { await load() }
+    }
+
+    private func load() async {
+        if ImageCache.inMemory(key) == nil, let stored = await ImageCache.stored(key) { show(stored) }
+        // Other saved accounts have no session here, so they show what's stored.
+        guard let auth = UntisImageAuth.current, AccountRoster.same(auth.username, owner),
+              let target = auth.resolve(url) else { return }
+        if let fresh = await ImageCache.fetch(target, key: key, headers: auth.headers(for: target)) { show(fresh) }
+    }
+
+    private func show(_ image: UIImage) {
+        withAnimation(.easeOut(duration: 0.25)) { loaded = image }
     }
 }

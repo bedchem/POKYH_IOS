@@ -277,8 +277,7 @@ final class UntisClient {
             if s.klasseId <= 0, let kid = extractKlasseId(appData, personId: s.studentId), kid > 0 {
                 s.klasseId = kid
             }
-            // Profilbild (user.person.imageUrl) — best effort.
-            s.imageUrl = appData.user.person.imageUrl.string ?? appData.data.user.person.imageUrl.string
+            s.imageUrl = extractImageUrl(appData, isParent: s.isParent)
         }
 
         // Letzte Quelle: die Klasse steckt nur im Stundenplan (LBS Brixen:
@@ -1323,6 +1322,23 @@ final class UntisClient {
 
     /// Sends a message, or saves it as a draft (`asDraft`). `draftId`: the draft it was written in,
     /// saved in its place or sent from it.
+    /// WebUntis puts the picture in different places per endpoint and account type, so this walks
+    /// the same list as the web. For a guardian the child comes first: that's whose data is shown.
+    func extractImageUrl(_ appData: JSON, isParent: Bool) -> String? {
+        let roots = [appData.data.user, appData.user, appData.data, appData]
+        var candidates: [String?] = []
+        if isParent { candidates += roots.map { $0.students.array.first?.imageUrl.string } }
+        for root in roots { candidates += [root.person.imageUrl.string, root.imageUrl.string] }
+        return candidates.lazy
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty }
+    }
+
+    func fetchProfileImageUrl(_ s: UserSession) async -> String? {
+        guard let appData = try? await fetchAppData(s) else { return nil }
+        return extractImageUrl(appData, isParent: s.isParent)
+    }
+
     func sendMessage(subject: String, content: String, recipients: [MessageRecipient], attachments: [OutgoingAttachment] = [],
                      asDraft: Bool = false, draftId: Int? = nil, _ s: UserSession) async throws {
         let t = Strings.current.errors

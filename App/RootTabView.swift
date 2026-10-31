@@ -38,7 +38,8 @@ struct RootTabView: View {
             }
         }
         .tabViewStyle(.sidebarAdaptable)
-        .tabBarMinimizeBehavior(.onScrollDown)
+        // The bar stays as it is: same size, same place, on every screen.
+        .tabBarMinimizeBehavior(.never)
         .tint(Palette.accent)
         .modifier(RecapHost())
         .modifier(AnnouncementPopupHost())

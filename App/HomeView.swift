@@ -856,13 +856,7 @@ struct HomeView: View {
         ZStack {
             tone.fill
             if let raw = dish.imageUrl, let url = URL(string: raw) {
-                AsyncImage(url: url, transaction: Transaction(animation: .easeIn(duration: 0.25))) { phase in
-                    if let image = phase.image {
-                        image.resizable().scaledToFill()
-                    } else {
-                        dishGlyph(tone, size: width > 60 ? 30 : 18)
-                    }
-                }
+                CachedImage(url: url) { dishGlyph(tone, size: width > 60 ? 30 : 18) }
             } else {
                 dishGlyph(tone, size: width > 60 ? 30 : 18)
             }
