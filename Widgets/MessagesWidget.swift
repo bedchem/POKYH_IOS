@@ -1,81 +1,158 @@
-import WidgetKit
 import SwiftUI
+import WidgetKit
+import PokyhCore
+import PokyhDesign
 
-/// Home-Screen-Widget: ungelesene Nachrichten + neueste Betreffzeilen. Senders and subjects are
-/// marked private, so a locked phone shows placeholders instead.
-struct MessagesEntry: TimelineEntry { let date: Date; let snapshot: MessagesSnapshot }
+/// Unread count and the latest messages. Senders and subjects are private: a locked phone keeps
+/// the count, like an app badge, and gets a notice instead of the rest.
+struct MessagesEntry: TimelineEntry {
+    let date: Date
+    let snapshot: MessagesSnapshot
+    var sealed = false
+}
 
 struct MessagesProvider: TimelineProvider {
-    func placeholder(in context: Context) -> MessagesEntry { MessagesEntry(date: Date(), snapshot: .empty) }
-    func getSnapshot(in context: Context, completion: @escaping (MessagesEntry) -> Void) {
-        completion(MessagesEntry(date: Date(), snapshot: SharedStore.readMessages()))
+    func placeholder(in context: Context) -> MessagesEntry {
+        MessagesEntry(date: .now, snapshot: WidgetSamples.messages)
     }
+
+    func getSnapshot(in context: Context, completion: @escaping (MessagesEntry) -> Void) {
+        let data = WidgetData.messages(preview: context.isPreview)
+        completion(MessagesEntry(date: .now, snapshot: data.snapshot, sealed: data.sealed))
+    }
+
     func getTimeline(in context: Context, completion: @escaping (Timeline<MessagesEntry>) -> Void) {
-        let entry = MessagesEntry(date: Date(), snapshot: SharedStore.readMessages())
-        completion(Timeline(entries: [entry], policy: .after(Date().addingTimeInterval(1800))))
+        let now = Date.now
+        let data = WidgetData.messages()
+        let entry = MessagesEntry(date: now, snapshot: data.snapshot, sealed: data.sealed)
+        completion(Timeline(entries: [entry], policy: .after(now.addingTimeInterval(1800))))
+    }
+}
+
+/// Initials in the sender's color, as in the app's message list.
+struct SenderAvatar: View {
+    let name: String
+    @Environment(\.widgetRenderingMode) private var mode
+
+    private var initials: String {
+        name.split(whereSeparator: \.isWhitespace).prefix(2)
+            .compactMap { $0.first.map(String.init) }
+            .joined()
+            .uppercased()
+    }
+
+    var body: some View {
+        let plain = mode == .fullColor
+        Text(initials)
+            .font(.system(size: 10, weight: .bold))
+            .foregroundStyle(plain ? Brand.onAccent : Palette.textPrimary)
+            .frame(width: 26, height: 26)
+            .background(plain ? AnyShapeStyle(Palette.sender(name)) : AnyShapeStyle(.quaternary), in: Circle())
+    }
+}
+
+struct MessageLine: View {
+    let item: MessageItem
+
+    var body: some View {
+        HStack(spacing: 10) {
+            SenderAvatar(name: item.sender)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(item.sender)
+                    .textStyle(.footnote.weight(item.isRead ? .medium : .semibold))
+                    .foregroundStyle(Palette.textPrimary)
+                    .lineLimit(1)
+                Text(item.subject.isEmpty ? WidgetText.app.messages.noSubject : item.subject)
+                    .textStyle(.caption2)
+                    .foregroundStyle(Palette.textSecondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: Spacing.xs)
+            if !item.isRead {
+                SubjectDot(color: Brand.accent, size: 8)
+            }
+        }
+        .privacySensitive()
     }
 }
 
 struct MessagesWidgetView: View {
-    var entry: MessagesEntry
+    let entry: MessagesEntry
     @Environment(\.widgetFamily) private var family
+    @Environment(\.hidesPrivateData) private var hidesPrivateData
+
+    private var s: Strings { WidgetText.app }
+    private var t: WidgetStrings { WidgetText.own }
     private var snap: MessagesSnapshot { entry.snapshot }
 
     var body: some View {
-        Group { family == .systemSmall ? AnyView(small) : AnyView(medium) }
-            .pokyhWidgetBackground()
+        Group {
+            if family == .systemSmall { small } else { medium }
+        }
+        .widgetCanvas()
     }
 
     private var header: some View {
-        HStack(spacing: 5) {
-            Image(systemName: "envelope.fill").font(.system(size: 11, weight: .semibold)).foregroundStyle(Brand.accent)
-            Text("NACHRICHTEN").font(.system(size: 10, weight: .semibold)).tracking(0.6).foregroundStyle(.secondary)
-            Spacer(minLength: 0)
-            if snap.unread > 0 {
-                Text("\(snap.unread)")
-                    .font(.system(size: 11, weight: .bold)).foregroundStyle(.white)
-                    .padding(.horizontal, 6).padding(.vertical, 1.5)
-                    .background(Brand.danger, in: Capsule())
+        HStack(spacing: Spacing.xs) {
+            WidgetLabel(title: s.home.sectionMessages, symbol: "envelope.fill")
+            if snap.unread > 0 { CountBadge(count: snap.unread).privacySensitive() }
+        }
+    }
+
+    @ViewBuilder private var small: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            WidgetLabel(title: s.home.sectionMessages, symbol: "envelope.fill")
+            if entry.sealed {
+                WidgetNotice.locked(sealed: true)
+            } else {
+                Spacer(minLength: Spacing.xs)
+                Text(snap.unread, format: .number)
+                    .widgetNumeral()
+                    .foregroundStyle(snap.unread > 0 ? Brand.accent : Palette.textTertiary)
+                    .widgetAccentable()
+                    .privacySensitive()
+                Text(t.unread)
+                    .textStyle(.caption)
+                    .foregroundStyle(Palette.textSecondary)
+                Spacer(minLength: Spacing.xs)
+                footer
             }
         }
     }
 
-    private var small: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-            Spacer(minLength: 4)
-            Text("\(snap.unread)")
-                .font(.system(size: 44, weight: .bold, design: .rounded))
-                .foregroundStyle(snap.unread > 0 ? Brand.accent : .secondary)
-                .minimumScaleFactor(0.5).lineLimit(1)
-            Text("ungelesen").font(.caption2).foregroundStyle(.secondary)
-            Spacer(minLength: 0)
+    /// Who wrote last, or the reason that's hidden.
+    @ViewBuilder private var footer: some View {
+        if hidesPrivateData {
+            HStack(spacing: Spacing.xs) {
+                Image(systemName: "lock.fill")
+                Text(t.unlockToView)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            .textStyle(.caption2)
+            .foregroundStyle(Palette.textSecondary)
+        } else if let latest = snap.latest.first {
+            Text(latest.sender)
+                .textStyle(.caption.weight(.semibold))
+                .foregroundStyle(Palette.textPrimary)
+                .lineLimit(1)
+                .privacySensitive()
         }
     }
 
     private var medium: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: Spacing.sm) {
             header
-            if snap.latest.isEmpty {
-                Spacer()
-                Text("Keine Nachrichten").font(.subheadline).foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity)
-                Spacer()
+            if entry.sealed || hidesPrivateData {
+                WidgetNotice.locked(sealed: entry.sealed)
+            } else if snap.latest.isEmpty {
+                WidgetNotice(symbol: "envelope.open.fill", title: s.home.noMessages, tint: Brand.success)
             } else {
-                ForEach(snap.latest.prefix(4)) { m in
-                    HStack(spacing: 8) {
-                        Circle().fill(m.isRead ? Color.secondary.opacity(0.25) : Brand.accent)
-                            .frame(width: 7, height: 7)
-                        VStack(alignment: .leading, spacing: 0) {
-                            Text(m.sender).font(.caption.weight(.semibold)).lineLimit(1)
-                            Text(m.subject.isEmpty ? "(kein Betreff)" : m.subject)
-                                .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                        }
-                        Spacer(minLength: 0)
+                FittingCount(most: min(3, snap.latest.count)) { count in
+                    VStack(alignment: .leading, spacing: Spacing.sm) {
+                        ForEach(snap.latest.prefix(count)) { MessageLine(item: $0) }
                     }
-                    .privacySensitive()
                 }
-                Spacer(minLength: 0)
             }
         }
     }
@@ -83,12 +160,37 @@ struct MessagesWidgetView: View {
 
 struct MessagesWidget: Widget {
     let kind = "MessagesWidget"
+
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: kind, provider: MessagesProvider()) { entry in
             MessagesWidgetView(entry: entry)
         }
-        .configurationDisplayName("Nachrichten")
-        .description("Ungelesene Nachrichten und die neuesten Betreffzeilen.")
+        .configurationDisplayName(WidgetText.app.home.sectionMessages)
+        .description(WidgetText.own.messagesInfo)
         .supportedFamilies([.systemSmall, .systemMedium])
     }
+}
+
+// ── Previews ─────────────────────────────────────────────────────────────────
+
+private extension MessagesEntry {
+    static var filled: MessagesEntry { MessagesEntry(date: .now, snapshot: WidgetSamples.messages) }
+    static var none: MessagesEntry { MessagesEntry(date: .now, snapshot: .empty) }
+    static var closed: MessagesEntry { MessagesEntry(date: .now, snapshot: .empty, sealed: true) }
+}
+
+#Preview("Small", as: .systemSmall) {
+    MessagesWidget()
+} timeline: {
+    MessagesEntry.filled
+    MessagesEntry.none
+    MessagesEntry.closed
+}
+
+#Preview("Medium", as: .systemMedium) {
+    MessagesWidget()
+} timeline: {
+    MessagesEntry.filled
+    MessagesEntry.none
+    MessagesEntry.closed
 }

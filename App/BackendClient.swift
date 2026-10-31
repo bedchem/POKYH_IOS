@@ -136,7 +136,20 @@ final class BackendClient {
 
     // ── Authentifizierte Requests ──────────────────────────────────────────────
 
+    /// Set by AppState: a new access token after a 401, or nil when there's none to be had.
+    var tokenRenewal: ((_ expired: String) async -> String?)?
+
+    /// The access token lasts an hour, so a 401 gets one more try with a fresh one, as on Android.
     private func request(_ path: String, method: String = "GET", token: String?, body: [String: Any]? = nil) async throws -> Data {
+        do {
+            return try await send(path, method: method, token: token, body: body)
+        } catch let error as AppError where error.status == 401 {
+            guard let token, let fresh = await tokenRenewal?(token) else { throw error }
+            return try await send(path, method: method, token: fresh, body: body)
+        }
+    }
+
+    private func send(_ path: String, method: String, token: String?, body: [String: Any]?) async throws -> Data {
         guard let url = URL(string: "\(base)\(path)") else { throw AppError(message: Strings.current.errors.badAnswer) }
         var req = URLRequest(url: url)
         req.httpMethod = method
@@ -159,6 +172,14 @@ final class BackendClient {
 
     private static func query(_ value: String) -> String {
         value.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: "-._~"))) ?? value
+    }
+
+    /// A new access token from the refresh token, no password involved.
+    func refresh(refreshToken: String) async -> (token: String, refresh: String)? {
+        guard let data = try? await send(Config.Routes.authRefresh, method: "POST", token: nil, body: ["refreshToken": refreshToken]) else { return nil }
+        let j = JSON.parse(data)
+        guard let token = j.token.string, let refresh = j.refreshToken.string else { return nil }
+        return (token, refresh)
     }
 
     func me(token: String) async throws -> ApiUser {
@@ -214,6 +235,22 @@ final class BackendClient {
             "activeSeconds": activeSeconds,
             "screens": screens,
         ])
+    }
+
+    // ── Push ─────────────────────────────────────────────────────────────────
+
+    /// This phone's APNs token, with the WebUntis session the backend polls the inbox with.
+    /// Sent on every launch and sign-in, so that session stays fresh.
+    func registerPush(deviceToken: String, environment: String, kinds: [String], jsessionid: String?, bearerToken: String?, token: String) async throws {
+        var body: [String: Any] = ["token": deviceToken, "environment": environment, "kinds": kinds]
+        if let jsessionid { body["jsessionid"] = jsessionid }
+        if let bearerToken { body["bearerToken"] = bearerToken }
+        _ = try await request(Config.Routes.pushApns, method: "POST", token: token, body: body)
+    }
+
+    /// Signed out, or notifications switched off.
+    func unregisterPush(deviceToken: String, token: String) async throws {
+        _ = try await request(Config.Routes.pushApns, method: "DELETE", token: token, body: ["token": deviceToken])
     }
 
     // ── Datenschutzerklärung (siehe PrivacyNotice.swift) ─────────────────────

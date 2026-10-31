@@ -6,5 +6,9 @@
 	<array>
 		<string>$(POKYH_APP_GROUP).watch</string>
 	</array>
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(POKYH_KEYCHAIN_GROUP).watch</string>
+	</array>
 </dict>
 </plist>

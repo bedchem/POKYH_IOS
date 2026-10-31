@@ -110,6 +110,7 @@ final class AppState: ObservableObject {
             await MainActor.run { self.biometricInfo = info }
         }
         BackgroundRefresh.liveSession = { [weak self] in self?.sessionForBackgroundWork() }
+        BackendClient.shared.tokenRenewal = { [weak self] in await self?.renewBackendToken(expired: $0) }
     }
 
     var colorScheme: ColorScheme? {
@@ -644,6 +645,45 @@ final class AppState: ObservableObject {
 
     func handleSessionExpired() {
         lock(deliberate: false)
+    }
+
+    // ── Backend token ─────────────────────────────────────────────────────────
+    private var tokenRenewal: Task<(token: String, refresh: String)?, Never>?
+
+    /// The POKYH access token lasts an hour. After a 401 the app signs in to the backend again,
+    /// the way Android does. Requests failing together share one renewal.
+    func renewBackendToken(expired: String) async -> String? {
+        guard let s = session else { return nil }
+        if let current = s.apiToken, current != expired { return current }
+        if let running = tokenRenewal { return await running.value?.token }
+        let task = Task { await self.freshBackendTokens(for: s) }
+        tokenRenewal = task
+        let fresh = await task.value
+        tokenRenewal = nil
+        // Switched accounts in the meantime: this token belongs to the old one.
+        guard let fresh, let current = session, AccountRoster.same(current.username, s.username) else { return nil }
+        session?.apiToken = fresh.token
+        session?.apiRefresh = fresh.refresh
+        return fresh.token
+    }
+
+    private func freshBackendTokens(for s: UserSession) async -> (token: String, refresh: String)? {
+        if s.hasUntis {
+            guard s.isStudent || s.isParent else { return nil }
+            let outcome = await BackendClient.shared.loginWithUntis(
+                username: s.username, klasseId: s.klasseId, klasseName: s.klasseName,
+                role: s.isParent ? "parent" : "student", renewal: true, school: s.school)
+            if case .ok(let token, let refresh) = outcome { return (token, refresh) }
+            return nil
+        }
+        // POKYH-only accounts: the refresh token first, then the password if this unlock still
+        // covers it. Never a surprise Face ID prompt in the middle of using the app.
+        if let refresh = s.apiRefresh, let fresh = await BackendClient.shared.refresh(refreshToken: refresh) {
+            return fresh
+        }
+        guard let password = store.password(for: s.username, context: UnlockSession.context),
+              let login = try? await BackendClient.shared.login(username: s.username, password: password) else { return nil }
+        return (login.token, login.refresh)
     }
 
     // ── Auto-Sperre nach Inaktivität im Hintergrund, Sichtschutz ──────────────

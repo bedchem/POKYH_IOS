@@ -131,6 +131,8 @@ enum Config {
         static let privacyAcknowledge = "/privacy/acknowledge"
         static let usageStats   = "/privacy/usage-stats"
         static let dataExport   = "/users/me/export"
+        static let pushApns     = "/push/apns"
+        static let authRefresh  = "/auth/refresh"
         static func todos(_ username: String) -> String { "/users/\(username)/todos" }
         static func reminders(_ classId: String) -> String { "/classes/\(classId)/reminders" }
     }

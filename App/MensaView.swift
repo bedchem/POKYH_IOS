@@ -99,6 +99,7 @@ struct MensaView: View {
         error = nil
         do {
             dishes = try await BackendClient.shared.dishes(force: force)
+            WatchSync.mensa(dishes)
             loading = false
             await loadRatings()
         } catch {

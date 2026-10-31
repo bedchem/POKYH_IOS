@@ -1,4 +1,5 @@
 import SwiftUI
+import WidgetKit
 import PokyhCore
 import PokyhDesign
 import UserNotifications
@@ -462,6 +463,11 @@ struct SettingsView: View {
             set: { choice in
                 language = choice
                 LanguageChoice.choose(choice, in: .standard)
+                // Widgets read it from the shared defaults.
+                if let shared = UserDefaults(suiteName: AppConfig.current.appGroup) {
+                    LanguageChoice.choose(choice, in: shared)
+                }
+                WidgetCenter.shared.reloadAllTimelines()
                 app.objectWillChange.send()
             }
         )
@@ -485,6 +491,7 @@ struct SettingsView: View {
 
                 SettingsGroup(s.settings.notifications) {
                     NotificationsItem()
+                    NotificationKindRows()
                 }
                 .padding(.top, groupGap)
                 .fadeIn(delay: 0.03)
@@ -822,6 +829,46 @@ private struct NotificationsItem: View {
         } else if let url = URL(string: UIApplication.openNotificationSettingsURLString) {
             openURL(url)
         }
+    }
+}
+
+/// One switch per kind, for what this account can get at all.
+private struct NotificationKindRows: View {
+    @EnvironmentObject var app: AppState
+    @Environment(\.strings) private var s
+    @State private var on = Dictionary(uniqueKeysWithValues: NotificationKind.allCases.map { ($0, NotificationPrefs.isOn($0)) })
+
+    private var kinds: [NotificationKind] {
+        let session = app.session
+        return NotificationKind.allCases.filter { kind in
+            switch kind {
+            case .messages, .cancellations: session?.hasUntis ?? false
+            case .grades: session?.isStudent ?? false
+            case .todos: session?.apiToken != nil
+            case .reminders: session?.apiToken != nil && !app.isParent
+            }
+        }
+    }
+
+    var body: some View {
+        let t = NotificationText.of(s.lang)
+        ForEach(kinds, id: \.self) { kind in
+            SettingsRow(t.title(kind), hint: t.hint(kind)) {
+                Toggle(t.title(kind), isOn: binding(kind))
+                    .labelsHidden()
+                    .tint(Palette.accent)
+            }
+        }
+    }
+
+    private func binding(_ kind: NotificationKind) -> Binding<Bool> {
+        Binding(
+            get: { on[kind] ?? true },
+            set: { value in
+                on[kind] = value
+                PushRegistration.shared.setEnabled(kind, value)
+            }
+        )
     }
 }
 

@@ -186,6 +186,7 @@ struct GradesView: View {
         error = nil
         do {
             subjects = try await UntisClient.shared.grades(year: year == SchoolDates.currentSchoolYear ? nil : year, session)
+            if year == SchoolDates.currentSchoolYear { WatchSync.grades(subjects, for: session) }
             // Only the default account's current year feeds the grades widget.
             if year == SchoolDates.currentSchoolYear, app.isDefaultAccountActive {
                 WidgetBridge.publishGrades(subjects)

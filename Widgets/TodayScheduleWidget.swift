@@ -1,82 +1,118 @@
-import WidgetKit
 import SwiftUI
+import WidgetKit
+import PokyhCore
+import PokyhDesign
 
-/// Home-Screen-Widget: heutiger Stundenplan als Liste (verbleibende Stunden).
-struct TodayEntry: TimelineEntry { let date: Date; let snapshot: TimetableSnapshot }
+/// The rest of the day as a list. Once today is over it shows the next school day.
+struct TodayEntry: TimelineEntry {
+    let date: Date
+    let snapshot: TimetableSnapshot
+    var sealed = false
+}
 
 struct TodayProvider: TimelineProvider {
-    func placeholder(in context: Context) -> TodayEntry { TodayEntry(date: Date(), snapshot: .empty) }
-    func getSnapshot(in context: Context, completion: @escaping (TodayEntry) -> Void) {
-        completion(TodayEntry(date: Date(), snapshot: SharedStore.readSnapshot()))
+    func placeholder(in context: Context) -> TodayEntry {
+        TodayEntry(date: .now, snapshot: WidgetSamples.timetable())
     }
+
+    func getSnapshot(in context: Context, completion: @escaping (TodayEntry) -> Void) {
+        let data = WidgetData.timetable(preview: context.isPreview)
+        completion(TodayEntry(date: .now, snapshot: data.snapshot, sealed: data.sealed))
+    }
+
     func getTimeline(in context: Context, completion: @escaping (Timeline<TodayEntry>) -> Void) {
-        let snap = SharedStore.readSnapshot()
-        let now = Date()
-        var pivots: [Date] = [now]
-        for l in snap.lessons.prefix(8) where l.end > now { pivots.append(l.end) }
-        let entries = Array(Set(pivots)).sorted().map { TodayEntry(date: $0, snapshot: snap) }
-        completion(Timeline(entries: entries.isEmpty ? [TodayEntry(date: now, snapshot: snap)] : entries,
-                            policy: .after(now.addingTimeInterval(3600))))
+        let now = Date.now
+        let data = WidgetData.timetable()
+        let entries = LessonTimeline.dates(for: data.snapshot, from: now).map {
+            TodayEntry(date: $0, snapshot: data.snapshot, sealed: data.sealed)
+        }
+        completion(Timeline(entries: entries, policy: LessonTimeline.policy(from: now)))
     }
 }
 
 struct TodayWidgetView: View {
-    var entry: TodayEntry
+    let entry: TodayEntry
     @Environment(\.widgetFamily) private var family
 
-    private var todays: [LessonSnapshot] {
-        entry.snapshot.lessons.filter { Calendar.current.isDateInToday($0.start) && $0.end > entry.date }
+    private var s: Strings { WidgetText.app }
+    private var hues: SubjectHues { entry.snapshot.hues }
+    private var large: Bool { family == .systemLarge }
+    private var maxRows: Int { large ? 7 : 3 }
+
+    private var day: [LessonSnapshot] {
+        let upcoming = entry.snapshot.lessons.filter { $0.end > entry.date }
+        guard let first = upcoming.first else { return [] }
+        return upcoming.filter { Calendar.current.isDate($0.start, inSameDayAs: first.start) }
     }
-    private var maxRows: Int { family == .systemLarge ? 8 : 4 }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 5) {
-                Image(systemName: "calendar").font(.system(size: 11, weight: .semibold)).foregroundStyle(Brand.accent)
-                Text("HEUTE").font(.system(size: 10, weight: .semibold)).tracking(0.6).foregroundStyle(.secondary)
-                Spacer(minLength: 0)
-                Text(entry.date, format: .dateTime.weekday(.wide))
-                    .font(.system(size: 10, weight: .medium)).foregroundStyle(.tertiary)
-            }
-            if todays.isEmpty {
-                Spacer()
-                VStack(spacing: 6) {
-                    Image(systemName: "checkmark.circle.fill").font(.title2).foregroundStyle(Brand.positive)
-                    Text("Keine Stunden mehr").font(.footnote).foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity)
-                Spacer()
+        let lessons = day
+        VStack(alignment: .leading, spacing: large ? Spacing.md : Spacing.sm) {
+            WidgetLabel(
+                title: lessons.first.map { WidgetText.day($0.start, from: entry.date) } ?? s.home.sectionToday,
+                symbol: "calendar",
+                trailing: WidgetText.dayMonth(lessons.first?.start ?? entry.date)
+            )
+            if entry.sealed {
+                WidgetNotice.locked(sealed: true)
+            } else if lessons.isEmpty {
+                WidgetNotice.dayOver()
             } else {
-                ForEach(todays.prefix(maxRows)) { row($0) }
-                Spacer(minLength: 0)
+                FittingCount(most: min(maxRows, lessons.count)) { count in
+                    VStack(alignment: .leading, spacing: large ? Spacing.md : Spacing.sm) {
+                        ForEach(lessons.prefix(count)) { lesson in
+                            LessonRow(lesson: lesson, hues: hues,
+                                      current: !lesson.isCancelled && lesson.start <= entry.date)
+                        }
+                        if large && lessons.count > count {
+                            Text(s.home.moreInTimetable(lessons.count - count))
+                                .textStyle(.caption2)
+                                .foregroundStyle(Palette.textTertiary)
+                        }
+                    }
+                }
             }
         }
-        .pokyhWidgetBackground()
-    }
-
-    private func row(_ l: LessonSnapshot) -> some View {
-        HStack(spacing: 9) {
-            Text(l.start, style: .time)
-                .font(.system(size: 12, weight: .medium).monospacedDigit())
-                .foregroundStyle(.secondary).frame(width: 40, alignment: .leading)
-            Capsule().fill(l.isExam ? Brand.danger : Brand.accent).frame(width: 3, height: 16)
-            Text(l.subject).font(.system(size: 13, weight: .medium)).lineLimit(1)
-            Spacer(minLength: 4)
-            if !l.room.isEmpty {
-                Text(l.room).font(.system(size: 11)).foregroundStyle(.tertiary).lineLimit(1)
-            }
-        }
+        .widgetCanvas()
     }
 }
 
 struct TodayScheduleWidget: Widget {
     let kind = "TodayScheduleWidget"
+
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: kind, provider: TodayProvider()) { entry in
             TodayWidgetView(entry: entry)
         }
-        .configurationDisplayName("Heutiger Plan")
-        .description("Alle verbleibenden Stunden von heute auf einen Blick.")
+        .configurationDisplayName(WidgetText.own.todayName)
+        .description(WidgetText.own.todayInfo)
         .supportedFamilies([.systemMedium, .systemLarge])
     }
+}
+
+// ── Previews ─────────────────────────────────────────────────────────────────
+
+private extension TodayEntry {
+    static var running: TodayEntry { TodayEntry(date: .now, snapshot: WidgetSamples.timetable()) }
+    static var between: TodayEntry { TodayEntry(date: .now, snapshot: WidgetSamples.timetableBreak()) }
+    static var free: TodayEntry { TodayEntry(date: .now, snapshot: .empty) }
+    static var closed: TodayEntry { TodayEntry(date: .now, snapshot: .empty, sealed: true) }
+}
+
+#Preview("Medium", as: .systemMedium) {
+    TodayScheduleWidget()
+} timeline: {
+    TodayEntry.running
+    TodayEntry.between
+    TodayEntry.free
+    TodayEntry.closed
+}
+
+#Preview("Large", as: .systemLarge) {
+    TodayScheduleWidget()
+} timeline: {
+    TodayEntry.running
+    TodayEntry.between
+    TodayEntry.free
+    TodayEntry.closed
 }

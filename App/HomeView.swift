@@ -1063,6 +1063,7 @@ struct HomeView: View {
             let this = try await UntisClient.shared.timetable(date: monday, session)
             let next = (try? await UntisClient.shared.timetable(date: nextMonday, session)) ?? []
             weekEntries = this + next
+            WatchSync.timetable(this, week: monday, for: session)
             hues = Timetable.hues(for: this)
             todayFailed = false
         } catch let e as AppError where e.message == "session_expired" {
@@ -1094,6 +1095,7 @@ struct HomeView: View {
         loadingGrades = subjects.isEmpty
         do {
             subjects = try await UntisClient.shared.grades(year: nil, session)
+            WatchSync.grades(subjects, for: session)
             gradesFailed = false
         } catch {
             gradesFailed = true
@@ -1126,6 +1128,7 @@ struct HomeView: View {
         loadingMensa = mensaDay == nil
         defer { loadingMensa = false }
         guard let dishes = try? await BackendClient.shared.dishes() else { return }
+        WatchSync.mensa(dishes)
         // Same date rule as the Mensa tab: today or the next day the menu has.
         guard let day = MensaSchedule.days(from: dishes).first(where: { !$0.dishes.isEmpty }) else {
             mensaDay = nil
@@ -1144,6 +1147,7 @@ struct HomeView: View {
         guard let session = app.session, let token = session.apiToken else { return }
         do {
             todos = try await BackendClient.shared.todos(username: session.username, token: token)
+            WatchSync.todos(todos, for: session)
             todosFailed = false
         } catch {
             todosFailed = true

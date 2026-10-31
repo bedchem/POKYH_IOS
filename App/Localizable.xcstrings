@@ -1,0 +1,51 @@
+{
+  "sourceLanguage" : "de",
+  "strings" : {
+    "push.messages.new.one" : {
+      "comment" : "Push title: one new WebUntis message.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Neue Nachricht" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "New message" } },
+        "it" : { "stringUnit" : { "state" : "translated", "value" : "Nuovo messaggio" } }
+      }
+    },
+    "push.messages.new.other" : {
+      "comment" : "Push title: several new WebUntis messages. The argument is how many.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "%@ neue Nachrichten" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "%@ new messages" } },
+        "it" : { "stringUnit" : { "state" : "translated", "value" : "%@ nuovi messaggi" } }
+      }
+    },
+    "push.reminder" : {
+      "comment" : "Push title for a class reminder. The argument is its title.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Erinnerung: %@" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Reminder: %@" } },
+        "it" : { "stringUnit" : { "state" : "translated", "value" : "Promemoria: %@" } }
+      }
+    },
+    "push.tapToOpen" : {
+      "comment" : "Push body under messages, to-dos and reminders without a text of their own.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Tippe zum Öffnen" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Tap to open" } },
+        "it" : { "stringUnit" : { "state" : "translated", "value" : "Tocca per aprire" } }
+      }
+    },
+    "push.todo.due" : {
+      "comment" : "Push title for a to-do that is due. The argument is its title.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "To-do fällig: %@" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "To-do due: %@" } },
+        "it" : { "stringUnit" : { "state" : "translated", "value" : "To-do in scadenza: %@" } }
+      }
+    }
+  },
+  "version" : "1.0"
+}

@@ -51,6 +51,8 @@
 	<string>$(POKYH_SERVER_KEY)</string>
 	<key>POKYHSupportEmail</key>
 	<string>$(POKYH_SUPPORT_EMAIL)</string>
+	<key>POKYHWatchAppGroup</key>
+	<string>$(POKYH_APP_GROUP).watch</string>
 	<key>POKYHWebsiteURL</key>
 	<string>$(POKYH_WEBSITE_URL)</string>
 </dict>

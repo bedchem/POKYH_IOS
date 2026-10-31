@@ -187,6 +187,7 @@ targets:
         WKCompanionAppBundleIdentifier: $(POKYH_BUNDLE_ID)
         WKRunsIndependentlyOfCompanionApp: false
         UIBackgroundModes: [remote-notification]
+        POKYHWatchAppGroup: $(POKYH_APP_GROUP).watch
     entitlements:
       path: Watch/Watch.entitlements
       properties:
@@ -218,11 +219,14 @@ targets:
       path: WatchWidgets/Info.plist
       properties:
         <<: *pokyhInfo
+        POKYHWatchAppGroup: $(POKYH_APP_GROUP).watch
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     entitlements:
       path: WatchWidgets/WatchWidgets.entitlements
       properties:
+        # Shared with the watch app: the key that opens the sealed snapshot lives there.
+        keychain-access-groups: [$(POKYH_KEYCHAIN_GROUP).watch]
         com.apple.security.application-groups: [$(POKYH_APP_GROUP).watch]
     settings:
       base:

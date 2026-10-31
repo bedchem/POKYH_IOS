@@ -653,6 +653,7 @@ struct TimetableView: View {
         loading = true; error = nil
         do {
             entries = try await UntisClient.shared.timetable(date: DateFmt.isoString(monday), session)
+            WatchSync.timetable(entries, week: DateFmt.isoString(monday), for: session)
             // This week of the default account feeds the widget and the Live Activity.
             if weekOffset == 0, app.isDefaultAccountActive {
                 WidgetBridge.publish(entries); app.refreshLiveActivity(from: entries)

@@ -110,8 +110,12 @@ struct TodosView: View {
         guard let s = app.session, let token = s.apiToken else { return }
         loading = todos.isEmpty
         error = nil
-        do { todos = try await BackendClient.shared.todos(username: s.username, token: token) }
-        catch { self.error = (error as? AppError)?.message ?? error.localizedDescription }
+        do {
+            todos = try await BackendClient.shared.todos(username: s.username, token: token)
+            WatchSync.todos(todos, for: s)
+        } catch {
+            self.error = (error as? AppError)?.message ?? error.localizedDescription
+        }
         loading = false
     }
 
