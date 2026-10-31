@@ -1,0 +1,38 @@
+{
+  "calendarEntries": [
+    {
+      "id": 901,
+      "startDateTime": "2026-11-03T07:50:00",
+      "endDateTime": "2026-11-03T08:40:00",
+      "status": "CHANGED",
+      "teachingContent": "<p>Quadratische Gleichungen</p><p>Seite&nbsp;42</p>",
+      "notesAll": "Taschenrechner &amp; Heft",
+      "lessonInfo": "Buch mitnehmen",
+      "substText": "statt Müller",
+      "klasses": [
+        { "id": 11, "shortName": "4A", "displayName": "4A", "status": "REGULAR" },
+        { "id": 12, "name": "4B" }
+      ],
+      "mainStudentGroup": { "id": 5, "name": "Gruppe <b>1</b>", "displayName": "G1" },
+      "teachers": [
+        { "id": 1, "shortName": "SCH", "longName": "Schmid Anna", "displayName": "SCH", "status": "SUBSTITUTED" },
+        { "id": 2, "shortName": "MUE", "longName": "Müller Hans", "displayName": "MUE", "status": "REMOVED" }
+      ],
+      "rooms": [
+        { "id": 3, "shortName": "Inf VI", "longName": "Informatik VI", "displayName": "Inf VI", "status": "REGULAR" }
+      ],
+      "exam": { "name": "Schularbeit", "description": "Kapitel 3 und 4" },
+      "homeworks": [
+        { "id": 70, "text": "<p>Seite 12,<br>Aufgabe 3</p>", "completed": false },
+        { "id": 71, "text": "   " }
+      ]
+    },
+    {
+      "id": 950,
+      "klasses": [{ "displayName": "4A" }],
+      "teachers": [{ "displayName": "XXX", "status": "REMOVED" }],
+      "rooms": [{ "displayName": "Anderer Raum", "status": "ADDED" }],
+      "homeworks": [{ "id": 72, "text": "Seite 12,\nAufgabe 3" }]
+    }
+  ]
+}

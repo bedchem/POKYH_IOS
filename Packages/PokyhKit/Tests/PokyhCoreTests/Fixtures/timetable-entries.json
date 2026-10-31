@@ -1,0 +1,46 @@
+{
+  "days": [
+    {
+      "date": "2026-11-03",
+      "status": "REGULAR",
+      "gridEntries": [
+        {
+          "ids": [901],
+          "duration": { "start": "2026-11-03T07:50", "end": "2026-11-03T08:40" },
+          "type": "NORMAL_TEACHING_PERIOD",
+          "status": "CHANGED",
+          "position1": [
+            { "current": { "type": "TEACHER", "status": "ADDED", "shortName": "SCH", "longName": "Schmid Anna", "displayName": "SCH" }, "removed": null },
+            { "current": null, "removed": { "type": "TEACHER", "status": "REMOVED", "shortName": "MUE", "longName": "Müller Hans", "displayName": "MUE" } }
+          ],
+          "position2": [
+            { "current": { "type": "SUBJECT", "status": "REGULAR", "shortName": "M", "longName": "Mathematik", "displayName": "M" }, "removed": null }
+          ],
+          "position3": [
+            { "current": { "type": "ROOM", "status": "ADDED", "shortName": "Inf VI", "longName": "Informatik VI", "displayName": "Inf VI" }, "removed": null },
+            { "current": { "type": "ROOM", "status": "REGULAR", "shortName": "a+2/05", "longName": "Klasse 2.05", "displayName": "a+2/05" }, "removed": null }
+          ],
+          "icons": ["HOMEWORK", "", "attachment"],
+          "texts": [
+            { "type": "LESSON_INFO", "text": "  Buch mitnehmen " },
+            { "type": "SUBSTITUTION", "text": "statt Müller" },
+            { "type": "LESSON_TEXT", "text": "   " },
+            { "type": "EXTRA", "text": "Zusatz &amp; mehr" }
+          ],
+          "lessonText": "Kapitel 4"
+        },
+        {
+          "ids": [902],
+          "duration": { "start": "2026-11-03T08:40", "end": "2026-11-03T09:30" },
+          "type": "NORMAL_TEACHING_PERIOD",
+          "status": "REGULAR",
+          "position1": [{ "current": { "status": "REGULAR", "displayName": "BER" } }],
+          "position2": [{ "current": { "status": "REGULAR", "shortName": "D", "longName": "Deutsch", "displayName": "D" } }],
+          "position3": [{ "current": { "status": "REGULAR", "displayName": "2.05" } }],
+          "lessonInfo": "Nur die flache Form",
+          "substitutionText": "   "
+        }
+      ]
+    }
+  ]
+}

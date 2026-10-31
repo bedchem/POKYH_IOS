@@ -37,6 +37,7 @@ struct HomeView: View {
     @State private var width: CGFloat = 0
     @State private var route: Route?
     @State private var arranging = false
+    @State private var showProfile = false
     /// Which blocks Home shows and in what order, by block name (see HomeLayout).
     @AppStorage("pokyh_home_layout") private var storedLayout = ""
 
@@ -93,6 +94,7 @@ struct HomeView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: Spacing.section) {
                 greeting.fadeIn()
+                RecapBanner().fadeIn(delay: 0.02)
                 if !hasUntis {
                     // Without WebUntis only what works without a school account.
                     noUntisBlock.fadeIn(delay: 0.04)
@@ -133,7 +135,12 @@ struct HomeView: View {
             }
         }
         .profileToolbar()
+        // Applied after the shared items so it lands beside the messages, not behind the photo.
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) { BellToolbarButton(onPick: openFromBell) }
+        }
         .sheet(isPresented: $arranging) { HomeArrangeSheet(layout: layout) }
+        .sheet(isPresented: $showProfile) { NavigationStack { ProfileView() } }
         .animation(.spring(response: 0.42, dampingFraction: 0.86), value: storedLayout)
         .navigationDestination(item: $route) { destination($0) }
         .task { await loadAll() }
@@ -153,12 +160,24 @@ struct HomeView: View {
         case .mensa: MensaView()
         case .gradeSubject(let id): GradeSubjectView(lessonId: id, subjects: subjects)
         case .message(let id):
-            if let m = messages.first(where: { $0.id == id }) {
+            // Home lists a few; the bell can lead to any message of the inbox.
+            if let m = messages.first(where: { $0.id == id }) ?? BellStore.shared.message(id) {
                 MessageDetailScreen(preview: m, folder: .inbox) {
                     if let i = messages.firstIndex(where: { $0.id == id }) { messages[i].isRead = true }
+                    BellStore.shared.messageRead(id)
                     app.messageWasRead()
                 }
             }
+        }
+    }
+
+    private func openFromBell(_ target: BellFeed.Target) {
+        switch target {
+        case .grade(let lessonId): route = .gradeSubject(lessonId)
+        case .message(let id): route = .message(id)
+        case .reminders: route = .reminders
+        case .todos: route = .todos
+        case .profile: showProfile = true
         }
     }
 

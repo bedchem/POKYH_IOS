@@ -2,7 +2,7 @@ import SwiftUI
 import PokyhCore
 import PokyhDesign
 
-/// Sign-in, Android's calm auth layout: mark, big title, then two steps like WebUntis itself:
+/// Sign-in, Android's calm auth layout: mascot, big title, then two steps like WebUntis itself:
 /// first the school (any school on WebUntis, through the public search), then the account.
 /// `isAdditional` is the "Konto hinzufügen" / "Passwort nötig" sheet.
 struct LoginView: View {
@@ -27,6 +27,11 @@ struct LoginView: View {
     @State private var resetting = false
     @State private var officeOpen = false
 
+    // What the mascot answers: the keys and what happens to the form.
+    @State private var keys = 0
+    @State private var mascotEvent: MascotEvent?
+    @State private var taps: Int64 = 0
+
     enum Field { case user, pass, school }
 
     enum SchoolLookup: Equatable { case idle, searching, done(SchoolSearch) }
@@ -34,7 +39,7 @@ struct LoginView: View {
     // Android sets the title in its display face at 44.
     private static let titleStyle = TextStyle(44, 44, .heavy, tracking: -0.022, relativeTo: .largeTitle)
 
-    /// Wide windows get Android's split: the mark on a panel of its own beside the form.
+    /// Wide windows get Android's split: the mascot large on a panel of its own beside the form.
     private var wide: Bool { !isAdditional && WidthClass(width: size.width) == .expanded }
 
     var body: some View {
@@ -78,6 +83,10 @@ struct LoginView: View {
             }
         }
         .onChange(of: schoolQuery) { _, query in search(query) }
+        // A failed attempt: the mascot wobbles.
+        .onChange(of: app.error) { _, error in
+            if error != nil { mascotEvent = MascotEvent(.error, n: Self.now) }
+        }
         .task(id: school) {
             loginOptions = nil
             guard let school else { return }
@@ -113,6 +122,44 @@ struct LoginView: View {
         }
     }
 
+    // MARK: - Mascot
+
+    private static var now: Int64 { Int64(Date().timeIntervalSince1970 * 1000) }
+
+    private var mascot: LoginMascotBadge {
+        LoginMascotBadge(
+            state: LoginMascotState(
+                focus: focus == .user ? .user : focus == .pass ? .password : nil,
+                username: username,
+                showPassword: showPassword,
+                loading: app.busy,
+                keys: keys,
+                event: mascotEvent
+            ),
+            onTap: {
+                taps += 1
+                mascotEvent = MascotEvent(.tap, n: taps)
+            },
+            maxWidth: wide ? 560 : 252
+        )
+    }
+
+    /// The field's text, counting keys for the mascot. Several characters at once is the phone
+    /// filling the form in (autofill, a paste): one event for both fields.
+    private func typed(_ text: Binding<String>) -> Binding<String> {
+        Binding {
+            text.wrappedValue
+        } set: { new in
+            let old = text.wrappedValue
+            text.wrappedValue = new
+            guard new != old else { return }
+            keys += 1
+            guard new.count - old.count >= 3 else { return }
+            if let last = mascotEvent, last.kind == .autofill, Self.now - last.n < 1500 { return }
+            mascotEvent = MascotEvent(.autofill, n: Self.now)
+        }
+    }
+
     private func pick(_ picked: School) {
         // Remembered as soon as it's picked, as on the web.
         SchoolChoice.save(picked)
@@ -129,7 +176,7 @@ struct LoginView: View {
             Spacer().frame(height: isAdditional ? Spacing.lg : Spacing.huge)
 
             VStack(spacing: Spacing.lg) {
-                if !wide { AppLogo(size: 84) }
+                if !wide { mascot }
                 VStack(alignment: .leading, spacing: Spacing.sm) {
                     Text(s.login.signIn)
                         .textStyle(Self.titleStyle)
@@ -174,10 +221,10 @@ struct LoginView: View {
             }
 
             if passwordAllowed {
-                field(s.login.username, text: $username, field: .user, symbol: "person", secure: false)
+                field(s.login.username, text: typed($username), field: .user, symbol: "person", secure: false)
                     .submitLabel(.next)
                     .onSubmit { focus = .pass }
-                field(s.login.password, text: $password, field: .pass, symbol: "key", secure: true)
+                field(s.login.password, text: typed($password), field: .pass, symbol: "key", secure: true)
                     .submitLabel(.go)
                     .onSubmit { Task { await submit() } }
             }
@@ -390,16 +437,12 @@ struct LoginView: View {
     // MARK: - Wide panel
 
     private var brandPanel: some View {
-        VStack(spacing: Spacing.xl) {
-            AppLogo(size: min(200, size.width * 0.16))
-            Text("POKYH")
-                .textStyle(.wordmark)
-                .foregroundStyle(Palette.textPrimary)
-        }
-        .fadeIn()
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Palette.card, in: .pokyh(Radius.xxl))
-        .padding(Spacing.lg)
+        mascot
+            .padding(Spacing.xxxl)
+            .fadeIn()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Palette.card, in: .pokyh(Radius.xxl))
+            .padding(Spacing.lg)
     }
 
     private func submit() async {

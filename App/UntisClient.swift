@@ -1,6 +1,14 @@
 import Foundation
 import PokyhCore
 
+/// Keeps a request where it was sent instead of following a redirect.
+private nonisolated final class NoRedirects: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
+        completionHandler(nil)
+    }
+}
+
 /// WebUntis-Client — repliziert die Server-Proxy-Routen des Frontends direkt nativ:
 /// JSON-RPC `authenticate`, Bearer-Token, Stundenplan/Noten/Abwesenheiten/Nachrichten.
 final class UntisClient {
@@ -52,7 +60,8 @@ final class UntisClient {
 
     /// Signs in at `school`; without one, at the school the saved account belongs to, else the
     /// build's fallback. An "appkey:" secret signs in with the app key instead of a password.
-    func login(username rawUsername: String, password: String, school: School? = nil) async throws -> UserSession {
+    /// `token`: the authenticator app's code, asked for after a `TwoFactorRequired`.
+    func login(username rawUsername: String, password: String, token: String? = nil, school: School? = nil) async throws -> UserSession {
         let username = rawUsername.trimmingCharacters(in: .whitespaces).lowercased()
         let t = Strings.current
         guard !username.isEmpty, !password.isEmpty else {
@@ -64,6 +73,9 @@ final class UntisClient {
         if AppKey.isKey(password) {
             return try await loginWithKey(user: username, key: String(password.dropFirst(AppKey.prefix.count)), school: school)
         }
+
+        // With the code: only WebUntis' own sign-in form takes it.
+        if let token { return try await loginWithForm(user: username, password: password, token: token, school: school) }
 
         // 1. JSON-RPC authenticate
         let rpcBody: [String: Any] = [
@@ -86,6 +98,17 @@ final class UntisClient {
 
         let json = JSON.parse(data)
         if json.error.exists {
+            // Two-factor accounts can't sign in through JSON-RPC, the sign-in form tells if that's
+            // why. Not after a plain wrong password (-8504): every typo would count twice
+            // towards WebUntis' lock-out.
+            if json.error.code.int != -8504 {
+                let form = await formLogin(user: username, password: password, token: nil, school: school)
+                switch form.answer {
+                case .ok: return try await completeFormLogin(user: username, sessionId: form.sessionId, school: school)
+                case .codeRequired: throw TwoFactorRequired(wrongCode: false)
+                default: break
+                }
+            }
             let msg = json.error.message.string ?? t.errors.loginFailed
             throw AppError(message: msg)
         }
@@ -139,6 +162,47 @@ final class UntisClient {
     }
 
     /// A session that names no person yet: the app data does (`user.person.id`).
+    /// WebUntis' own sign-in form, as its website uses it: the way that knows the second factor.
+    /// It wants an anonymous session and its CSRF token first, from the school's sign-in page.
+    private func formLogin(user: String, password: String, token: String?, school: School) async -> (answer: FormLoginAnswer, sessionId: String) {
+        guard let pageURL = URL(string: "\(school.baseString)/?school=\(school.query)"),
+              let formURL = URL(string: school.baseString + Config.Routes.formLogin) else { return (.unavailable, "") }
+        var page = URLRequest(url: pageURL)
+        page.setValue("text/html", forHTTPHeaderField: "Accept")
+        guard let (html, pageResp) = try? await session.data(for: page),
+              let pageHTTP = pageResp as? HTTPURLResponse,
+              let anonymous = Self.sessionId(pageHTTP) else { return (.unavailable, "") }
+        let config = Self.pageConfig(from: html)
+
+        var fields = [("school", school.loginName), ("j_username", user), ("j_password", password)]
+        if let token { fields.append(("token", token)) }
+        var req = URLRequest(url: formURL)
+        req.httpMethod = "POST"
+        req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        req.setValue(cookieHeader(anonymous, school), forHTTPHeaderField: "Cookie")
+        if let csrf = config.csrf { req.setValue(csrf, forHTTPHeaderField: "X-CSRF-TOKEN") }
+        if let tenant = config.tenant { req.setValue(tenant, forHTTPHeaderField: "Tenant-Id") }
+        req.httpBody = FormLoginAnswer.formBody(fields)
+        // A redirect would land on the HTML page and lose the session set on the way there.
+        guard let (data, resp) = try? await session.data(for: req, delegate: NoRedirects()),
+              let http = resp as? HTTPURLResponse else { return (.unavailable, "") }
+        return (FormLoginAnswer.parse(data, status: http.statusCode, sentCode: token != nil), Self.sessionId(http) ?? anonymous)
+    }
+
+    private func loginWithForm(user: String, password: String, token: String, school: School) async throws -> UserSession {
+        let t = Strings.current.errors
+        let form = await formLogin(user: user, password: password, token: token, school: school)
+        switch form.answer {
+        case .ok: return try await completeFormLogin(user: user, sessionId: form.sessionId, school: school)
+        case .codeRequired, .codeWrong: throw TwoFactorRequired(wrongCode: true)
+        case .badCredentials: throw AppError(message: t.badCredentials)
+        case .refused: throw AppError(message: t.refused)
+        case .unavailable: throw AppError(message: t.noConnection)
+        }
+    }
+
+    /// The sign-in form names no person: the app data does (`user.person.id`).
     private func completeFormLogin(user: String, sessionId: String, school: School) async throws -> UserSession {
         var bare = UserSession(sessionId: sessionId, bearerToken: "", studentId: 0, klasseId: 0, klasseName: "",
                                username: user, personName: nil, personType: nil, isParent: false)
@@ -692,7 +756,8 @@ final class UntisClient {
                 let isExam = type == "EXAM"
                 let isCancelled = status == "CANCELLED"
                 let isChanged = status == "CHANGED"
-                let isSubstitution = isChanged && !removedTeachers.isEmpty
+                let extras = PeriodExtras.read(ge.raw)
+                let isSubstitution = isChanged && (!removedTeachers.isEmpty || !extras.addedTeachers.isEmpty)
 
                 entries.append(TimetableEntry(
                     id: ge.ids[0].int ?? 0,
@@ -710,8 +775,15 @@ final class UntisClient {
                     originalTeacher: removedTeachers.joined(separator: ", "),
                     originalTeacherLong: removedTeachersLong.isEmpty ? nil : removedTeachersLong.joined(separator: ", "),
                     originalRoom: removedRooms.joined(separator: ", "),
-                    note: ge.lessonInfo.string ?? ge.lessonText.string,
-                    examDescription: ge.exam.description.string
+                    note: extras.lessonInfo ?? extras.lessonText,
+                    examDescription: ge.exam.description.string,
+                    addedTeachers: extras.addedTeachers,
+                    addedSubjects: extras.addedSubjects,
+                    addedRooms: extras.addedRooms,
+                    icons: extras.icons,
+                    substitutionText: extras.substitutionText,
+                    lessonText: extras.lessonText,
+                    texts: extras.texts
                 ))
             }
         }
@@ -1090,7 +1162,7 @@ final class UntisClient {
     func holidays(_ s: UserSession) async throws -> [SchoolHoliday] {
         let from = DateFmt.isoString(Calendar.current.date(byAdding: .day, value: -31, to: Date()) ?? Date())
         let j = try await rpcFull("getHolidays", s, id: "holidays")
-        return HolidayList.read(j.result, from: from)
+        return HolidayList.read(j.result.raw, from: from)
     }
 
     // ── Nachrichten: Zähler, Lesebestätigung, Löschen ────────────────────────
@@ -2033,5 +2105,184 @@ private enum ExcuseMessage {
         let start = firstDate * 10_000 + startTime
         let end = lastDate * 10_000 + endTime
         return end > start ? Span(start: start, end: end) : nil
+    }
+}
+
+// ── Timetable extras, class duties, homework ────────────────────────────────
+
+extension UntisClient {
+    /// Keyed by school and person like the timetable: two schools can share a student id, and a
+    /// parent's copies belong to the child.
+    private func diskKey(_ kind: String, _ s: UserSession, _ detail: String = "") -> String {
+        let key = "\(kind)-\(s.schoolRef.loginName)-\(s.studentId)"
+        return detail.isEmpty ? key : "\(key)-\(detail)"
+    }
+
+    /// A 403 here means the school doesn't show this, not that the session is gone.
+    private func isSignedOut(_ data: Data, _ http: HTTPURLResponse) -> Bool {
+        http.statusCode == 401 || data.first == UInt8(ascii: "<")
+    }
+
+    /// The stored copy when there's nothing to ask with or no network, else the fresh answer,
+    /// which then replaces the copy.
+    private func storedOrFresh<T: Codable>(_ key: String, _ s: UserSession, fetch: () async throws -> T) async throws -> T {
+        if s.bearerToken.isEmpty {
+            if let copy = DiskCache.load(T.self, key: key) { return copy }
+            throw AppError(message: Strings.current.tasks.offlineNotStored)
+        }
+        do {
+            let fresh = try await fetch()
+            DiskCache.save(fresh, key: key)
+            return fresh
+        } catch let error as URLError {
+            if let copy = DiskCache.load(T.self, key: key) { return copy }
+            throw error
+        }
+    }
+
+    // ── One lesson ───────────────────────────────────────────────────────────
+
+    private func lessonKey(_ entry: TimetableEntry, source: TimetableSource?, _ s: UserSession) -> String {
+        diskKey("lesson", s, "\(source?.key ?? "own")-\(entry.date)-\(entry.startTime)-\(entry.endTime)")
+    }
+
+    func storedLessonDetail(_ entry: TimetableEntry, source: TimetableSource?, _ s: UserSession) -> LessonDetail? {
+        DiskCache.load(LessonDetail.self, key: lessonKey(entry, source: source, s))
+    }
+
+    /// Asks for the lesson as the timetable it was tapped in has it: at the same hour the student's
+    /// own lesson is a different one, with someone else's homework.
+    func lessonDetail(_ entry: TimetableEntry, source: TimetableSource?, _ s: UserSession) async throws -> LessonDetail {
+        try await storedOrFresh(lessonKey(entry, source: source, s), s) {
+            let element = "elementId=\(source?.id ?? s.studentId)&elementType=\(source?.kind.elementType ?? 5)"
+            let times = "startDateTime=\(LessonDetail.queryTime(date: entry.date, time: entry.startTime))"
+                + "&endDateTime=\(LessonDetail.queryTime(date: entry.date, time: entry.endTime))"
+            let (data, http) = try await get("\(base(s))\(TimetableRoutes.lessonDetail)?\(element)&\(times)&homeworkOption=DUE", s, timeout: 10)
+            if isSignedOut(data, http) { throw AppError.sessionExpired }
+            guard http.statusCode == 200, let detail = LessonDetail.read(JSON.parse(data).raw, lessonId: entry.id) else {
+                throw AppError(message: Strings.current.errors.details)
+            }
+            return detail
+        }
+    }
+
+    // ── Other timetables ─────────────────────────────────────────────────────
+
+    /// Which classes, teachers or rooms the school shows this account. Often only the own class.
+    func timetableFilters(_ kind: TimetableKind, _ s: UserSession) async throws -> [TimetableResource] {
+        try await storedOrFresh(diskKey("ttfilter", s, kind.rawValue), s) {
+            let start = SchoolDates.mondayISO(of: Date())
+            let monday = DateFmt.iso.date(from: start) ?? Date()
+            let end = DateFmt.isoString(Calendar.current.date(byAdding: .day, value: 5, to: monday) ?? monday)
+            let url = "\(base(s))\(TimetableRoutes.filter)?resourceType=\(kind.rawValue)&timetableType=STANDARD&start=\(start)&end=\(end)"
+            let (data, http) = try await get(url, s, timeout: 12)
+            if isSignedOut(data, http) { throw AppError.sessionExpired }
+            if http.statusCode == 403 { return [] }
+            guard http.statusCode == 200 else { throw AppError(message: Strings.current.timetable.otherFailed) }
+            return TimetableFilter.read(JSON.parse(data).raw)
+        }
+    }
+
+    private func sourceKey(_ source: TimetableSource, date: String, _ s: UserSession) -> String {
+        "\(s.schoolRef.loginName)-\(source.key)-\(date)"
+    }
+
+    func cachedTimetable(source: TimetableSource, date: String, _ s: UserSession) -> [TimetableEntry]? {
+        let key = sourceKey(source, date: date, s)
+        if let cached = timetableCache.get(key) { return cached }
+        return s.bearerToken.isEmpty ? DiskCache.load([TimetableEntry].self, key: "tt-\(key)") : nil
+    }
+
+    /// Another timetable's week, as far as the school shows it to this account.
+    func timetable(source: TimetableSource, date: String, _ s: UserSession) async throws -> [TimetableEntry] {
+        let key = sourceKey(source, date: date, s)
+        if let cached = timetableCache.get(key) { return cached }
+        if s.bearerToken.isEmpty { return DiskCache.load([TimetableEntry].self, key: "tt-\(key)") ?? [] }
+        guard let start = DateFmt.iso.date(from: date),
+              let saturday = Calendar.current.date(byAdding: .day, value: 5, to: start) else {
+            throw AppError(message: Strings.current.errors.badAnswer)
+        }
+        let end = DateFmt.isoString(saturday)
+        let url = "\(base(s))\(Config.Routes.timetable)?start=\(date)&end=\(end)&format=1"
+            + "&resourceType=\(source.kind.rawValue)&resources=\(source.id)&periodTypes=&timetableType=STANDARD&layout=START_TIME"
+        do {
+            let (data, http) = try await get(url, s)
+            if isSignedOut(data, http) { throw AppError.sessionExpired }
+            if http.statusCode == 403 { throw AppError(message: Strings.current.timetable.otherFailed) }
+            guard http.statusCode == 200 else { throw AppError(message: Strings.current.errors.timetable(http.statusCode)) }
+            let entries = Self.parseTimetable(JSON.parse(data))
+            timetableCache.set(key, entries)
+            DiskCache.save(entries, key: "tt-\(key)")
+            return entries
+        } catch let error as URLError {
+            if let copy = DiskCache.load([TimetableEntry].self, key: "tt-\(key)") { return copy }
+            throw error
+        }
+    }
+
+    // ── Holidays ─────────────────────────────────────────────────────────────
+
+    private func holidaysKey(_ s: UserSession) -> String { "holidays-\(s.schoolRef.loginName)" }
+
+    func storedHolidays(_ s: UserSession) -> [SchoolHoliday] {
+        DiskCache.load([SchoolHoliday].self, key: holidaysKey(s)) ?? []
+    }
+
+    /// An empty answer is a failed one here (getHolidays has no errors to tell apart), so it
+    /// never replaces the list on disk.
+    func refreshedHolidays(_ s: UserSession) async -> [SchoolHoliday] {
+        guard !s.bearerToken.isEmpty, let fresh = try? await holidays(s), !fresh.isEmpty else { return storedHolidays(s) }
+        DiskCache.save(fresh, key: holidaysKey(s))
+        return fresh
+    }
+
+    // ── Absences of a school year ────────────────────────────────────────────
+
+    func storedAbsences(year: Int, _ s: UserSession) -> [AbsenceEntry]? {
+        DiskCache.load([AbsenceEntry].self, key: diskKey("absences", s, "\(year)"))
+    }
+
+    func schoolYearAbsences(year: Int, _ s: UserSession) async throws -> [AbsenceEntry] {
+        try await storedOrFresh(diskKey("absences", s, "\(year)"), s) {
+            try await absences(startDate: SchoolDates.yearStart(year), endDate: SchoolDates.yearEnd(year), s)
+        }
+    }
+
+    // ── Class register ───────────────────────────────────────────────────────
+
+    func storedClassreg(year: Int, _ s: UserSession) -> [ClassregEvent]? {
+        DiskCache.load([ClassregEvent].self, key: diskKey("classreg", s, "\(year)"))
+    }
+
+    func classreg(year: Int, _ s: UserSession) async throws -> [ClassregEvent] {
+        try await storedOrFresh(diskKey("classreg", s, "\(year)"), s) {
+            try await classregEvents(year: year, s)
+        }
+    }
+
+    // ── Class duties and homework ────────────────────────────────────────────
+
+    func classServices(_ s: UserSession) async throws -> [ClassService] {
+        let year = SchoolDates.currentSchoolYear
+        return try await storedOrFresh(diskKey("classservices", s, "\(year)"), s) {
+            let url = "\(base(s))\(Config.Routes.classServices)?startDate=\(SchoolDates.yearStart(year))&endDate=\(SchoolDates.yearEnd(year))"
+            let (data, http) = try await get(url, s, timeout: 15)
+            if isSignedOut(data, http) { throw AppError.sessionExpired }
+            if http.statusCode == 403 { return [] }
+            guard http.statusCode == 200 else { throw AppError(message: Strings.current.errors.services) }
+            return ClassServices.read(JSON.parse(data).raw, klasseId: s.klasseId)
+        }
+    }
+
+    /// Homework due between two days (YYYYMMDD). The route asks by date only, so a parent's
+    /// answer is narrowed down to the child shown.
+    func homeworks(from start: Int, to end: Int, _ s: UserSession) async throws -> [HomeworkItem] {
+        try await storedOrFresh(diskKey("homework", s, "\(start)"), s) {
+            let (data, http) = try await get("\(base(s))\(Config.Routes.homeworks)?startDate=\(start)&endDate=\(end)", s, timeout: 15)
+            if isSignedOut(data, http) { throw AppError.sessionExpired }
+            if http.statusCode == 403 { return [] }
+            guard http.statusCode == 200 else { throw AppError(message: Strings.current.errors.homework(http.statusCode)) }
+            return HomeworkList.read(JSON.parse(data).raw, childId: s.isParent ? s.studentId : nil, klasseId: s.klasseId)
+        }
     }
 }

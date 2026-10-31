@@ -54,6 +54,8 @@
 	<string>POKYH braucht die Kamera, um den QR-Code zur Anmeldung am Computer zu lesen.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>POKYH nutzt Face ID, damit nur du deine Daten siehst.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>POKYH speichert deinen Rückblick als Bild in deinen Fotos, wenn du das möchtest.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>POKYHAPIKey</key>

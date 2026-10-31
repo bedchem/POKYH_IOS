@@ -455,6 +455,9 @@ struct SettingsView: View {
     @State private var confirmClearData = false
     @State private var language = LanguageChoice.chosen(in: .standard)
     @State private var cacheCleared = false
+    @State private var showDevices = false
+    @State private var scanningWebSignIn = false
+    @State private var webSignInWorking = false
 
     /// The phone's language by default; a pick here overrides it at once, everywhere.
     private var languageSelection: Binding<Lang?> {
@@ -489,6 +492,10 @@ struct SettingsView: View {
                 }
                 .fadeIn(delay: 0.02)
 
+                accountGroup
+                    .padding(.top, groupGap)
+                    .fadeIn(delay: 0.025)
+
                 SettingsGroup(s.settings.notifications) {
                     NotificationsItem()
                     NotificationKindRows()
@@ -501,6 +508,7 @@ struct SettingsView: View {
                     .fadeIn(delay: 0.04)
 
                 SettingsGroup(s.settings.privacySection) {
+                    if app.session?.apiToken != nil { PrivacySettingsRows() }
                     if let url = URL(string: Config.privacyURL) {
                         SettingsLinkRow(s.account.policy, external: true) { openURL(url) }
                     }
@@ -564,11 +572,29 @@ struct SettingsView: View {
         } message: {
             Text(s.settings.logoutBody)
         }
+        .navigationDestination(isPresented: $showDevices) { DevicesView() }
+        .modifier(WebSignInHost(scanning: $scanningWebSignIn, working: $webSignInWorking))
         .confirmationDialog(s.settings.clearAllTitle, isPresented: $confirmClearData, titleVisibility: .visible) {
             Button(s.settings.clearAllConfirm, role: .destructive) { app.clearAllData(); dismiss() }
             Button(s.common.cancel, role: .cancel) {}
         } message: {
             Text(s.settings.clearAllBody)
+        }
+    }
+
+    /// A teacher has no POKYH account, so there's nothing to see or delete on the backend.
+    @ViewBuilder private var accountGroup: some View {
+        if app.session != nil, app.backendStatus != .notStudent {
+            SettingsGroup(s.settings.accountSecurity) {
+                if app.session?.apiToken != nil {
+                    SettingsLinkRow(s.settings.devicesTitle, hint: s.settings.devicesHint) { showDevices = true }
+                    SettingsLinkRow(s.settings.webSignIn, hint: s.settings.webSignInHint, action: { scanningWebSignIn = true }) {
+                        if webSignInWorking { ProgressView().controlSize(.small) }
+                    }
+                    .disabled(webSignInWorking)
+                }
+                DeleteAccountRow()
+            }
         }
     }
 
@@ -595,7 +621,7 @@ struct SettingsView: View {
 
 /// Title and hint on the left, the control on the right; the control goes under the text when
 /// the two don't fit side by side, and then both start at the leading edge.
-private struct SettingsRow<Control: View>: View {
+struct SettingsRow<Control: View>: View {
     let title: String
     let hint: String?
     let alert: String?

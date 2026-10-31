@@ -64,13 +64,20 @@ struct ClassregEventsView: View {
 
     private func load() async {
         guard let s = app.session else { return }
-        loading = true; error = nil
+        // No WebUntis: nothing to ask, and no error to show for it.
+        guard s.hasUntis else { events = []; loading = false; return }
+        error = nil
+        // The stored year shows at once, the fresh one replaces it when it lands.
+        let stored = UntisClient.shared.storedClassreg(year: year, s)
+        events = stored ?? []
+        loading = stored == nil
         do {
-            events = try await UntisClient.shared.classregEvents(year: year, s)
+            events = try await UntisClient.shared.classreg(year: year, s)
         } catch let e as AppError where e.message == "session_expired" {
             app.handleSessionExpired()
         } catch {
-            self.error = (error as? AppError)?.message ?? error.localizedDescription
+            // What's on screen stays when there's only a refresh to lose.
+            if stored == nil { self.error = (error as? AppError)?.message ?? error.localizedDescription }
         }
         loading = false
     }
@@ -165,7 +172,7 @@ private struct ClassregStats: View {
                 }
                 .frame(height: 10)
 
-                ClassregFlow(spacing: Spacing.xl, lineSpacing: 6) {
+                WrapLayout(spacing: Spacing.xl, lineSpacing: 6) {
                     ForEach(categories) { c in
                         HStack(spacing: 6) {
                             Circle().fill(c.tone.ink).frame(width: 8, height: 8)
@@ -187,9 +194,6 @@ private struct ClassregList: View {
     let events: [ClassregEvent]
     @Environment(\.strings) private var s
 
-    private enum Range: CaseIterable { case all, month, months3 }
-    private enum Sort: CaseIterable { case dateDesc, dateAsc, subject, category }
-
     private struct EntryGroup: Identifiable {
         let key: String
         let title: String
@@ -197,17 +201,17 @@ private struct ClassregList: View {
         var id: String { key }
     }
 
-    @State private var range: Range = .all
-    @State private var sort: Sort = .dateDesc
+    @State private var range: ClassregRange = .all
+    @State private var sort: ClassregSort = .dateDesc
 
     var body: some View {
         let groups = grouped()
         VStack(alignment: .leading, spacing: Spacing.section) {
             HStack(spacing: Spacing.sm) {
-                PokyhSegmentedControl(Range.allCases, selection: $range) { rangeLabel($0) }
+                PokyhSegmentedControl(ClassregRange.allCases, selection: $range) { rangeLabel($0) }
                 Menu {
                     Picker(s.tasks.sortBy, selection: $sort) {
-                        ForEach(Sort.allCases, id: \.self) { Text(sortLabel($0)).tag($0) }
+                        ForEach(ClassregSort.allCases, id: \.self) { Text(sortLabel($0)).tag($0) }
                     }
                 } label: {
                     HStack(spacing: Spacing.xs) {
@@ -242,42 +246,19 @@ private struct ClassregList: View {
     }
 
     private func grouped() -> [EntryGroup] {
-        let cal = Calendar.current
-        let cutoff: Int = switch range {
-        case .all: 0
-        case .month: DateFmt.num(cal.date(byAdding: .month, value: -1, to: Date()) ?? Date())
-        case .months3: DateFmt.num(cal.date(byAdding: .month, value: -3, to: Date()) ?? Date())
-        }
-        let list = events.filter { $0.createDate >= cutoff }
-            .sorted { sort == .dateAsc ? $0.createDate < $1.createDate : $0.createDate > $1.createDate }
-        var order: [String] = []
-        var byKey: [String: [ClassregEvent]] = [:]
-        for e in list {
-            let key: String = switch sort {
-            case .subject: e.subjectName.isEmpty ? "-" : e.subjectName
-            case .category: e.categoryName.isEmpty ? s.tasks.noCategory : e.categoryName
-            default: String(e.createDate / 100)
-            }
-            if byKey[key] == nil { order.append(key) }
-            byKey[key, default: []].append(e)
-        }
-        if sort == .subject || sort == .category {
-            order.sort { $0.lowercased() < $1.lowercased() }
-        }
-        return order.map { key in
-            let items = byKey[key] ?? []
+        ClassregGrouping.groups(events, range: range, sort: sort, noCategory: s.tasks.noCategory).map { group in
             let title: String
-            if sort == .subject || sort == .category {
-                title = key
+            if sort.groupsByName {
+                title = group.key
             } else {
-                let month = ClassregTone.date(items.first?.createDate ?? 0, "LLLL yyyy", s)
+                let month = ClassregTone.date(group.items.first?.createDate ?? 0, "LLLL yyyy", s)
                 title = month.prefix(1).uppercased() + month.dropFirst()
             }
-            return EntryGroup(key: key, title: title, items: items)
+            return EntryGroup(key: group.key, title: title, items: group.items)
         }
     }
 
-    private func rangeLabel(_ r: Range) -> String {
+    private func rangeLabel(_ r: ClassregRange) -> String {
         switch r {
         case .all: s.tasks.filterAll
         case .month: s.tasks.filter1m
@@ -285,7 +266,7 @@ private struct ClassregList: View {
         }
     }
 
-    private func sortLabel(_ v: Sort) -> String {
+    private func sortLabel(_ v: ClassregSort) -> String {
         switch v {
         case .dateDesc: s.tasks.sortDateDesc
         case .dateAsc: s.tasks.sortDateAsc
@@ -304,6 +285,8 @@ struct ClassregRow: View {
                 .textStyle(.caption)
                 .monospacedDigit()
                 .foregroundStyle(Palette.textTertiary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
                 .frame(width: 52, alignment: .leading)
                 .padding(.top, 2)
             VStack(alignment: .leading, spacing: Spacing.xs) {
@@ -332,16 +315,20 @@ struct ClassregRow: View {
     }
 }
 
-/// Wraps its children onto new lines.
-private struct ClassregFlow: Layout {
+/// Wraps its children onto new lines. A child wider than the line gets the line's width.
+struct WrapLayout: Layout {
     var spacing: CGFloat
     var lineSpacing: CGFloat
+
+    private func size(of view: LayoutSubview, proposal: ProposedViewSize) -> CGSize {
+        view.sizeThatFits(ProposedViewSize(width: proposal.width.map { min($0, view.sizeThatFits(.unspecified).width) }, height: nil))
+    }
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let width = proposal.width ?? .infinity
         var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0, widest: CGFloat = 0
         for view in subviews {
-            let size = view.sizeThatFits(.unspecified)
+            let size = size(of: view, proposal: proposal)
             if x > 0 && x + size.width > width {
                 y += rowHeight + lineSpacing
                 x = 0
@@ -357,7 +344,7 @@ private struct ClassregFlow: Layout {
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
         var x = bounds.minX, y = bounds.minY, rowHeight: CGFloat = 0
         for view in subviews {
-            let size = view.sizeThatFits(.unspecified)
+            let size = size(of: view, proposal: proposal)
             if x > bounds.minX && x + size.width > bounds.maxX {
                 y += rowHeight + lineSpacing
                 x = bounds.minX

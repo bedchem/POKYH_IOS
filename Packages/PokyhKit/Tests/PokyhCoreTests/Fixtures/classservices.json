@@ -1,0 +1,12 @@
+{
+  "data": {
+    "classRoles": [
+      { "id": 1, "personId": 501, "klasse": { "id": 11, "name": "4A" }, "foreName": "Anna", "longName": "Rossi", "duty": { "id": 7, "label": "Klassensprecher" } },
+      { "id": 2, "personId": 501, "klasse": { "id": 11, "name": "4A" }, "foreName": "Anna", "longName": "Rossi", "duty": { "id": 7, "label": "Klassensprecher" } },
+      { "id": 3, "personId": 501, "klasse": { "id": 11, "name": "4A" }, "foreName": "Anna", "longName": "Rossi", "duty": { "id": 8, "label": "Tafeldienst" } },
+      { "id": 4, "personId": 502, "klasse": { "id": 11, "name": "4A" }, "longName": "Bianchi", "duty": { "id": 7, "label": "Klassensprecher" } },
+      { "id": 5, "personId": 600, "klasse": { "id": 22, "name": "1C" }, "foreName": "Marco", "longName": "Verdi", "duty": { "id": 7, "label": "Klassensprecher" } }
+    ],
+    "klasses": [{ "id": 11, "name": "4A" }, { "id": 22, "name": "1C" }]
+  }
+}

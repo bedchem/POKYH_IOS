@@ -1,0 +1,12 @@
+{
+  "departments": [{ "id": 9, "name": "Informatik" }],
+  "preSelected": { "id": 1962, "shortName": "4.BFS-FI", "longName": "4. Fachschule Informatik" },
+  "classes": [
+    { "class": { "id": 1970, "shortName": "10.B", "longName": "" }, "department": { "id": 9, "name": "Informatik" } },
+    { "class": { "id": 1962, "shortName": "4.BFS-FI" } },
+    { "class": { "id": 1963, "shortName": "2.A", "displayName": "Zweite A" } },
+    { "class": { "id": 0, "shortName": "kein" } },
+    { "class": { "id": true, "shortName": "auch nicht" } }
+  ],
+  "periods": [{ "id": 4242, "name": "keine Klasse" }]
+}

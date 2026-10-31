@@ -120,7 +120,8 @@ struct LockView: View {
         guard !app.busy else { return }
         problem = nil
         let ok = await app.unlock(into: username)
-        guard !ok, !app.showAddAccount else { return }
+        // Waiting for the authenticator code isn't a failed attempt.
+        guard !ok, !app.showAddAccount, app.twoFactor == nil else { return }
         // The face was accepted when the login left an error behind.
         if let message = app.error {
             problem = message

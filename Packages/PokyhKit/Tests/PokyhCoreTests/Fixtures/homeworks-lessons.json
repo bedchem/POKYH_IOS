@@ -1,0 +1,22 @@
+{
+  "data": {
+    "records": [
+      { "homeworkId": 1, "teacherId": 9, "elementIds": [500] },
+      { "homeworkId": 2, "teacherId": 9, "elementIds": [11] },
+      { "homeworkId": 3, "teacherId": 9, "elementIds": [777] }
+    ],
+    "homeworks": [
+      { "id": 1, "lessonId": 40, "date": 20261102, "dueDate": 20261105, "text": "<p>Seite 12</p>", "remark": "", "completed": false, "attachments": [] },
+      { "id": 2, "lessonId": 41, "date": 20261102, "dueDate": 20261110, "text": "Aufsatz &amp; Skizze", "completed": false },
+      { "id": 3, "lessonId": 41, "date": 20261102, "dueDate": 20261104, "text": "Vom anderen Kind", "completed": false },
+      { "id": 4, "lessonId": 99, "date": 20261102, "dueDate": 20261103, "text": "Schon erledigt", "completed": true },
+      { "id": 4, "lessonId": 99, "date": 20261102, "dueDate": 20261103, "text": "Doppelt", "completed": true },
+      { "id": 5, "lessonId": 40, "date": 20261102, "text": "Ohne Termin", "completed": false }
+    ],
+    "teachers": [{ "id": 9, "name": "MUE" }],
+    "lessons": [
+      { "id": 40, "subject": "Mathematik (4BFS_M)", "lessonType": "Unterricht" },
+      { "id": 41, "subject": "Deutsch", "lessonType": "Unterricht" }
+    ]
+  }
+}

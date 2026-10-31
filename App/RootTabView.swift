@@ -40,6 +40,8 @@ struct RootTabView: View {
         .tabViewStyle(.sidebarAdaptable)
         .tabBarMinimizeBehavior(.onScrollDown)
         .tint(Palette.accent)
+        .modifier(RecapHost())
+        .modifier(AnnouncementPopupHost())
         .environment(\.strings, s)
         .environment(\.searchInToolbar, !searchIsTab)
         .onChange(of: searchIsTab) { _, isTab in if !isTab { searching = false } }

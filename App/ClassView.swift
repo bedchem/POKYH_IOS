@@ -3,7 +3,8 @@ import PokyhCore
 import PokyhDesign
 
 /// The class page: the join code on top (it's what you open the page to read out), then what's
-/// new in the class register, open absences, the exams of this and next week, the members.
+/// new in the class register, open absences, class duties, the exams and homework of this and next
+/// week, the members. Every section shows even when empty: the empty line is the content.
 struct ClassView: View {
     @EnvironmentObject var app: AppState
     @Environment(\.strings) private var s
@@ -13,10 +14,18 @@ struct ClassView: View {
     @State private var recentEvents: [ClassregEvent] = []
     @State private var openAbsences: [AbsenceEntry] = []
     @State private var exams: [TimetableEntry] = []
+    @State private var services: [ClassService] = []
+    @State private var homework: [HomeworkItem] = []
+    @State private var unknown = Unknown()
     @State private var overviewLoading = true
     @State private var route: Route?
 
     private enum Route: Hashable { case classreg, absences }
+
+    /// Sources that couldn't be read with nothing stored: there an empty list says nothing.
+    private struct Unknown {
+        var events = false, absences = false, services = false, homework = false, thisWeek = false, nextWeek = false
+    }
 
     private var hasBackend: Bool { app.session?.apiToken != nil }
     private var hasUntis: Bool { app.session?.hasUntis ?? false }
@@ -31,11 +40,12 @@ struct ClassView: View {
 
                 if hasUntis {
                     ClassOverviewSection(s.tasks.newClassreg, subtitle: s.tasks.last3Months,
-                                         emptyText: s.tasks.noClassreg3, items: recentEvents,
+                                         emptyText: unknown.events ? s.tasks.offlineNotStored : s.tasks.noClassreg3, items: recentEvents,
                                          loading: overviewLoading, onSeeAll: { route = .classreg }) { ClassregEventRow(event: $0) }
                         .fadeIn()
 
-                    ClassOverviewSection(s.tasks.openAbsences, emptyText: s.tasks.noOpenAbsences,
+                    ClassOverviewSection(s.tasks.openAbsences,
+                                         emptyText: unknown.absences ? s.tasks.offlineNotStored : s.tasks.noOpenAbsences,
                                          items: Array(openAbsences.prefix(6)), loading: overviewLoading,
                                          onSeeAll: { route = .absences }) { OpenAbsenceRow(absence: $0) } footer: {
                         if openAbsences.count > 6 {
@@ -44,10 +54,16 @@ struct ClassView: View {
                     }
                     .fadeIn(delay: 0.04)
 
-                    examsSection.fadeIn(delay: 0.08)
+                    ClassOverviewSection(s.tasks.services,
+                                         emptyText: unknown.services ? s.tasks.offlineNotStored : s.tasks.noServices,
+                                         items: services, loading: overviewLoading) { ClassServiceRow(service: $0) }
+                        .fadeIn(delay: 0.08)
+
+                    examsSection.fadeIn(delay: 0.12)
+                    homeworkSection.fadeIn(delay: 0.16)
                 }
 
-                members.fadeIn(delay: 0.12)
+                members.fadeIn(delay: 0.2)
             }
             .padding(.horizontal, Spacing.screenH)
             .padding(.bottom, Spacing.xxxl)
@@ -65,41 +81,53 @@ struct ClassView: View {
         .refreshable { await load() }
     }
 
-    // ── Exams ────────────────────────────────────────────────────────────────
+    // ── Exams and homework ───────────────────────────────────────────────────
 
     private var examsSection: some View {
-        let monday = Self.monday()
-        let cal = Calendar.current
-        let nextMonday = cal.date(byAdding: .day, value: 7, to: monday) ?? monday
-        let afterNext = cal.date(byAdding: .day, value: 14, to: monday) ?? monday
-        let thisWeek = exams.filter { $0.date >= DateFmt.num(monday) && $0.date < DateFmt.num(nextMonday) }
-        let nextWeek = exams.filter { $0.date >= DateFmt.num(nextMonday) && $0.date < DateFmt.num(afterNext) }
-
-        return VStack(alignment: .leading, spacing: Spacing.headerContent) {
-            SectionHeader(s.tasks.exams)
-            if thisWeek.isEmpty && nextWeek.isEmpty && overviewLoading {
-                ClassLoadingLines()
-            } else if thisWeek.isEmpty && nextWeek.isEmpty {
-                ClassEmptyLine(text: s.tasks.noExamsAhead)
-            } else {
-                weekBlock(s.timetable.thisWeek + " · " + range(monday), empty: s.tasks.noExamsThisWeek, items: thisWeek)
-                if !nextWeek.isEmpty {
-                    weekBlock(s.timetable.nextWeek + " · " + range(nextMonday), empty: s.tasks.noExamsNextWeek, items: nextWeek)
-                        .padding(.top, Spacing.xs)
-                }
-            }
-        }
+        let weeks = Self.weeks()
+        let t = s.tasks
+        return WeekSplitSection(
+            title: t.exams,
+            thisWeek: exams.filter { $0.date >= weeks.this && $0.date < weeks.next },
+            nextWeek: exams.filter { $0.date >= weeks.next && $0.date < weeks.after },
+            thisLabel: weekLabel(s.timetable.thisWeek, Self.monday()),
+            nextLabel: weekLabel(s.timetable.nextWeek, Self.nextMonday()),
+            thisEmpty: unknown.thisWeek ? t.offlineNotStored : t.noExamsThisWeek,
+            nextEmpty: unknown.nextWeek ? t.offlineNotStored : t.noExamsNextWeek,
+            bothEmpty: unknown.thisWeek && unknown.nextWeek ? t.offlineNotStored
+                : unknown.thisWeek || unknown.nextWeek ? t.examsPartly : t.noExamsAhead,
+            loading: overviewLoading
+        ) { ExamRow(exam: $0) }
     }
 
-    private func weekBlock(_ label: String, empty: String, items: [TimetableEntry]) -> some View {
-        VStack(alignment: .leading, spacing: Spacing.sm) {
-            EyebrowLabel(label)
-            if items.isEmpty {
-                ClassEmptyLine(text: empty)
-            } else {
-                ListCard(items) { ExamRow(exam: $0) }
-            }
-        }
+    private var homeworkSection: some View {
+        let weeks = Self.weeks()
+        let t = s.tasks
+        return WeekSplitSection(
+            title: t.homework,
+            thisWeek: HomeworkList.due(homework, from: weeks.this, before: weeks.next),
+            nextWeek: HomeworkList.due(homework, from: weeks.next, before: weeks.after),
+            thisLabel: weekLabel(s.timetable.thisWeek, Self.monday()),
+            nextLabel: weekLabel(s.timetable.nextWeek, Self.nextMonday()),
+            thisEmpty: unknown.homework ? t.offlineNotStored : t.noHomeworkThisWeek,
+            nextEmpty: unknown.homework ? t.offlineNotStored : t.noHomeworkNextWeek,
+            bothEmpty: unknown.homework ? t.offlineNotStored : t.noHomeworkAhead,
+            loading: overviewLoading
+        ) { HomeworkRow(homework: $0) }
+    }
+
+    private func weekLabel(_ name: String, _ monday: Date) -> String { "\(name) · \(range(monday))" }
+
+    private static func nextMonday() -> Date {
+        let monday = monday()
+        return Calendar.current.date(byAdding: .day, value: 7, to: monday) ?? monday
+    }
+
+    /// This Monday, next Monday and the one after, as YYYYMMDD.
+    private static func weeks() -> (this: Int, next: Int, after: Int) {
+        let monday = monday()
+        let after = Calendar.current.date(byAdding: .day, value: 14, to: monday) ?? monday
+        return (DateFmt.num(monday), DateFmt.num(nextMonday()), DateFmt.num(after))
     }
 
     /// "27. Okt. – 31. Okt.", Monday to Friday.
@@ -151,25 +179,98 @@ struct ClassView: View {
         loading = klass == nil
         error = nil
         async let overview: Void = loadOverview(session)
+        let stored = "class-\(session.schoolRef.loginName)-\(session.username.lowercased())"
         if let token = session.apiToken {
-            do { klass = try await BackendClient.shared.myClass(token: token) }
-            catch { self.error = (error as? AppError)?.message ?? error.localizedDescription }
+            do {
+                let fresh = try await BackendClient.shared.myClass(token: token)
+                // nil is both "no class" and a failed request: a dropped connection mustn't erase the copy.
+                if let fresh { DiskCache.save(fresh, key: stored) }
+                klass = fresh
+            } catch {
+                self.error = (error as? AppError)?.message ?? error.localizedDescription
+            }
+        } else if app.isOffline {
+            klass = DiskCache.load(ApiClass.self, key: stored)
         }
         loading = false
         await overview
     }
 
+    /// Each source fails on its own: a locked class register mustn't cost the exam list.
     private func loadOverview(_ session: UserSession) async {
         guard session.hasUntis else { overviewLoading = false; return }
-        overviewLoading = recentEvents.isEmpty && openAbsences.isEmpty && exams.isEmpty
-        async let events = try? UntisClient.shared.classregEvents(year: SchoolDates.currentSchoolYear, session)
-        async let absences = try? UntisClient.shared.absences(startDate: SchoolDates.yearStart(), endDate: SchoolDates.yearEnd(), session)
-        async let upcoming = try? UntisClient.shared.upcomingExams(session)
-        let cutoff = DateFmt.num(Calendar.current.date(byAdding: .month, value: -3, to: Date()) ?? Date())
-        recentEvents = (await events ?? []).filter { $0.createDate >= cutoff }.sorted { $0.createDate > $1.createDate }
-        openAbsences = (await absences ?? []).filter { !$0.isExcused }.sorted { $0.startDate > $1.startDate }
-        exams = await upcoming ?? []
+        overviewLoading = recentEvents.isEmpty && openAbsences.isEmpty && exams.isEmpty && services.isEmpty && homework.isEmpty
+        let year = SchoolDates.currentSchoolYear
+        let client = UntisClient.shared
+        let weeks = Self.weeks()
+        let monday = Self.monday(), nextMonday = Self.nextMonday()
+        let lastDay = DateFmt.num(Calendar.current.date(byAdding: .day, value: 13, to: monday) ?? monday)
+
+        async let events = try? client.classreg(year: year, session)
+        async let absences = try? client.schoolYearAbsences(year: year, session)
+        async let thisWeek = try? client.timetable(date: DateFmt.isoString(monday), session)
+        async let nextWeek = try? client.timetable(date: DateFmt.isoString(nextMonday), session)
+        async let duties = try? client.classServices(session)
+        async let tasks = try? client.homeworks(from: weeks.this, to: lastDay, session)
+
+        let (eventList, absenceList, week, next, dutyList, taskList) = await (events, absences, thisWeek, nextWeek, duties, tasks)
+
+        recentEvents = ClassregGrouping.recent(eventList ?? [])
+        openAbsences = (absenceList ?? []).filter { !$0.isExcused }.sorted { $0.startDate > $1.startDate }
+        var seen = Set<String>()
+        exams = ((week ?? []) + (next ?? []))
+            .filter { $0.isExam && seen.insert("\($0.date)-\($0.startTime)-\($0.subjectName)").inserted }
+            .sorted { $0.date != $1.date ? $0.date < $1.date : $0.startTime < $1.startTime }
+        services = dutyList ?? []
+        homework = HomeworkList.open(taskList ?? [])
+        // The timetable answers an empty list when offline with nothing stored.
+        let offline = session.bearerToken.isEmpty || app.isOffline
+        unknown = Unknown(events: eventList == nil, absences: absenceList == nil, services: dutyList == nil, homework: taskList == nil,
+                          thisWeek: week == nil || (offline && week?.isEmpty == true),
+                          nextWeek: next == nil || (offline && next?.isEmpty == true))
         overviewLoading = false
+    }
+}
+
+/// A section split into this and next week. Both empty, it collapses to one line: two labels over
+/// two "nothing here" rows is four lines to say one thing. Nothing next week, no block for it.
+private struct WeekSplitSection<Item: Identifiable, Row: View>: View {
+    let title: String
+    let thisWeek: [Item]
+    let nextWeek: [Item]
+    let thisLabel: String
+    let nextLabel: String
+    let thisEmpty: String
+    let nextEmpty: String
+    let bothEmpty: String
+    let loading: Bool
+    @ViewBuilder let row: (Item) -> Row
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Spacing.headerContent) {
+            SectionHeader(title)
+            if thisWeek.isEmpty && nextWeek.isEmpty && loading {
+                ClassLoadingLines()
+            } else if thisWeek.isEmpty && nextWeek.isEmpty {
+                ClassEmptyLine(text: bothEmpty)
+            } else {
+                block(thisLabel, empty: thisEmpty, items: thisWeek)
+                if !nextWeek.isEmpty {
+                    block(nextLabel, empty: nextEmpty, items: nextWeek).padding(.top, Spacing.xs)
+                }
+            }
+        }
+    }
+
+    private func block(_ label: String, empty: String, items: [Item]) -> some View {
+        VStack(alignment: .leading, spacing: Spacing.sm) {
+            EyebrowLabel(label)
+            if items.isEmpty {
+                ClassEmptyLine(text: empty)
+            } else {
+                ListCard(items, row: row)
+            }
+        }
     }
 }
 
@@ -353,19 +454,9 @@ private struct ExamRow: View {
     @Environment(\.strings) private var s
 
     var body: some View {
-        let weekday = Self.weekday(exam.date)
         let room = exam.roomName.isEmpty ? "" : " · \(exam.roomName)"
         HStack(alignment: .top, spacing: Spacing.md) {
-            VStack(spacing: 0) {
-                Text(s.common.weekdaysShort.indices.contains(weekday) ? s.common.weekdaysShort[weekday] : "")
-                    .textStyle(.caption)
-                    .foregroundStyle(Palette.textTertiary)
-                Text("\(exam.date % 100).")
-                    .textStyle(.headline)
-                    .monospacedDigit()
-                    .foregroundStyle(Palette.textPrimary)
-            }
-            .frame(width: 36)
+            WeekdayColumn(date: exam.date)
             VStack(alignment: .leading, spacing: 2) {
                 Text(exam.subjectLong.isEmpty ? (exam.subjectName.isEmpty ? s.tasks.exam : exam.subjectName) : exam.subjectLong)
                     .textStyle(.headline)
@@ -383,6 +474,26 @@ private struct ExamRow: View {
         }
         .padding(Spacing.card)
     }
+}
+
+/// The weekday over the day of the month, leading an exam or a homework.
+private struct WeekdayColumn: View {
+    let date: Int
+    @Environment(\.strings) private var s
+
+    var body: some View {
+        let weekday = Self.weekday(date)
+        VStack(spacing: 0) {
+            Text(s.common.weekdaysShort.indices.contains(weekday) ? s.common.weekdaysShort[weekday] : "")
+                .textStyle(.caption)
+                .foregroundStyle(Palette.textTertiary)
+            Text("\(date % 100).")
+                .textStyle(.headline)
+                .monospacedDigit()
+                .foregroundStyle(Palette.textPrimary)
+        }
+        .frame(width: 36)
+    }
 
     /// 0 = Monday.
     private static func weekday(_ n: Int) -> Int {
@@ -390,6 +501,59 @@ private struct ExamRow: View {
         c.year = n / 10000; c.month = n / 100 % 100; c.day = n % 100
         guard let date = Calendar.current.date(from: c) else { return 0 }
         return (Calendar.current.component(.weekday, from: date) + 5) % 7
+    }
+}
+
+/// Who holds which class duty, with the person's initials.
+private struct ClassServiceRow: View {
+    let service: ClassService
+
+    var body: some View {
+        HStack(spacing: Spacing.md) {
+            InitialAvatar(name: service.personName.isEmpty ? service.duty : service.personName, size: 38,
+                          colorSeed: service.personName.isEmpty ? service.duty : service.personName)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(service.personName.isEmpty ? "–" : service.personName)
+                    .textStyle(.headline)
+                    .foregroundStyle(Palette.textPrimary)
+                    .lineLimit(1)
+                if !service.duty.isEmpty {
+                    Text(service.duty)
+                        .textStyle(.footnote)
+                        .foregroundStyle(Palette.textSecondary)
+                        .lineLimit(1)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(Spacing.card)
+    }
+}
+
+/// The due day on the left like an exam, the subject and the task beside it.
+private struct HomeworkRow: View {
+    let homework: HomeworkItem
+    @Environment(\.strings) private var s
+
+    var body: some View {
+        HStack(alignment: .top, spacing: Spacing.md) {
+            WeekdayColumn(date: homework.dueDate)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(homework.subject.isEmpty ? s.tasks.homeworkOne : homework.subject)
+                    .textStyle(.headline)
+                    .foregroundStyle(Palette.textPrimary)
+                    .lineLimit(1)
+                if !homework.text.isEmpty {
+                    Text(homework.text)
+                        .textStyle(.footnote)
+                        .foregroundStyle(Palette.textSecondary)
+                        .textSelection(.enabled)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            TagChip(s.tasks.due, color: Brand.success)
+        }
+        .padding(Spacing.card)
     }
 }
 
@@ -453,3 +617,18 @@ private struct MemberRow: View {
         }
     }
 }
+
+#if DEBUG
+#Preview("Duties and homework") {
+    ScrollView {
+        VStack(spacing: Spacing.md) {
+            ListCard([ClassService(id: 1, personName: "Anna Rossi", duty: "Klassensprecher"),
+                      ClassService(id: 2, personName: "", duty: "Tafeldienst")]) { ClassServiceRow(service: $0) }
+            ListCard([HomeworkItem(id: 1, subject: "Mathematik", dueDate: 20261105, text: "Seite 12, Aufgabe 3"),
+                      HomeworkItem(id: 2, subject: "", dueDate: 20261110, text: "")]) { HomeworkRow(homework: $0) }
+        }
+        .padding(Spacing.screenH)
+    }
+    .background(Palette.bg)
+}
+#endif

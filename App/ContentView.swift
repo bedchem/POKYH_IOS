@@ -71,6 +71,10 @@ struct ContentView: View {
         .onChange(of: app.privacyCover) { _, covered in
             if covered { PrivacyShield.show() } else { PrivacyShield.hide() }
         }
+        // Over everything, sheets included: the code can be asked for from any of them.
+        .onChange(of: app.twoFactor != nil) { _, asking in
+            if asking { TwoFactorPresenter.show(app) } else { TwoFactorPresenter.hide() }
+        }
     }
 
     /// Fade in, switch the scheme underneath, fade out.

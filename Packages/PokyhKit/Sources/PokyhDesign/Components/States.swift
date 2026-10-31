@@ -28,7 +28,7 @@ public struct StateView<Art: View, Actions: View>: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            art.padding(.bottom, Spacing.lg)
+            art.padding(.bottom, compact ? Spacing.lg : Spacing.xl)
             Text(title)
                 .textStyle((compact ? TextStyle.callout : .headline).weight(.semibold))
                 .foregroundStyle(Palette.textPrimary)
@@ -48,13 +48,49 @@ public struct StateView<Art: View, Actions: View>: View {
                     .padding(.top, 6)
                     .selectableText()
             }
-            actions.padding(.top, Spacing.lg)
+            actions.padding(.top, Spacing.xl)
         }
         .multilineTextAlignment(.center)
         .padding(.horizontal, Spacing.lg)
         .padding(.vertical, compact ? Spacing.xl : Spacing.huge)
         .frame(maxWidth: .infinity)
     }
+}
+
+extension StateView where Art == PixelSpriteArt {
+    /// The usual state: a pixel scene, smaller when compact.
+    public init(
+        _ title: String,
+        message: String? = nil,
+        detail: String? = nil,
+        compact: Bool = false,
+        sprite: PixelSprite,
+        @ViewBuilder actions: () -> Actions = { EmptyView() }
+    ) {
+        self.init(title, message: message, detail: detail, compact: compact, art: {
+            PixelSpriteArt(sprite, width: compact ? 120 : 160)
+        }, actions: actions)
+    }
+}
+
+/// What kind of failure a message describes, the way the web's ErrorView reads it.
+public enum FailureKind: Sendable {
+    case session, offline, generic
+
+    public init(message: String) {
+        let m = message.lowercased()
+        let session = ["session", "sitzung", "sessione", "login", "auth", "unauthorized", "angemeldet", "anmelden", "accedi", "sign in"]
+        let offline = ["network", "netzwerk", "fetch", "offline", "verbindung", "connessione", "connection", "timeout", "econnrefused", "internet"]
+        if session.contains(where: m.contains) {
+            self = .session
+        } else if offline.contains(where: m.contains) {
+            self = .offline
+        } else {
+            self = .generic
+        }
+    }
+
+    public var sprite: PixelSprite { self == .session ? .lock : .unplugged }
 }
 
 public struct ErrorStateView: View {
@@ -68,10 +104,7 @@ public struct ErrorStateView: View {
     }
 
     public var body: some View {
-        StateView(s.states.failedTitle, message: message) {
-            // TODO: the pixel scene from Android's PixelStates once ui/pixel is ported.
-            IconTile("wifi.exclamationmark", color: Brand.warning, size: 64)
-        } actions: {
+        StateView(s.states.failedTitle, message: message, sprite: FailureKind(message: message).sprite) {
             if let retry {
                 Button(s.common.retry, action: retry).buttonStyle(.secondary(compact: true))
             }
@@ -113,6 +146,28 @@ public struct InlineNotice: View {
     public var body: some View {
         HStack(spacing: Spacing.md) {
             IconTile(symbol, color: tint, size: 38)
+            Text(text)
+                .textStyle(.callout)
+                .foregroundStyle(Palette.textSecondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+/// The same with a pixel scene beside it: for a block with nothing to show, so an empty block
+/// still looks like POKYH.
+public struct PixelNotice: View {
+    let sprite: PixelSprite
+    let text: String
+
+    public init(_ sprite: PixelSprite, text: String) {
+        self.sprite = sprite
+        self.text = text
+    }
+
+    public var body: some View {
+        HStack(spacing: Spacing.md) {
+            PixelSpriteArt(sprite, width: 72)
             Text(text)
                 .textStyle(.callout)
                 .foregroundStyle(Palette.textSecondary)

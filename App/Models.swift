@@ -81,6 +81,15 @@ struct TimetableEntry: Identifiable, Equatable, Codable {
     var originalRoom: String?
     var note: String?
     var examDescription: String?
+    // What changed on this occurrence and what's noted on it. Optional: copies on disk from
+    // older builds have none of these and still have to decode.
+    var addedTeachers: [String]? = nil
+    var addedSubjects: [String]? = nil
+    var addedRooms: [String]? = nil
+    var icons: [String]? = nil
+    var substitutionText: String? = nil
+    var lessonText: String? = nil
+    var texts: [PeriodText]? = nil
 }
 
 // ── Noten ──────────────────────────────────────────────────────────────────
@@ -108,7 +117,7 @@ struct SubjectGrades: Identifiable, Equatable, Codable {
 
 // ── Abwesenheiten ──────────────────────────────────────────────────────────
 
-struct AbsenceEntry: Identifiable, Equatable {
+struct AbsenceEntry: Identifiable, Equatable, Codable, AbsenceSpan {
     var id: Int
     var startDate: Int
     var endDate: Int
@@ -165,62 +174,6 @@ struct SchoolYear: Identifiable, Codable, Equatable {
     var name: String
     var startDate: Int   // YYYYMMDD
     var endDate: Int     // YYYYMMDD
-}
-
-/// One of the school's breaks: days as YYYY-MM-DD, with the real names WebUntis has for it.
-struct SchoolHoliday: Codable, Equatable {
-    var start: String
-    var end: String
-    var names: [String] = []
-}
-
-/// getHolidays into the school's breaks. Naming one without a real name ("Ferien3") is the
-/// timetable's `SchoolHolidays.key`.
-enum HolidayList {
-    // "Ferien3", "Feiertag", "8.12.", "25/5/2026": a placeholder, not a name.
-    private static func isPlaceholder(_ name: String) -> Bool {
-        let n = name.trimmingCharacters(in: .whitespaces)
-        return n.isEmpty
-            || n.range(of: #"^(ferien|feiertag|holiday|vacanz[ae]|frei)\s*\d*$"#, options: [.regularExpression, .caseInsensitive]) != nil
-            || n.range(of: #"^[\d./\s-]+$"#, options: .regularExpression) != nil
-    }
-
-    private static func ymd(_ n: Int?) -> String? {
-        guard let n, n >= 10_000_000, n <= 99_999_999 else { return nil }
-        return String(format: "%04d-%02d-%02d", n / 10000, (n / 100) % 100, n % 100)
-    }
-
-    /// getHolidays' result into the breaks from `from` (YYYY-MM-DD) on, overlapping and
-    /// adjoining ones merged.
-    static func read(_ result: JSON, from: String) -> [SchoolHoliday] {
-        let entries = result.array.compactMap { r -> SchoolHoliday? in
-            guard let start = ymd(r.startDate.int), let end = ymd(r.endDate.int), end >= start else { return nil }
-            var names: [String] = []
-            for n in [r.longName.string, r.name.string].compactMap({ $0?.trimmingCharacters(in: .whitespaces) })
-            where !isPlaceholder(n) && !names.contains(n) { names.append(n) }
-            return SchoolHoliday(start: start, end: end, names: names)
-        }
-        .filter { $0.end >= from }
-        .sorted { $0.start != $1.start ? $0.start < $1.start : $0.end < $1.end }
-        var merged: [SchoolHoliday] = []
-        for h in entries {
-            if var last = merged.last, let lastEnd = DateFmt.iso.date(from: last.end),
-               let next = Calendar.current.date(byAdding: .day, value: 1, to: lastEnd), h.start <= DateFmt.isoString(next) {
-                last.end = max(last.end, h.end)
-                for n in h.names where !last.names.contains(n) { last.names.append(n) }
-                merged[merged.count - 1] = last
-            } else {
-                merged.append(h)
-            }
-        }
-        return merged
-    }
-
-    /// The break a YYYYMMDD day falls in, if any.
-    static func on(_ dayNum: Int, in holidays: [SchoolHoliday]) -> SchoolHoliday? {
-        guard let iso = ymd(dayNum) else { return nil }
-        return holidays.first { $0.start <= iso && iso <= $0.end }
-    }
 }
 
 // ── Nachrichten ────────────────────────────────────────────────────────────
@@ -352,7 +305,7 @@ struct DishRatingsData: Equatable {
 
 // ── Klassenbuch ────────────────────────────────────────────────────────────
 
-struct ClassregEvent: Identifiable, Equatable {
+struct ClassregEvent: Identifiable, Equatable, Codable, ClassregRecord {
     var id: Int
     var subjectName: String
     var creatorName: String

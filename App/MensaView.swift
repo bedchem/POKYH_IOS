@@ -75,7 +75,7 @@ struct MensaView: View {
                 ErrorStateView(message: error) { Task { await load(force: true) } }
             } else if days.isEmpty {
                 ScrollView {
-                    EmptyStateView(systemImage: "fork.knife", title: s.mensa.emptyTitle, subtitle: s.mensa.emptySubtitle)
+                    EmptyStateView(sprite: .empty, title: s.mensa.emptyTitle, subtitle: s.mensa.emptySubtitle)
                         .padding(.top, Spacing.huge)
                 }
             } else {
@@ -383,137 +383,34 @@ private struct MensaLoading: View {
 
 // ── Plate ────────────────────────────────────────────────────────────────────
 
-/// A dish on a glazed plate, lit from the top left, the photo lying in the well. Without a photo
-/// a small glyph of the kind of meal stands in. `.table` adds fork and knife for the next dish.
+/// A dish on its pixel plate, the photo lying in the well or else a small pixel meal. No dish is
+/// the empty plate, the table laid while the menu loads. `.table` adds fork and knife.
 struct DishPlate: View {
     enum Size { case table, plate }
 
     let dish: Dish?
     var size: Size = .plate
 
+    private var plate: PixelPlate {
+        PixelPlate(
+            style: dish.map { FoodStyle.of(category: $0.category, tags: $0.tags) } ?? .pasta,
+            seed: dish?.id ?? "loading",
+            size: size == .table ? .table : .plate,
+            photo: dish?.imageUrl.flatMap { URL(string: $0) },
+            empty: dish == nil
+        )
+    }
+
     var body: some View {
         switch size {
         case .plate:
-            Color.clear
-                .aspectRatio(1, contentMode: .fit)
-                .overlay { PlateDisc(dish: dish) }
+            plate
         case .table:
-            Color.clear
-                .aspectRatio(112.0 / 64.0, contentMode: .fit)
+            plate
                 .frame(maxWidth: .infinity)
-                .overlay {
-                    GeometryReader { geo in
-                        let d = geo.size.height * 0.89
-                        HStack(spacing: d * 0.16) {
-                            ForkShape(height: d * 0.92)
-                            PlateDisc(dish: dish).frame(width: d, height: d)
-                            KnifeShape(height: d * 0.92)
-                        }
-                        .frame(width: geo.size.width, height: geo.size.height)
-                    }
-                }
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(dish?.name ?? "")
         }
-    }
-}
-
-private struct PlateDisc: View {
-    let dish: Dish?
-
-    private static let rim = Color(light: 0xFFFFFF, dark: 0x3A3A41)
-    private static let rimShade = Color(light: 0xE6E1D8, dark: 0x2A2A30)
-    private static let well = Color(light: 0xF4F1EB, dark: 0x303036)
-
-    var body: some View {
-        GeometryReader { geo in
-            let d = min(geo.size.width, geo.size.height)
-            ZStack {
-                Circle()
-                    .fill(LinearGradient(colors: [Self.rim, Self.rimShade], startPoint: .topLeading, endPoint: .bottomTrailing))
-                    .shadow(color: .black.opacity(0.16), radius: d * 0.04, x: d * 0.03, y: d * 0.06)
-                Circle()
-                    .fill(Self.well)
-                    .frame(width: d * 0.80, height: d * 0.80)
-                    .overlay(Circle().strokeBorder(Self.rimShade.opacity(0.7), lineWidth: max(0.5, d * 0.012)))
-                food
-                    .frame(width: d * 0.68, height: d * 0.68)
-                    .clipShape(.circle)
-            }
-            .frame(width: d, height: d)
-            .frame(width: geo.size.width, height: geo.size.height)
-        }
-    }
-
-    @ViewBuilder private var food: some View {
-        if let dish, let raw = dish.imageUrl, let url = URL(string: raw) {
-            AsyncImage(url: url, transaction: Transaction(animation: .easeIn(duration: 0.25))) { phase in
-                if let image = phase.image {
-                    image.resizable().scaledToFill()
-                } else {
-                    stand(in: dish)
-                }
-            }
-        } else if let dish {
-            stand(in: dish)
-        } else {
-            Self.well
-        }
-    }
-
-    /// The kind of meal when there's no photo (the web's `foodStyleOf`).
-    private func stand(in dish: Dish) -> some View {
-        let text = "\(dish.category) \(dish.tags.joined(separator: " "))".lowercased()
-        let style: (symbol: String, tone: Tone)
-        if text.contains("salat") || text.contains("vegan") || text.contains("vegetar") {
-            style = ("leaf.fill", Decorative.sage)
-        } else if text.contains("suppe") || text.contains("pasta") || text.contains("nudel") {
-            style = ("frying.pan.fill", Decorative.butter)
-        } else if text.contains("fisch") {
-            style = ("fish.fill", Decorative.periwinkle)
-        } else {
-            style = ("fork.knife", Decorative.blush)
-        }
-        return GeometryReader { geo in
-            Image(systemName: style.symbol)
-                .font(.system(size: geo.size.width * 0.42, weight: .semibold))
-                .foregroundStyle(style.tone.ink)
-                .frame(width: geo.size.width, height: geo.size.height)
-                .background(style.tone.fill)
-        }
-    }
-}
-
-private struct ForkShape: View {
-    let height: CGFloat
-    var body: some View {
-        let w = height * 0.16
-        VStack(spacing: 0) {
-            HStack(spacing: w * 0.18) {
-                ForEach(0..<3, id: \.self) { _ in
-                    Capsule().frame(width: w * 0.2, height: height * 0.26)
-                }
-            }
-            UnevenRoundedRectangle(bottomLeadingRadius: w * 0.5, bottomTrailingRadius: w * 0.5)
-                .frame(width: w, height: height * 0.12)
-            Capsule().frame(width: w * 0.42, height: height * 0.62)
-        }
-        .foregroundStyle(Palette.textTertiary.opacity(0.45))
-        .accessibilityHidden(true)
-    }
-}
-
-private struct KnifeShape: View {
-    let height: CGFloat
-    var body: some View {
-        let w = height * 0.14
-        VStack(spacing: 0) {
-            UnevenRoundedRectangle(topLeadingRadius: w * 0.2, topTrailingRadius: w)
-                .frame(width: w, height: height * 0.44)
-            Capsule().frame(width: w * 0.62, height: height * 0.56)
-        }
-        .foregroundStyle(Palette.textTertiary.opacity(0.45))
-        .accessibilityHidden(true)
     }
 }
 

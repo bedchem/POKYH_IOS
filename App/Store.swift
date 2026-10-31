@@ -69,6 +69,9 @@ final class AppState: ObservableObject {
     @Published var error: String?
     @Published var showAddAccount = false
     @Published var prefillUsername: String?   // vorausgefüllter Benutzername bei Passwort-Neueingabe
+    /// A sign-in waiting for the authenticator app's code, from any path: the sign-in screen, an
+    /// unlock, a relaunch. An account like that can't sign itself in.
+    @Published private(set) var twoFactor: TwoFactorRequest?
     @Published var selectedTab: AppTab = .home {
         didSet { if selectedTab != oldValue { UsageReporter.shared.noteScreen() } }
     }
@@ -96,6 +99,8 @@ final class AppState: ObservableObject {
     private var autoUnlockArmed = true
     /// Goes up with every lock, so a sign-in still running from before can't open the app again.
     private var lockEpoch = 0
+    /// While the account is being deleted a token renewal would create it anew, empty.
+    private var deletingAccount = false
 
     init() {
         accounts = store.accounts
@@ -154,7 +159,8 @@ final class AppState: ObservableObject {
         UnlockSession.begin(ctx)
         store.lastActive = target
         await loginSaved(username: target, context: ctx)
-        if session == nil { UnlockSession.end() }
+        // Waiting for the code still counts as this unlock.
+        if session == nil, twoFactor == nil { UnlockSession.end() }
         return session != nil
     }
 
@@ -205,6 +211,36 @@ final class AppState: ObservableObject {
         loginSchool = nil
     }
 
+    // ── Two-factor sign-in ───────────────────────────────────────────────────
+
+    /// Signs in again with the code. The prompt stays up until there's an answer.
+    func submitTwoFactorCode(_ code: String) async {
+        guard var request = twoFactor, !request.checking, TwoFactorCode.isComplete(code) else { return }
+        request.checking = true
+        request.wrongCode = false
+        request.problem = nil
+        twoFactor = request
+        // The person is right here typing, so this counts as signing in, not as the app renewing.
+        loginSchool = (request.username.trimmingCharacters(in: .whitespaces).lowercased(), request.school)
+        await performLogin(username: request.username, password: request.password, save: request.save,
+                           fresh: true, token: TwoFactorCode.digits(code))
+        loginSchool = nil
+    }
+
+    func cancelTwoFactor() {
+        guard twoFactor?.checking != true else { return }
+        twoFactor = nil
+        busy = false; statusText = ""
+        if session == nil { UnlockSession.end() }
+    }
+
+    /// True when `error` was WebUntis asking for the code; the prompt then takes over from the error.
+    private func askForCode(_ error: Error, username: String, password: String, save: Bool, school: School) -> Bool {
+        guard let asked = error as? TwoFactorRequired else { return false }
+        twoFactor = TwoFactorRequest(username: username, password: password, save: save, school: school, wrongCode: asked.wrongCode)
+        return true
+    }
+
     /// Called when messages were opened or marked read, so the badge drops at once.
     func messageWasRead(count: Int = 1) {
         unreadMessages = max(0, unreadMessages - count)
@@ -218,7 +254,8 @@ final class AppState: ObservableObject {
     private enum RaceResult: Sendable { case finished, timedOut }
 
     /// `fresh`: Zugangsdaten gerade eingegeben, nicht aus dem Schlüsselbund (erste Anmeldung).
-    private func performLogin(username: String, password: String, save: Bool, allowOffline: Bool = false, fresh: Bool = false) async {
+    /// `token`: the authenticator app's code, for an account with two-factor sign-in.
+    private func performLogin(username: String, password: String, save: Bool, allowOffline: Bool = false, fresh: Bool = false, token: String? = nil) async {
         // Wurde der Login aus dem „Konto hinzufügen“/„Passwort nötig“-Sheet gestartet?
         // (Dann müssen wir den Sheet-Wechsel sorgfältig sequenzieren – siehe finalize.)
         let viaSheet = showAddAccount
@@ -229,7 +266,7 @@ final class AppState: ObservableObject {
         // Offline-Fallback nur für wiederkehrende Konten mit vorhandenem Cache.
         let snap: UserSession? = allowOffline ? Self.offlineCandidate(username: username) : nil
         let school = school(for: username)
-        let loginTask = Task { try await self.buildSession(username: username, password: password, school: school, renewal: !fresh) }
+        let loginTask = Task { try await self.buildSession(username: username, password: password, school: school, renewal: !fresh, token: token) }
 
         // Ohne Offline-Option: normal auf das Ergebnis warten. Mit Option: 5-s-Rennen.
         let outcome: LoginOutcome
@@ -252,6 +289,7 @@ final class AppState: ObservableObject {
 
         switch outcome {
         case .done(let s):
+            twoFactor = nil
             await finalize(s, save: save, password: password, viaSheet: viaSheet, fresh: fresh, epoch: epoch)
             busy = false; statusText = ""
         case .timedOut:
@@ -260,13 +298,24 @@ final class AppState: ObservableObject {
             guard let snap else { busy = false; statusText = ""; return }
             await enterOffline(snap, viaSheet: viaSheet, epoch: epoch)
             Task { [weak self] in
-                if let s = try? await loginTask.value {
+                do {
+                    let s = try await loginTask.value
                     await self?.upgradeFromBackground(s, save: save, password: password, epoch: epoch)
+                } catch {
+                    // The connection came back and WebUntis wants the code after all.
+                    guard let self, epoch == self.lockEpoch else { return }
+                    _ = self.askForCode(error, username: username, password: password, save: save, school: school)
                 }
             }
         case .failed(let e):
+            if askForCode(e, username: username, password: password, save: save, school: school) {
+                // The prompt takes over.
+            } else if token != nil {
+                // Asked from the prompt, so it's the one to say so; the screen under it can't be seen.
+                twoFactor?.checking = false
+                twoFactor?.problem = (e as? AppError)?.message ?? Strings.current.errors.noConnection
             // Schneller Netzwerkfehler (z. B. Flugmodus) + Cache → ebenfalls offline.
-            if let snap, e is URLError {
+            } else if let snap, e is URLError {
                 await enterOffline(snap, viaSheet: viaSheet, epoch: epoch)
             } else {
                 self.error = (e as? AppError)?.message ?? e.localizedDescription
@@ -277,15 +326,16 @@ final class AppState: ObservableObject {
 
     /// Eigentlicher Netzwerk-Login: WebUntis → Fallback POKYH-Backend → Backend-Konto
     /// beziehen. Baut die fertige Sitzung inkl. Tokens und setzt `backendStatus`.
-    private func buildSession(username: String, password: String, school: School, renewal: Bool) async throws -> UserSession {
+    private func buildSession(username: String, password: String, school: School, renewal: Bool, token: String? = nil) async throws -> UserSession {
         var s: UserSession
         var backendOnly = false
         let withKey = AppKey.isKey(password)
         do {
-            s = try await UntisClient.shared.login(username: username, password: password, school: school)
+            s = try await UntisClient.shared.login(username: username, password: password, token: token, school: school)
         } catch let untisError {
-            // An app key is never a POKYH password.
-            if withKey { throw untisError }
+            // An app key is never a POKYH password. And WebUntis asking for the code means the
+            // password was right, so this is no POKYH-only account either.
+            if withKey || token != nil || untisError is TwoFactorRequired { throw untisError }
             // Kein (funktionierendes) WebUntis-Konto? → direkter POKYH-Backend-Login
             // als Fallback (gleiche Zugangsdaten). Das Backend kennt reine POKYH-Konten.
             do {
@@ -584,6 +634,38 @@ final class AppState: ObservableObject {
         lock(deliberate: true)
     }
 
+    enum AccountDeletion: Equatable {
+        case deleted
+        /// The backend doesn't know the route yet.
+        case notAvailable
+        case failed(String)
+    }
+
+    /// Deletes the POKYH account for good, then forgets it on this device like signing out.
+    func deleteAccount() async -> AccountDeletion {
+        let t = Strings.current
+        guard !isOffline, let s = session, let stale = s.apiToken else { return .failed(t.common.noConnection) }
+        // A token that ran out is renewed now, not halfway through: once the backend has revoked
+        // it, requests failing at that moment would renew themselves and create the account anew.
+        _ = try? await BackendClient.shared.me(token: stale)
+        guard let current = session, isActive(s.username), let token = current.apiToken else { return .failed(t.common.sessionExpired) }
+        deletingAccount = true
+        defer { deletingAccount = false }
+        do {
+            try await BackendClient.shared.deleteAccount(token: token)
+        } catch let error as AppError {
+            switch error.status {
+            case 404: return .notAvailable
+            case 401: return .failed(t.common.sessionExpired)
+            default: return .failed(error.message)
+            }
+        } catch {
+            return .failed(t.common.noConnection)
+        }
+        removeAccount(username: s.username)
+        return .deleted
+    }
+
     private func isActive(_ username: String) -> Bool {
         guard let active = session?.username else { return false }
         return AccountRoster.same(active, username)
@@ -593,6 +675,7 @@ final class AppState: ObservableObject {
     /// session, so the passwords need Face ID again.
     private func lock(deliberate: Bool) {
         lockEpoch += 1
+        twoFactor = nil
         UnlockSession.end()
         autoUnlockArmed = !deliberate
         busy = false; statusText = ""
@@ -608,6 +691,7 @@ final class AppState: ObservableObject {
     func clearAllData() {
         WatchSync.signedOut()
         lockEpoch += 1
+        twoFactor = nil
         UnlockSession.end()
         // 1. In-Memory-Caches
         UntisClient.shared.clearCaches()
@@ -653,7 +737,7 @@ final class AppState: ObservableObject {
     /// The POKYH access token lasts an hour. After a 401 the app signs in to the backend again,
     /// the way Android does. Requests failing together share one renewal.
     func renewBackendToken(expired: String) async -> String? {
-        guard let s = session else { return nil }
+        guard !deletingAccount, let s = session else { return nil }
         if let current = s.apiToken, current != expired { return current }
         if let running = tokenRenewal { return await running.value?.token }
         let task = Task { await self.freshBackendTokens(for: s) }

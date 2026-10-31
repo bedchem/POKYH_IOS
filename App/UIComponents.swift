@@ -111,16 +111,7 @@ struct ErrorStateView: View {
     var retry: (() -> Void)?
     @Environment(\.strings) private var s
 
-    private enum Kind { case session, offline, generic }
-
-    private var kind: Kind {
-        let m = message.lowercased()
-        let session = ["session", "sitzung", "login", "auth", "unauthorized", "angemeldet", "anmelden", "sign in"]
-        let offline = ["network", "netzwerk", "fetch", "offline", "verbindung", "connection", "timeout", "internet"]
-        if session.contains(where: { m.contains($0) }) { return .session }
-        if offline.contains(where: { m.contains($0) }) { return .offline }
-        return .generic
-    }
+    private var kind: FailureKind { FailureKind(message: message) }
 
     private var title: String {
         switch kind {
@@ -138,14 +129,6 @@ struct ErrorStateView: View {
         }
     }
 
-    private var symbol: String {
-        switch kind {
-        case .session: "lock"
-        case .offline: "wifi.slash"
-        case .generic: "exclamationmark.triangle"
-        }
-    }
-
     /// The raw reason, without addresses and kept short.
     private var reason: String? {
         let cleaned = message
@@ -156,9 +139,7 @@ struct ErrorStateView: View {
     }
 
     var body: some View {
-        StateView(title, message: note, detail: reason) {
-            IconTile(symbol, color: kind == .session ? Palette.accent : Palette.orange, size: 64)
-        } actions: {
+        StateView(title, message: note, detail: reason, sprite: kind.sprite) {
             if let retry {
                 Button(action: retry) {
                     ButtonLabel(s.common.retry, symbol: "arrow.clockwise")
@@ -173,16 +154,31 @@ struct ErrorStateView: View {
 
 /// Nothing to show, and that's fine.
 struct EmptyStateView: View {
-    let systemImage: String
+    let sprite: PixelSprite
     let title: String
     var subtitle: String?
+
+    init(sprite: PixelSprite = .empty, title: String, subtitle: String? = nil) {
+        self.sprite = sprite
+        self.title = title
+        self.subtitle = subtitle
+    }
+
+    /// For callers that still name a symbol: the scene that says the same thing.
+    init(systemImage: String, title: String, subtitle: String? = nil) {
+        let sprite: PixelSprite = switch systemImage {
+        case "magnifyingglass": .search
+        case "tray", "envelope": .mail
+        case "bell": .bell
+        default: .empty
+        }
+        self.init(sprite: sprite, title: title, subtitle: subtitle)
+    }
+
     var body: some View {
-        // Labelled: a lone trailing closure would land in `actions`, under the text.
-        StateView(title, message: subtitle, art: {
-            IconTile(systemImage, color: Palette.accent, size: 64)
-        })
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .fadeIn()
+        StateView(title, message: subtitle, sprite: sprite)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .fadeIn()
     }
 }
 
@@ -194,9 +190,7 @@ struct BackendUnavailableView: View {
     let feature: String
 
     var body: some View {
-        StateView(title, message: message) {
-            IconTile(icon, color: tint, size: 64)
-        } actions: {
+        StateView(title, message: message, sprite: sprite) {
             if case .noClass = app.backendStatus {
                 Text(s.states.openAccount)
                     .textStyle(.caption)
@@ -210,17 +204,12 @@ struct BackendUnavailableView: View {
         .fadeIn()
     }
 
-    private var icon: String {
+    private var sprite: PixelSprite {
         switch app.backendStatus {
-        case .notStudent: return "person.fill.xmark"
-        case .noClass:    return "magnifyingglass"
-        case .failed:     return "wifi.slash"
-        default:          return "lock"
+        case .failed: .unplugged
+        case .noClass: .search
+        default: .lock
         }
-    }
-    private var tint: Color {
-        if case .failed = app.backendStatus { return Palette.danger }
-        return Palette.orange
     }
     private var title: String {
         switch app.backendStatus {

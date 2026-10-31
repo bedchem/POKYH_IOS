@@ -102,6 +102,7 @@ targets:
         NSSupportsLiveActivities: true
         NSFaceIDUsageDescription: POKYH nutzt Face ID, damit nur du deine Daten siehst.
         NSCameraUsageDescription: POKYH braucht die Kamera, um den QR-Code zur Anmeldung am Computer zu lesen.
+        NSPhotoLibraryAddUsageDescription: POKYH speichert deinen Rückblick als Bild in deinen Fotos, wenn du das möchtest.
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
         CFBundleURLTypes:
