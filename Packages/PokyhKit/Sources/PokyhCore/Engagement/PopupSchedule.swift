@@ -63,7 +63,7 @@ public enum PopupSchedule {
         if let end = clock.parse(popup.endsAt), end <= now { return nil }
         guard let slotMs = popup.slotMs, slotMs > 0, let start = clock.parse(popup.startsAt) else { return 0 }
         if now < start { return nil }
-        return min(Int((now - start) / slotMs), popup.showCount - 1)
+        return min(Int((now - start) / slotMs), max(popup.showCount, 1) - 1)
     }
 
     public static func isDue(_ popup: AnnouncementPopup, seen: [String: PopupSeenEntry], now: Int64, clock: DayClock = DayClock()) -> Bool {

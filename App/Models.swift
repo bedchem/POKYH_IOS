@@ -11,6 +11,8 @@ struct UserSession: Codable, Equatable {
     var klasseName: String
     var username: String
     var personName: String?
+    /// WebUntis' own first name for the person, when it says it apart; Home greets with it.
+    var firstName: String? = nil
     var personType: Int?
     var isParent: Bool
     /// POKYH-Backend Tokens (für Todos / Erinnerungen / Klasse)
@@ -22,8 +24,14 @@ struct UserSession: Codable, Equatable {
     var imageUrl: String?
     /// The WebUntis school the account signs in at; nil for accounts from before the school search.
     var school: School? = nil
+    /// Kept in the offline copy, which has no token: the account has a POKYH account, so its
+    /// to-dos, reminders and class show from what's stored.
+    var backendLinked: Bool? = nil
 
     var schoolRef: School { school ?? .fallback }
+
+    /// To-dos, reminders and class: live with a token, from the stored copy offline.
+    var hasBackend: Bool { apiToken != nil || backendLinked == true }
 
     /// Hat diese Sitzung ein verknüpftes WebUntis-Konto (Stundenplan/Noten)?
     /// Reine POKYH-Backend-Konten (Login-Fallback) haben `studentId == 0`. Gilt auch
@@ -178,7 +186,7 @@ struct SchoolYear: Identifiable, Codable, Equatable {
 
 // ── Nachrichten ────────────────────────────────────────────────────────────
 
-struct MessagePreview: Identifiable, Equatable {
+struct MessagePreview: Identifiable, Equatable, Codable {
     var id: Int
     var subject: String
     var contentPreview: String
@@ -194,7 +202,7 @@ struct MessagePreview: Identifiable, Equatable {
     var readTotal: Int? = nil
 }
 
-struct MessageDetail: Equatable {
+struct MessageDetail: Equatable, Codable {
     var id: Int
     var subject: String
     var senderName: String
@@ -203,7 +211,7 @@ struct MessageDetail: Equatable {
     var attachments: [MessageAttachment]
 }
 
-struct MessageAttachment: Identifiable, Equatable {
+struct MessageAttachment: Identifiable, Equatable, Codable {
     var id: String
     var name: String
     var size: Int
@@ -221,7 +229,8 @@ struct DownloadedAttachment: Equatable {
 }
 
 /// A file picked on the device, to go out with a message.
-struct OutgoingAttachment: Equatable {
+struct OutgoingAttachment: Equatable, Identifiable {
+    let id = UUID()
     var name: String
     var mimeType: String
     var data: Data
@@ -277,7 +286,7 @@ enum MessageFolder: String, CaseIterable, Identifiable {
 
 // ── Mensa ──────────────────────────────────────────────────────────────────
 
-struct Dish: Identifiable, Equatable, Hashable {
+struct Dish: Identifiable, Equatable, Hashable, Codable {
     var id: String
     var name: String
     var description: String?

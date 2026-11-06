@@ -284,14 +284,7 @@ nonisolated final class NotificationManager: NSObject, UNUserNotificationCenterD
         UserDefaults.standard.set(Array(seen.union(cancelled.map(key))), forKey: seenCancelKey)
     }
 
-    private static func fmtMark(_ v: Double) -> String {
-        let r = (v * 100).rounded() / 100
-        if r == r.rounded() { return String(Int(r)) }
-        var str = String(format: "%.2f", r)
-        while str.hasSuffix("0") { str.removeLast() }
-        if str.hasSuffix(".") { str.removeLast() }
-        return str.replacingOccurrences(of: ".", with: ",")
-    }
+    private static func fmtMark(_ v: Double) -> String { MarkText.string(v) }
 
     /// HHMM to "HH:MM".
     private static func fmtTime(_ hhmm: Int) -> String {
@@ -385,7 +378,6 @@ final class PushRegistration {
 
     private let registeredKey = "pokyh_push_registered"
     private weak var app: AppState?
-    private var observers: Set<AnyCancellable> = []
     private var deviceToken: String?
     /// The signed-in session, nil while locked or offline (those have no backend token).
     private var session: UserSession?
@@ -404,12 +396,19 @@ final class PushRegistration {
             .flatMap { try? JSONDecoder().decode(Registered.self, from: $0) }
     }
 
-    /// The sinks run as the values are set, before AppState moves on to the next step of a sign-out.
     func attach(_ app: AppState) {
         guard self.app == nil else { return }
         self.app = app
-        app.$session.sink { [weak self] in self?.sessionChanged($0) }.store(in: &observers)
-        app.$accounts.dropFirst().sink { [weak self] in self?.dropIfSignedOut($0) }.store(in: &observers)
+        sessionChanged(app.session)
+    }
+
+    // AppState calls these as the values are set, before it moves on to the next step of a sign-out.
+    func sessionDidChange(_ session: UserSession?, in app: AppState) {
+        if self.app === app { sessionChanged(session) }
+    }
+
+    func accountsDidChange(_ accounts: [SavedAccount], in app: AppState) {
+        if self.app === app { dropIfSignedOut(accounts) }
     }
 
     /// At launch, after the permission question, and back from the system settings.

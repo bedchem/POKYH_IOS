@@ -9,7 +9,7 @@ import PokyhCore
 import PokyhDesign
 
 struct ContentView: View {
-    @EnvironmentObject var app: AppState
+    @Environment(AppState.self) var app
     @Environment(\.strings) private var s
 
     /// The scheme actually applied. It switches under a short fade so light ⇄ dark
@@ -195,5 +195,5 @@ private struct PrivacyCover: View {
 }
 
 #Preview {
-    ContentView().environmentObject(AppState())
+    ContentView().environment(AppState())
 }

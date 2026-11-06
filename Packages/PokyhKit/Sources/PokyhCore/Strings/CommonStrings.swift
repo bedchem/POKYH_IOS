@@ -66,6 +66,11 @@ public struct CommonStrings: Sendable {
     public let reportBody: @Sendable (String, String, String, String, String) -> String
 }
 
+/// Month numbers often come straight out of a server's date, where 0 and 13 do turn up.
+private func name(_ months: [String], _ month: Int) -> String {
+    months.indices.contains(month - 1) ? months[month - 1] : ""
+}
+
 private let deMonths = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"]
 private let deMonthsShort = ["Jän", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"]
 private let itMonths = ["gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno", "luglio", "agosto", "settembre", "ottobre", "novembre", "dicembre"]
@@ -122,9 +127,9 @@ extension CommonStrings {
         weekdaysShort: ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"],
         decimal: ",",
         dateSep: ".",
-        dateLong: { d, m, y in "\(d). \(deMonths[m - 1]) \(y)" },
-        dayMonth: { d, m in "\(d). \(deMonths[m - 1])" },
-        dayMonthShort: { d, m in "\(d). \(deMonthsShort[m - 1])" },
+        dateLong: { d, m, y in "\(d). \(name(deMonths, m)) \(y)" },
+        dayMonth: { d, m in "\(d). \(name(deMonths, m))" },
+        dayMonthShort: { d, m in "\(d). \(name(deMonthsShort, m))" },
         schoolYear: { "Schuljahr \($0)/\(($0 + 1) % 100)" },
         comments: "Kommentare",
         noComments: "Noch keine Kommentare.",
@@ -190,9 +195,9 @@ extension CommonStrings {
         weekdaysShort: ["lun", "mar", "mer", "gio", "ven", "sab", "dom"],
         decimal: ",",
         dateSep: "/",
-        dateLong: { d, m, y in "\(d) \(itMonths[m - 1]) \(y)" },
-        dayMonth: { d, m in "\(d) \(itMonths[m - 1])" },
-        dayMonthShort: { d, m in "\(d) \(itMonthsShort[m - 1])" },
+        dateLong: { d, m, y in "\(d) \(name(itMonths, m)) \(y)" },
+        dayMonth: { d, m in "\(d) \(name(itMonths, m))" },
+        dayMonthShort: { d, m in "\(d) \(name(itMonthsShort, m))" },
         schoolYear: { "Anno scolastico \($0)/\(($0 + 1) % 100)" },
         comments: "Commenti",
         noComments: "Ancora nessun commento.",
@@ -258,9 +263,9 @@ extension CommonStrings {
         weekdaysShort: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
         decimal: ".",
         dateSep: "/",
-        dateLong: { d, m, y in "\(d) \(enMonths[m - 1]) \(y)" },
-        dayMonth: { d, m in "\(d) \(enMonths[m - 1])" },
-        dayMonthShort: { d, m in "\(d) \(enMonthsShort[m - 1])" },
+        dateLong: { d, m, y in "\(d) \(name(enMonths, m)) \(y)" },
+        dayMonth: { d, m in "\(d) \(name(enMonths, m))" },
+        dayMonthShort: { d, m in "\(d) \(name(enMonthsShort, m))" },
         schoolYear: { "School year \($0)/\(($0 + 1) % 100)" },
         comments: "Comments",
         noComments: "No comments yet.",

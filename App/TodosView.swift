@@ -5,7 +5,7 @@ import PokyhDesign
 /// Personal to-dos: rows standing on their own (each one swipes on its own, a grouped card would
 /// tear), open first, then done, and "Neu" floating at the bottom. A tap or a swipe edits.
 struct TodosView: View {
-    @EnvironmentObject var app: AppState
+    @Environment(AppState.self) var app
     @Environment(\.strings) private var s
     @State private var todos: [ApiTodo] = []
     @State private var loading = true
@@ -14,9 +14,20 @@ struct TodosView: View {
     @State private var editing: ApiTodo?
     @State private var actionFailed = false
     @State private var saves = 0
+    @State private var settled = false
+    @State private var query = ""
+    @State private var offlineBlocked = false
 
-    private var hasBackend: Bool { app.session?.apiToken != nil }
-    private var arranged: [ApiTodo] { TodoOrder.arranged(todos) }
+    private var hasBackend: Bool { app.session?.hasBackend ?? false }
+    private var online: Bool { app.session?.apiToken != nil }
+    /// Made offline, not sent yet.
+    private var pending: [PendingItem] {
+        guard let session = app.session else { return [] }
+        return Outbox.shared.items(.todo, for: session.username).filter { SearchMatch.matches(query, $0.title, $0.text) }
+    }
+    private var arranged: [ApiTodo] {
+        TodoOrder.arranged(todos).filter { SearchMatch.matches(query, $0.title, $0.details) }
+    }
     private var open: [ApiTodo] { arranged.filter { !$0.done } }
     private var done: [ApiTodo] { arranged.filter { $0.done } }
 
@@ -28,18 +39,21 @@ struct TodosView: View {
                 LoadingView()
             } else if let error, todos.isEmpty {
                 ErrorStateView(message: error) { Task { await load() } }
-            } else if todos.isEmpty {
-                StateView(s.tasks.todosEmpty, message: s.tasks.todosEmptyText) {
+            } else if todos.isEmpty && pending.isEmpty {
+                StateView(s.tasks.todosEmpty) {
                     IconTile("checklist", color: Brand.accent, size: 64)
                 } actions: {
                     Button { showAdd = true } label: { ButtonLabel(s.tasks.addTask, symbol: "plus") }
                         .buttonStyle(.secondary(compact: true))
                 }
                 .frame(maxHeight: .infinity)
+            } else if open.isEmpty && done.isEmpty && pending.isEmpty {
+                ContentUnavailableView.search(text: query)
             } else {
                 list
             }
         }
+        .listSearch($query, prompt: s.tasks.searchTodos)
         .navigationTitle(s.tasks.todos)
         .navigationSubtitle(todos.isEmpty ? "" : s.tasks.todosEyebrow(open.count, todos.count))
         .appBackground()
@@ -63,13 +77,34 @@ struct TodosView: View {
         .alert(s.tasks.saveFailed, isPresented: $actionFailed) {
             Button(s.common.ok, role: .cancel) {}
         }
+        .alert(s.common.offlineTitle, isPresented: $offlineBlocked) {
+            Button(s.common.ok, role: .cancel) {}
+        }
         .sensoryFeedback(.success, trigger: saves)
-        .task { if hasBackend { await load() } }
-        .refreshable { await load() }
+        // Again when the offline session turns into a real one, and when queued ones went out.
+        .task(id: online) { if hasBackend { await load() } }
+        .onChange(of: pending.count) { before, after in
+            if after < before { Task { await load() } }
+        }
+        .refreshable {
+            await app.reconnect()
+            await load()
+        }
     }
 
     private var list: some View {
         List {
+            ForEach(pending) { item in
+                PendingRow(title: item.title, text: item.text)
+                    .taskListRow()
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        Button(role: .destructive) {
+                            if let session = app.session { Outbox.shared.remove(item.id, for: session.username) }
+                        } label: {
+                            Label(s.common.delete, systemImage: "trash")
+                        }
+                    }
+            }
             if !open.isEmpty && !done.isEmpty {
                 TaskListLabel(s.tasks.open + " · \(open.count)")
             }
@@ -82,12 +117,24 @@ struct TodosView: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .contentMargins(.bottom, 96, for: .scrollContent)
-        .animation(Motion.standardEase, value: todos)
+        // Only once the list is on screen: animating the first load slid rows over each other.
+        .animation(settled ? Motion.standardEase : nil, value: todos)
     }
 
     private func row(_ todo: ApiTodo) -> some View {
         TodoRow(todo: todo, onToggle: { Task { await toggle(todo) } }, onEdit: { editing = todo })
             .taskListRow()
+            // The same actions on a long press, for anyone who doesn't know to swipe.
+            .contextMenu {
+                Button { editing = todo } label: { Label(s.tasks.edit, systemImage: "pencil") }
+                Button { Task { await toggle(todo) } } label: {
+                    Label(todo.done ? s.tasks.markOpen : s.tasks.markDone,
+                          systemImage: todo.done ? "arrow.uturn.backward" : "checkmark")
+                }
+                Button(role: .destructive) { Task { await delete(todo) } } label: {
+                    Label(s.common.delete, systemImage: "trash")
+                }
+            }
             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                 Button(role: .destructive) { Task { await delete(todo) } } label: {
                     Label(s.common.delete, systemImage: "trash")
@@ -107,28 +154,49 @@ struct TodosView: View {
     }
 
     private func load() async {
-        guard let s = app.session, let token = s.apiToken else { return }
+        guard let s = app.session, s.hasBackend else { return }
+        Outbox.shared.prepare(s.username)
         loading = todos.isEmpty
         error = nil
         do {
-            todos = try await BackendClient.shared.todos(username: s.username, token: token)
-            WatchSync.todos(todos, for: s)
+            todos = try await BackendClient.shared.todos(s)
+            if s.apiToken != nil { WatchSync.todos(todos, for: s) }
         } catch {
             self.error = (error as? AppError)?.message ?? error.localizedDescription
         }
         loading = false
+        DispatchQueue.main.async { settled = true }
     }
 
+    /// Offline it waits in the queue and goes out with the next sign-in, as on Android.
     private func add(title: String, details: String, dueAt: Date?) async throws {
-        guard let s = app.session, let token = s.apiToken else { return }
+        guard let s = app.session else { return }
         let iso = dueAt.map { ISO8601DateFormatter().string(from: $0) }
-        _ = try await BackendClient.shared.createTodo(username: s.username, title: title, details: details, dueAt: iso, token: token)
+        guard let token = s.apiToken else {
+            try queue(title: title, details: details, dueAt: iso, for: s)
+            return
+        }
+        do {
+            _ = try await BackendClient.shared.createTodo(username: s.username, title: title, details: details, dueAt: iso, token: token)
+        } catch is URLError {
+            // The connection went while sending: what was typed isn't lost.
+            try queue(title: title, details: details, dueAt: iso, for: s)
+            return
+        }
         saves += 1
         await load()
     }
 
+    private func queue(title: String, details: String, dueAt: String?, for s: UserSession) throws {
+        guard Outbox.shared.add(.todo, title: title, text: details, date: dueAt, for: s.username) else {
+            throw AppError(message: self.s.tasks.saveFailed)
+        }
+        saves += 1
+    }
+
     private func edit(_ todo: ApiTodo, title: String, details: String, dueAt: Date?) async throws {
-        guard let s = app.session, let token = s.apiToken else { return }
+        guard let s = app.session else { return }
+        guard let token = s.apiToken else { throw AppError(message: self.s.common.offlineTitle) }
         let iso = dueAt.map { ISO8601DateFormatter().string(from: $0) }
         try await BackendClient.shared.editTodo(username: s.username, id: todo.id, title: title, details: details, dueAt: iso, token: token)
         if let i = todos.firstIndex(where: { $0.id == todo.id }) {
@@ -142,7 +210,8 @@ struct TodosView: View {
 
     /// Ticked off with the time, as the web sends it: done ones leave the list a day later.
     private func toggle(_ todo: ApiTodo) async {
-        guard let s = app.session, let token = s.apiToken else { return }
+        guard let s = app.session else { return }
+        guard let token = s.apiToken else { offlineBlocked = true; return }
         let done = !todo.done
         let doneAt = done ? ISO8601DateFormatter().string(from: Date()) : nil
         if let i = todos.firstIndex(where: { $0.id == todo.id }) {
@@ -158,7 +227,8 @@ struct TodosView: View {
     }
 
     private func delete(_ todo: ApiTodo) async {
-        guard let s = app.session, let token = s.apiToken else { return }
+        guard let s = app.session else { return }
+        guard let token = s.apiToken else { offlineBlocked = true; return }
         todos.removeAll { $0.id == todo.id }
         do {
             try await BackendClient.shared.deleteTodo(username: s.username, id: todo.id, token: token)
@@ -366,10 +436,7 @@ enum TaskDates {
     }
 
     static func time(_ date: Date) -> String {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "en_US_POSIX")
-        f.dateFormat = "HH:mm"
-        return f.string(from: date)
+        DateFmt.formatter("HH:mm").string(from: date)
     }
 
     /// "Heute, 18:00" or "Mi., 29. Okt., 18:00".
@@ -402,10 +469,7 @@ enum TaskDates {
     }
 
     private static func format(_ date: Date, _ pattern: String, _ s: Strings) -> String {
-        let f = DateFormatter()
-        f.locale = s.lang.locale
-        f.dateFormat = pattern
-        return f.string(from: date)
+        DateFmt.formatter(pattern, locale: s.lang.locale).string(from: date)
     }
 }
 
@@ -465,5 +529,40 @@ extension View {
             .listRowInsets(EdgeInsets(top: Spacing.rowGap / 2, leading: Spacing.screenH, bottom: Spacing.rowGap / 2, trailing: Spacing.screenH))
             .listRowBackground(Color.clear)
             .listRowSeparator(.hidden)
+    }
+}
+
+/// Made offline and waiting in the queue: the same tile as a sent one, marked as not sent yet.
+/// Swiping it away takes it out of the queue, the one thing to do with it.
+struct PendingRow: View {
+    let title: String
+    let text: String
+    @Environment(\.strings) private var s
+
+    var body: some View {
+        HStack(alignment: .top, spacing: Spacing.iconText) {
+            Image(systemName: "clock.arrow.circlepath")
+                .font(.system(size: 18, weight: .medium))
+                .foregroundStyle(Brand.warning)
+                .frame(width: 32, height: 32)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: Spacing.xs) {
+                Text(title)
+                    .textStyle(.body)
+                    .foregroundStyle(Palette.textPrimary)
+                if !text.isEmpty {
+                    Text(text)
+                        .textStyle(.footnote)
+                        .foregroundStyle(Palette.textSecondary)
+                        .lineLimit(2)
+                }
+                Label(s.errors.waiting, systemImage: "wifi.slash")
+                    .textStyle(TextStyle.footnote.weight(.semibold))
+                    .foregroundStyle(Brand.warning)
+            }
+            .padding(.top, Spacing.xs)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .accessibilityElement(children: .combine)
     }
 }

@@ -7,7 +7,7 @@ import PokyhDesign
 /// `isAdditional` is the "Konto hinzufügen" / "Passwort nötig" sheet.
 struct LoginView: View {
     var isAdditional = false
-    @EnvironmentObject var app: AppState
+    @Environment(AppState.self) var app
     @Environment(\.dismiss) private var dismiss
     @Environment(\.strings) private var s
 
@@ -619,7 +619,7 @@ private struct OfficeSignInSheet: View {
     let initialUser: String
     let submit: (_ user: String, _ key: String) async -> Void
 
-    @EnvironmentObject private var app: AppState
+    @Environment(AppState.self) private var app
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     @Environment(\.strings) private var s
@@ -763,7 +763,7 @@ private struct SignInStep<Extra: View>: View {
 
 /// "Passwort vergessen": username and the e-mail address stored in WebUntis; WebUntis sends a
 /// link for a new password. POKYH never sees a password here.
-private struct PasswordResetSheet: View {
+struct PasswordResetSheet: View {
     let school: School
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL

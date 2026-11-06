@@ -6,11 +6,10 @@ import PokyhDesign
 
 /// "Geräte & Anmeldungen", as on the web's settings/devices: where the account is signed in, and when.
 struct DevicesView: View {
-    @EnvironmentObject var app: AppState
+    @Environment(AppState.self) var app
     @Environment(\.strings) private var s
     @State private var devices: [BackendClient.DeviceSession]?
     @State private var logins: [BackendClient.LoginEntry]?
-    @State private var keptDays = 0
     @State private var failed = false
     @State private var historyFailed = false
     /// The device being signed out, or `allOthers`.
@@ -27,9 +26,6 @@ struct DevicesView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Spacing.section) {
-                Text(s.settings.devicesLead)
-                    .textStyle(.callout)
-                    .foregroundStyle(Palette.textSecondary)
                 if failed {
                     VStack(alignment: .leading, spacing: Spacing.md) {
                         Text(s.settings.devicesLoadError).textStyle(.callout).foregroundStyle(Palette.textSecondary)
@@ -108,9 +104,6 @@ struct DevicesView: View {
                 if logins.isEmpty {
                     Text(s.settings.historyEmpty).textStyle(.footnote).foregroundStyle(Palette.textTertiary)
                 } else {
-                    if keptDays > 0 {
-                        Text(s.settings.historyHint(keptDays)).textStyle(.footnote).foregroundStyle(Palette.textTertiary)
-                    }
                     ListCard(Array(logins.prefix(shown))) { LoginRow(entry: $0) }
                     if logins.count > shown {
                         Button(s.settings.showMore) { shown += 20 }
@@ -143,7 +136,6 @@ struct DevicesView: View {
         do {
             let answer = try await BackendClient.shared.loginHistory(token: fresh)
             logins = answer.logins
-            keptDays = answer.keptDays
         } catch {
             historyFailed = logins == nil
         }
@@ -156,7 +148,7 @@ struct DevicesView: View {
         defer { busy = nil }
         do {
             try await BackendClient.shared.signOutDevice(id: device.id, token: token)
-            devices?.removeAll { $0.id == device.id }
+            withAnimation(Motion.standardEase) { devices?.removeAll { $0.id == device.id } }
         } catch {
             actionFailed = true
         }
@@ -170,7 +162,7 @@ struct DevicesView: View {
         do {
             try await BackendClient.shared.signOutOtherDevices(token: token)
             othersDone = true
-            devices?.removeAll { !$0.current }
+            withAnimation(Motion.standardEase) { devices?.removeAll { !$0.current } }
         } catch {
             actionFailed = true
         }
@@ -274,7 +266,7 @@ private struct DataExportFile: Transferable, Equatable {
 /// As on the web's settings: the consent to the personal usage statistics, when the privacy
 /// notice was confirmed, and everything POKYH keeps about the account as a file.
 struct PrivacySettingsRows: View {
-    @EnvironmentObject var app: AppState
+    @Environment(AppState.self) var app
     @Environment(\.strings) private var s
     @State private var status: BackendClient.PrivacyStatus?
     @State private var saving = false
@@ -364,13 +356,12 @@ struct PrivacySettingsRows: View {
 
 /// App Store guideline 5.1.1(v). iOS first, so the texts live here until Android has them too.
 struct AccountDeletionText {
-    let title, hint, confirmTitle, confirmBody, confirm, notAvailable, openWebsite: String
+    let title, confirmTitle, confirmBody, confirm, notAvailable, openWebsite: String
 
     static func of(_ lang: Lang) -> AccountDeletionText {
         switch lang {
         case .de: AccountDeletionText(
             title: "Konto löschen",
-            hint: "Löscht dein POKYH-Konto und alles, was POKYH über dich speichert. Dein WebUntis-Konto bleibt.",
             confirmTitle: "POKYH-Konto endgültig löschen?",
             confirmBody: "Deine To-dos, Kommentare, Bewertungen und deine Aktivität werden gelöscht und alle Geräte abgemeldet. Erinnerungen, die du für deine Klasse angelegt hast, bleiben ohne deinen Namen. Das lässt sich nicht rückgängig machen.\n\nDein WebUntis-Konto bleibt bestehen. Meldest du dich später wieder an, beginnt ein neues, leeres POKYH-Konto.",
             confirm: "Endgültig löschen",
@@ -378,7 +369,6 @@ struct AccountDeletionText {
             openWebsite: "Website öffnen")
         case .it: AccountDeletionText(
             title: "Elimina account",
-            hint: "Elimina il tuo account POKYH e tutto ciò che POKYH salva su di te. Il tuo account WebUntis resta.",
             confirmTitle: "Eliminare definitivamente l’account POKYH?",
             confirmBody: "Le tue attività, i commenti, le valutazioni e i dati di utilizzo vengono eliminati e tutti i dispositivi disconnessi. I promemoria che hai creato per la tua classe restano senza il tuo nome. L’operazione non si può annullare.\n\nIl tuo account WebUntis resta. Se accedi di nuovo in futuro, inizierà un nuovo account POKYH vuoto.",
             confirm: "Elimina definitivamente",
@@ -386,7 +376,6 @@ struct AccountDeletionText {
             openWebsite: "Apri il sito")
         case .en: AccountDeletionText(
             title: "Delete account",
-            hint: "Deletes your POKYH account and everything POKYH keeps about you. Your WebUntis account stays.",
             confirmTitle: "Delete your POKYH account for good?",
             confirmBody: "Your to-dos, comments, ratings and activity are deleted and every device is signed out. Reminders you created for your class stay, without your name. This can’t be undone.\n\nYour WebUntis account stays. If you sign in again later, a new, empty POKYH account begins.",
             confirm: "Delete for good",
@@ -397,7 +386,7 @@ struct AccountDeletionText {
 }
 
 struct DeleteAccountRow: View {
-    @EnvironmentObject var app: AppState
+    @Environment(AppState.self) var app
     @Environment(\.strings) private var s
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
@@ -409,17 +398,15 @@ struct DeleteAccountRow: View {
     private var t: AccountDeletionText { .of(s.lang) }
 
     var body: some View {
-        SettingsRow(t.title, hint: t.hint, danger: true) {
-            Button { confirming = true } label: {
-                if working {
-                    ProgressView().controlSize(.small)
-                } else {
-                    ButtonLabel(t.title, symbol: "trash")
-                }
+        // One red row; what it deletes and what stays is said in the question it asks.
+        Button { confirming = true } label: {
+            SettingsRow(t.title, danger: true) {
+                if working { ProgressView().controlSize(.small) }
             }
-            .buttonStyle(.destructive)
-            .disabled(working)
+            .contentShape(.rect)
         }
+        .buttonStyle(.rowPress)
+        .disabled(working)
         .alert(t.confirmTitle, isPresented: $confirming) {
             Button(t.confirm, role: .destructive) { Task { await delete() } }
             Button(s.common.cancel, role: .cancel) {}
@@ -454,7 +441,7 @@ struct DeleteAccountRow: View {
     let t = AccountDeletionText.of(.de)
     ScrollView {
         VStack(alignment: .leading) {
-            SettingsRow(t.title, hint: t.hint, danger: true)
+            SettingsRow(t.title, danger: true)
             Text(t.confirmBody)
         }
         .padding()

@@ -2,5 +2,9 @@
 
 DEVELOPMENT_TEAM = ABCDE12345
 
+// A personal (free) team can't sign push. Uncomment to put the app on your own phone anyway;
+// it then checks for news in the background instead.
+// POKYH_APP_ENTITLEMENTS = App/POKYH-NoPush.entitlements
+
 // Uncomment to run against a local backend.
 // POKYH_BACKEND_URL = http:/$()/localhost:3000

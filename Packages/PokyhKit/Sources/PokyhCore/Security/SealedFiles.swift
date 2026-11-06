@@ -64,6 +64,45 @@ public struct SealedFiles: Sendable {
         try? FileManager.default.removeItem(at: directory)
     }
 
+    /// A folder of its own inside this one, e.g. one per account, so all of it goes in one step.
+    /// Its name is keyed like the file names. nil without a key.
+    public func folder(_ scope: String) -> SealedFiles? {
+        guard let vault = vault() else { return nil }
+        return SealedFiles(directory: folderURL(scope, vault), protection: protection,
+                           dropsUnreadable: dropsUnreadable, vault: self.vault)
+    }
+
+    public func removeFolder(_ scope: String) {
+        guard let vault = vault() else { return }
+        try? FileManager.default.removeItem(at: folderURL(scope, vault))
+    }
+
+    /// Deletes every file, in any folder, not written for `age`. Whatever is still in use gets
+    /// written again on its next load, so only what nobody looked at in that time goes.
+    public func prune(olderThan age: TimeInterval, now: Date = .now) {
+        let fm = FileManager.default
+        let keys: [URLResourceKey] = [.contentModificationDateKey, .isDirectoryKey]
+        guard let walker = fm.enumerator(at: directory, includingPropertiesForKeys: keys) else { return }
+        let cutoff = now.addingTimeInterval(-age)
+        var folders: [URL] = []
+        for case let url as URL in walker {
+            let values = try? url.resourceValues(forKeys: Set(keys))
+            if values?.isDirectory == true {
+                folders.append(url)
+            } else if let modified = values?.contentModificationDate, modified < cutoff {
+                try? fm.removeItem(at: url)
+            }
+        }
+        // Folders left empty go too, deepest first.
+        for folder in folders.reversed() where (try? fm.contentsOfDirectory(atPath: folder.path))?.isEmpty == true {
+            try? fm.removeItem(at: folder)
+        }
+    }
+
+    func folderURL(_ scope: String, _ vault: Vault) -> URL {
+        directory.appendingPathComponent(vault.fileName(for: "folder:" + scope), isDirectory: true)
+    }
+
     func url(_ name: String, _ vault: Vault) -> URL {
         directory.appendingPathComponent(vault.fileName(for: name) + ".sealed", isDirectory: false)
     }

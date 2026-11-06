@@ -75,6 +75,11 @@ enum Config {
         static let absenceEdit      = "/api/classreg/absences/students/edit"
         static let reports          = "/reports.do"
         static let profilePassword  = "/api/profile/access/password"
+        static let profileGeneral   = "/api/profile/general"
+        static let profileAccess    = "/api/profile/access"
+        static let profileLanguages = "/api/profile/languages"
+        static let profileTotp      = "/api/profile/access/totp"
+        static let profileTotpCreate = "/api/profile/access/totp/create"
         static let passwordReset    = "/passwordReset/resetPassword.do"
         // MessageCenter writes go to v2 (multipart), v1 stays as the fallback for older instances.
         static let messagesV2       = "/api/rest/view/v2/messages"

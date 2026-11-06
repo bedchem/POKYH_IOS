@@ -139,8 +139,12 @@ public struct ListCard<Item: Identifiable, Row: View>: View {
         if !items.isEmpty {
             VStack(spacing: 0) {
                 ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                    if index > 0 { RowSeparator() }
-                    row(item)
+                    // One view per row, so a row and its hairline leave together.
+                    VStack(spacing: 0) {
+                        if index > 0 { RowSeparator() }
+                        row(item)
+                    }
+                    .transition(.opacity.combined(with: .scale(scale: 0.97)))
                 }
             }
             .clipShape(.pokyh(radius))

@@ -11,7 +11,9 @@ enum BackgroundRefresh {
 
     /// Beim App-Start registrieren (aus `POKYHApp.init`).
     static func register() {
-        BGTaskScheduler.shared.register(forTaskWithIdentifier: identifier, using: nil) { task in
+        // On the main queue: without one the handler runs on a background queue, and everything it
+        // touches here is the main actor's. Swift 5 mode wouldn't stop that at runtime.
+        BGTaskScheduler.shared.register(forTaskWithIdentifier: identifier, using: .main) { task in
             guard let refresh = task as? BGAppRefreshTask else { task.setTaskCompleted(success: false); return }
             handle(refresh)
         }

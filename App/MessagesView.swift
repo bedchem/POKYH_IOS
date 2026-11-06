@@ -11,13 +11,14 @@ struct MessagesView: View {
     /// Opened from Home's "Nachricht schreiben": the compose sheet straight away.
     var startCompose = false
 
-    @EnvironmentObject var app: AppState
+    @Environment(AppState.self) var app
     @Environment(\.strings) private var s
     @State private var folder: MessageFolder = .inbox
     @State private var cache: [MessageFolder: [MessagePreview]] = [:]
     @State private var loadingFolders: Set<MessageFolder> = []
     @State private var error: String?
     @State private var query = ""
+    @State private var shownFolders: Set<MessageFolder> = []
     @State private var markingAll = false
     @State private var selected: Int?
     @State private var width: CGFloat = 0
@@ -57,7 +58,7 @@ struct MessagesView: View {
         .background(Palette.bg.ignoresSafeArea())
         .navigationTitle(selecting ? s.messages.selectedCount(picked.count) : s.nav.messages)
         .navigationBarTitleDisplayMode(selecting ? .inline : .large)
-        .searchable(text: $query, prompt: s.messages.search)
+        .listSearch($query, prompt: s.messages.search)
         .toolbar { toolbar }
         .safeAreaInset(edge: .bottom) {
             if selecting { selectionBar }
@@ -185,14 +186,14 @@ struct MessagesView: View {
                         .padding(.top, key == keys.first ? 0 : Spacing.lg)
                         .padding(.bottom, Spacing.sm)
                     ListCard(grouped[key] ?? []) { msg in row(msg) }
-                        .fadeIn()
                 }
             }
             .padding(.horizontal, Spacing.screenH)
             .padding(.bottom, Spacing.xxxl)
         }
         .refreshable { await load(folder) }
-        .animation(.easeInOut(duration: Motion.fast), value: messages.map(\.id))
+        // The first answer for a folder just appears; animating it slid rows over each other.
+        .animation(shownFolders.contains(folder) ? .easeInOut(duration: Motion.fast) : nil, value: messages.map(\.id))
     }
 
     @ViewBuilder private func row(_ msg: MessagePreview) -> some View {
@@ -304,6 +305,8 @@ struct MessagesView: View {
             let list = try await UntisClient.shared.messages(folder: f, session)
             cache[f] = list
             if f == .inbox { app.noteInbox(list) }
+            // From the next change on, rows move in and out with an animation.
+            DispatchQueue.main.async { shownFolders.insert(f) }
         } catch let e as AppError where e.isSessionExpired {
             app.handleSessionExpired()
         } catch {
@@ -312,7 +315,7 @@ struct MessagesView: View {
     }
 
     private func markAllRead() async {
-        guard let session = app.session, !markingAll else { return }
+        guard let session = app.session, !session.sessionId.isEmpty, !markingAll else { return }
         markingAll = true
         defer { markingAll = false }
         let ids = unread.map(\.id)
@@ -480,7 +483,7 @@ struct MessageDetailBody: View {
     var onRead: (() -> Void)? = nil
     var onDeleted: (() -> Void)? = nil
 
-    @EnvironmentObject var app: AppState
+    @Environment(AppState.self) var app
     @Environment(\.strings) private var s
     @Environment(\.openURL) private var openURL
     @State private var detail: MessageDetail?
@@ -860,7 +863,8 @@ struct MessageDetailBody: View {
                 d.attachments = await UntisClient.shared.messageAttachments(id: preview.id, session)
             }
             detail = d
-            if folder == .inbox && !preview.isRead {
+            // Read offline stays unread: the server never heard of it.
+            if folder == .inbox && !preview.isRead && !session.sessionId.isEmpty {
                 await UntisClient.shared.markRead(id: preview.id, session)
                 onRead?()
             }
@@ -876,7 +880,7 @@ struct MessageDetailBody: View {
 /// Who of the recipients confirmed reading; a class lists its people one by one.
 private struct ReadStatusSheet: View {
     let messageId: Int
-    @EnvironmentObject var app: AppState
+    @Environment(AppState.self) var app
     @Environment(\.strings) private var s
     @Environment(\.dismiss) private var dismiss
     @State private var list: [ReadStatusRecipient]?
@@ -986,7 +990,7 @@ struct ComposeMessageSheet: View {
     /// Sent, saved or deleted: the folder behind should load again.
     var onDone: (() -> Void)? = nil
 
-    @EnvironmentObject var app: AppState
+    @Environment(AppState.self) var app
     @Environment(\.strings) private var s
     @Environment(\.dismiss) private var dismiss
 
@@ -1072,7 +1076,7 @@ struct ComposeMessageSheet: View {
                 .padding(.horizontal, Spacing.screenH)
                 .padding(.top, Spacing.sm)
                 .padding(.bottom, Spacing.xxxl)
-                .animation(Motion.standardEase, value: files.map(\.name))
+                .animation(Motion.standardEase, value: files.map(\.id))
                 .animation(Motion.standardEase, value: error)
             }
             .scrollDismissesKeyboard(.interactively)
@@ -1143,7 +1147,7 @@ struct ComposeMessageSheet: View {
 
     private var fileList: some View {
         VStack(spacing: Spacing.rowGap) {
-            ForEach(Array(files.enumerated()), id: \.offset) { i, file in
+            ForEach(files) { file in
                 HStack(spacing: Spacing.iconText) {
                     FileGlyph(name: file.name)
                     VStack(alignment: .leading, spacing: 0) {
@@ -1152,7 +1156,7 @@ struct ComposeMessageSheet: View {
                     }
                     Spacer(minLength: 0)
                     IconButton("xmark", label: s.messages.removeFile(file.name), size: 32, tint: Palette.textSecondary) {
-                        files.remove(at: i)
+                        files.removeAll { $0.id == file.id }
                     }
                     .disabled(busy)
                 }
@@ -1577,17 +1581,14 @@ nonisolated enum MessageFormat {
     static func dateLabel(_ dateStr: String, _ c: CommonStrings) -> String {
         guard let date = parse(dateStr) else { return "" }
         let cal = Calendar.current
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "en_US_POSIX")
-        if cal.isDateInToday(date) { f.dateFormat = "HH:mm"; return f.string(from: date) }
+        if cal.isDateInToday(date) { return DateFmt.formatter("HH:mm").string(from: date) }
         if cal.isDateInYesterday(date) { return c.yesterday }
         let days = cal.dateComponents([.day], from: cal.startOfDay(for: date), to: cal.startOfDay(for: Date())).day ?? 0
         if (1...6).contains(days) {
             let i = (cal.component(.weekday, from: date) + 5) % 7
             if c.weekdaysShort.indices.contains(i) { return c.weekdaysShort[i] }
         }
-        f.dateFormat = "dd.MM."
-        return f.string(from: date)
+        return DateFmt.formatter("dd.MM.").string(from: date)
     }
 
     /// Same label in the language the app runs in, for screens without the strings at hand.
@@ -1619,18 +1620,34 @@ nonisolated enum MessageFormat {
         return s.messages.at(day, String(format: "%02d:%02d", c.hour ?? 0, c.minute ?? 0))
     }
 
+    /// Lists sort and group by these on every redraw, so each string is read once and remembered.
     static func parse(_ s: String) -> Date? {
-        if let d = ISO8601DateFormatter().date(from: s) { return d }
-        let frac = ISO8601DateFormatter()
-        frac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let d = frac.date(from: s) { return d }
-        let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX")
+        if let known = parsed.object(forKey: s as NSString) { return known as Date }
+        guard let date = read(s) else { return nil }
+        parsed.setObject(date as NSDate, forKey: s as NSString)
+        return date
+    }
+
+    private static func read(_ s: String) -> Date? {
+        if let d = iso.date(from: s) { return d }
+        if let d = isoFraction.date(from: s) { return d }
         for fmt in ["yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd'T'HH:mm", "yyyy-MM-dd"] {
-            f.dateFormat = fmt
-            if let d = f.date(from: s) { return d }
+            if let d = DateFmt.formatter(fmt).date(from: s) { return d }
         }
         return nil
     }
+
+    nonisolated(unsafe) private static let parsed: NSCache<NSString, NSDate> = {
+        let cache = NSCache<NSString, NSDate>()
+        cache.countLimit = 2000
+        return cache
+    }()
+    nonisolated(unsafe) private static let iso = ISO8601DateFormatter()
+    nonisolated(unsafe) private static let isoFraction: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
 
     /// Strips HTML down to plain text, roughly what the web's sanitizer leaves.
     static func plainText(_ raw: String) -> String {

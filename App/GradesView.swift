@@ -8,7 +8,7 @@ import PokyhDesign
 // values too, so the screen looks like itself on the first day of a school year.
 
 struct GradesView: View {
-    @EnvironmentObject var app: AppState
+    @Environment(AppState.self) var app
     @Environment(\.strings) private var s
     @State private var subjects: [SubjectGrades] = []
     @State private var loading = true
@@ -34,7 +34,8 @@ struct GradesView: View {
             ToolbarItem(placement: .topBarTrailing) { yearMenu }
         }
         .profileToolbar()
-        .appBackground()
+        // Full width on iPad, so the tiles line up under the title instead of in a narrower column.
+        .appBackground(wide: true)
         .task(id: year) { await load() }
     }
 
@@ -53,12 +54,16 @@ struct GradesView: View {
 
     private var content: some View {
         let dash = GradesDashboard(subjects: subjects, months: s.common.monthsShort)
-        let compact = WidthClass(width: width) == .compact
+        // Four tiles in a row once they fit, as squares; otherwise two by two.
+        let across = width >= 900 ? 4 : 2
+        let compact = across == 4 || WidthClass(width: width) == .compact
         return ScrollView {
             VStack(alignment: .leading, spacing: Spacing.section) {
                 EyebrowLabel(eyebrow(dash))
                     .fadeIn()
-                StatCardGrid(dashboard: dash, compact: compact)
+                StatCardGrid(dashboard: dash, compact: compact,
+                             tileSide: (width - 2 * Spacing.screenH - CGFloat(across - 1) * Spacing.md) / CGFloat(across),
+                             across: across)
                 subjectsSection
                     .fadeIn(delay: 0.16)
             }
@@ -71,7 +76,7 @@ struct GradesView: View {
 
     private func eyebrow(_ d: GradesDashboard) -> String {
         guard d.hasGrades else { return s.grades.noGradesYear }
-        let stand = d.latestDate > 0 ? GradesLook.dateLong(d.latestDate, s.common) : "—"
+        let stand = d.latestDate > 0 ? GradesLook.dateLong(d.latestDate, s.common) : "–"
         return s.grades.summary(stand, d.subjectCount, d.allCount)
     }
 
@@ -107,7 +112,7 @@ struct GradesView: View {
                 HStack(spacing: Spacing.xs) {
                     sortMenu
                     TextLinkButton(allExpanded ? s.grades.collapseAll : s.grades.expandAll) {
-                        withAnimation(.easeInOut(duration: Motion.standard)) {
+                        withAnimation(.snappy(duration: 0.32)) {
                             expanded = allExpanded ? [] : Set(rows.map(\.subject.lessonId))
                         }
                     }
@@ -119,8 +124,6 @@ struct GradesView: View {
                         .font(.system(size: 34, weight: .regular))
                         .foregroundStyle(Palette.textTertiary)
                     Text(s.grades.emptyTitle).textStyle(.headline).foregroundStyle(Palette.textPrimary)
-                    Text(s.grades.noSubjects).textStyle(.footnote).foregroundStyle(Palette.textSecondary)
-                        .multilineTextAlignment(.center)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(Spacing.card)
@@ -135,7 +138,7 @@ struct GradesView: View {
                             isExpanded: expanded.contains(row.subject.lessonId),
                             subjects: subjects
                         ) {
-                            withAnimation(.easeInOut(duration: Motion.standard)) {
+                            withAnimation(.snappy(duration: 0.32)) {
                                 if expanded.contains(row.subject.lessonId) {
                                     expanded.remove(row.subject.lessonId)
                                 } else {
@@ -252,9 +255,12 @@ struct SubjectRow: View {
             }
             .buttonStyle(.rowPress)
 
+            // The row grows and the grades fade in where they'll stay; sliding them in made them
+            // pass over the rows below. Closing fades them out faster than the row shrinks.
             if isExpanded {
                 panel(tone)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+                    .transition(.asymmetric(insertion: .opacity.animation(.easeOut(duration: 0.22).delay(0.06)),
+                                            removal: .opacity.animation(.easeIn(duration: 0.1))))
             }
         }
         .clipped()
@@ -455,7 +461,7 @@ struct GradesDashboard {
     }
 
     /// The whole grade a value counts as, rounded half up like the web's Math.round.
-    static func bucket(_ v: Double) -> Int { min(10, max(1, Int((v + 0.5).rounded(.down)))) }
+    static func bucket(_ v: Double) -> Int { min(10, max(1, Int(saturating: (v + 0.5).rounded(.down)))) }
 }
 
 // ── Stat cards ──────────────────────────────────────────────────────────────
@@ -464,26 +470,41 @@ struct GradesDashboard {
 private struct StatCardGrid: View {
     let dashboard: GradesDashboard
     let compact: Bool
+    /// A tile's width on a phone; tiles are at least about that tall, and taller when their
+    /// content needs it (bigger text, long names), never clipped.
+    let tileSide: CGFloat
+    var across = 2
 
     var body: some View {
-        VStack(spacing: Spacing.md) {
-            row(
-                AverageStatCard(d: dashboard, compact: compact).fadeIn(),
-                RatioStatCard(d: dashboard, compact: compact).fadeIn(delay: 0.04)
-            )
-            row(
-                DistributionStatCard(d: dashboard, compact: compact).fadeIn(delay: 0.08),
-                RecentStatCard(d: dashboard, compact: compact).fadeIn(delay: 0.12)
-            )
+        let average = AverageStatCard(d: dashboard, compact: compact).fadeIn()
+        let ratio = RatioStatCard(d: dashboard, compact: compact).fadeIn(delay: 0.04)
+        let distribution = DistributionStatCard(d: dashboard, compact: compact).fadeIn(delay: 0.08)
+        let recent = RecentStatCard(d: dashboard, compact: compact).fadeIn(delay: 0.12)
+        if across == 4 {
+            let least = max(0, tileSide * 0.92)
+            HStack(spacing: Spacing.md) {
+                average.frame(minHeight: least, maxHeight: .infinity)
+                ratio.frame(minHeight: least, maxHeight: .infinity)
+                distribution.frame(minHeight: least, maxHeight: .infinity)
+                recent.frame(minHeight: least, maxHeight: .infinity)
+            }
+            .fixedSize(horizontal: false, vertical: true)
+        } else {
+            VStack(spacing: Spacing.md) {
+                row(average, ratio)
+                row(distribution, recent)
+            }
         }
     }
 
     @ViewBuilder private func row(_ a: some View, _ b: some View) -> some View {
         if compact {
+            let least = max(0, tileSide * 0.92)
             HStack(spacing: Spacing.md) {
-                Color.clear.aspectRatio(1, contentMode: .fit).overlay { a }
-                Color.clear.aspectRatio(1, contentMode: .fit).overlay { b }
+                a.frame(minHeight: least, maxHeight: .infinity)
+                b.frame(minHeight: least, maxHeight: .infinity)
             }
+            .fixedSize(horizontal: false, vertical: true)
         } else {
             HStack(spacing: Spacing.md) {
                 a.frame(maxHeight: .infinity)
@@ -497,6 +518,8 @@ private struct StatCardGrid: View {
 /// The card every stat shares: header, a body that takes the slack, footer.
 private struct StatShell<Header: View, Content: View, Footer: View>: View {
     let compact: Bool
+    /// The body takes the slack by itself instead of sharing it with the gaps around it.
+    var fills = false
     @ViewBuilder let header: Header
     @ViewBuilder let content: Content
     @ViewBuilder let footer: Footer
@@ -507,6 +530,7 @@ private struct StatShell<Header: View, Content: View, Footer: View>: View {
             Spacer(minLength: compact ? Spacing.sm : Spacing.lg).frame(maxHeight: compact ? .infinity : Spacing.lg)
             content
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .layoutPriority(fills ? 1 : 0)
             Spacer(minLength: compact ? Spacing.sm : Spacing.md).frame(maxHeight: compact ? .infinity : Spacing.md)
             footer
         }
@@ -518,24 +542,18 @@ private struct StatShell<Header: View, Content: View, Footer: View>: View {
 
 private struct CardHeader<Pill: View>: View {
     let title: String
-    let subtitle: String
     let compact: Bool
     @ViewBuilder var pill: Pill
 
     var body: some View {
         HStack(alignment: compact ? .center : .top, spacing: Spacing.sm) {
-            VStack(alignment: .leading, spacing: 2) {
-                // One line when compact, so the title shrinks instead of breaking mid-word.
-                Text(title)
-                    .textStyle(compact ? TextStyle.footnote.weight(.semibold) : .headline)
-                    .foregroundStyle(Palette.textPrimary)
-                    .lineLimit(compact ? 1 : 2)
-                    .minimumScaleFactor(compact ? 0.68 : 0.78)
-                if !compact {
-                    Text(subtitle).textStyle(.caption).foregroundStyle(Palette.textTertiary)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            // One line when compact, so the title shrinks instead of breaking mid-word.
+            Text(title)
+                .textStyle(compact ? TextStyle.footnote.weight(.semibold) : .headline)
+                .foregroundStyle(Palette.textPrimary)
+                .lineLimit(compact ? 1 : 2)
+                .minimumScaleFactor(compact ? 0.68 : 0.78)
+                .frame(maxWidth: .infinity, alignment: .leading)
             pill
         }
     }
@@ -598,7 +616,7 @@ private struct AverageStatCard: View {
         let trend = improving ? Brand.success : Brand.danger
         let line = d.hasGrades ? GradesLook.band(d.overallAvg) : Palette.textTertiary
         StatShell(compact: compact) {
-            CardHeader(title: s.grades.avgTitle, subtitle: s.grades.avgSub, compact: compact) {
+            CardHeader(title: s.grades.avgTitle, compact: compact) {
                 StatPill(text: "\(improving ? "↗" : "↘") \(GradesLook.num(abs(d.delta), s))", color: trend, fill: trend.opacity(0.14))
             }
         } content: {
@@ -613,7 +631,7 @@ private struct AverageStatCard: View {
         } footer: {
             CardFooter(
                 left: (s.grades.prevMonth, d.hasGrades ? GradesLook.num(d.previousMonthAvg, s) : "–", Palette.textPrimary),
-                right: (s.grades.bestGrade, d.best > 0 ? GradesLook.num(d.best, s) : "—", Palette.textPrimary),
+                right: (s.grades.bestGrade, d.best > 0 ? GradesLook.num(d.best, s) : "–", Palette.textPrimary),
                 compact: compact
             )
         }
@@ -695,7 +713,7 @@ private struct RatioStatCard: View {
 
     var body: some View {
         StatShell(compact: compact) {
-            CardHeader(title: s.grades.ratioTitle, subtitle: s.grades.ratioSub, compact: compact) {
+            CardHeader(title: s.grades.ratioTitle, compact: compact) {
                 StatPill(text: "\(Int(d.passRate.rounded())) %")
             }
         } content: {
@@ -748,27 +766,27 @@ private struct DistributionStatCard: View {
     @Environment(\.strings) private var s
 
     var body: some View {
-        StatShell(compact: compact) {
-            CardHeader(title: s.grades.distTitle, subtitle: s.grades.distSub, compact: compact) {
+        StatShell(compact: compact, fills: compact) {
+            CardHeader(title: s.grades.distTitle, compact: compact) {
                 StatPill(text: "σ \(GradesLook.num(d.sigma, s))")
             }
         } content: {
             Group {
                 if compact {
-                    // The square tile has about 60pt for the ring; labels would be smudges there.
+                    // Labels would be smudges in a tile, so the ring gets their room.
                     DistributionDonut(segments: d.segments, showLabels: false)
                         .aspectRatio(1, contentMode: .fit)
-                        .frame(minHeight: 40, maxHeight: .infinity)
+                        .frame(minHeight: 112, maxHeight: .infinity)
                 } else {
                     DistributionDonut(segments: d.segments, showLabels: true)
-                        .frame(width: 168, height: 168)
+                        .frame(width: 208, height: 208)
                 }
             }
             .frame(maxWidth: .infinity)
         } footer: {
             CardFooter(
-                left: (s.grades.mode, d.hasGrades ? "\(d.mode)" : "—", Palette.textPrimary),
-                right: (s.grades.median, d.hasGrades ? GradesLook.num(d.median, s) : "—", Palette.textPrimary),
+                left: (s.grades.mode, d.hasGrades ? "\(d.mode)" : "–", Palette.textPrimary),
+                right: (s.grades.median, d.hasGrades ? GradesLook.num(d.median, s) : "–", Palette.textPrimary),
                 compact: compact
             )
         }
@@ -783,14 +801,18 @@ private struct DistributionDonut: View {
     @State private var selected: Int?
     @Environment(\.strings) private var s
 
-    private static let viewport = 110.0, cx = 55.0, cy = 55.0, radius = 29.0, stroke = 16.0
+    private static let radius = 29.0, stroke = 16.0
+    /// The web's 110 box leaves room for labels around the ring. Without labels the ring gets it.
+    private var viewport: Double { showLabels ? 110 : 2 * (Self.radius + Self.stroke / 2) + 2 }
+    private var cx: Double { viewport / 2 }
+    private var cy: Double { viewport / 2 }
 
     var body: some View {
         GeometryReader { geo in
-            let scale = min(geo.size.width, geo.size.height) / Self.viewport
-            let origin = CGPoint(x: (geo.size.width - Self.viewport * scale) / 2, y: (geo.size.height - Self.viewport * scale) / 2)
+            let scale = min(geo.size.width, geo.size.height) / viewport
+            let origin = CGPoint(x: (geo.size.width - viewport * scale) / 2, y: (geo.size.height - viewport * scale) / 2)
             Canvas { ctx, _ in
-                let center = CGPoint(x: origin.x + Self.cx * scale, y: origin.y + Self.cy * scale)
+                let center = CGPoint(x: origin.x + cx * scale, y: origin.y + cy * scale)
                 let r = Self.radius * scale
                 let lineWidth = Self.stroke * scale
                 if segments.isEmpty {
@@ -825,8 +847,8 @@ private struct DistributionDonut: View {
             }
             .contentShape(.rect)
             .onTapGesture { location in
-                let dx = (location.x - origin.x) / scale - Self.cx
-                let dy = (location.y - origin.y) / scale - Self.cy
+                let dx = (location.x - origin.x) / scale - cx
+                let dy = (location.y - origin.y) / scale - cy
                 let dist = (dx * dx + dy * dy).squareRoot()
                 guard dist >= Self.radius - 14, dist <= Self.radius + 14 else { selected = nil; return }
                 var angle = atan2(dy, dx)
@@ -852,7 +874,7 @@ private struct RecentStatCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            CardHeader(title: s.grades.recentTitle, subtitle: s.grades.recentSub(d.recent.count), compact: compact) { EmptyView() }
+            CardHeader(title: s.grades.recentTitle, compact: compact) { EmptyView() }
             if d.recent.isEmpty {
                 Text(s.grades.recentEmpty)
                     .textStyle(.footnote)
@@ -868,17 +890,19 @@ private struct RecentStatCard: View {
                         Group {
                             if i < d.recent.count {
                                 let item = d.recent[i]
+                                // Name over date: a long subject keeps its room and the rows line up.
                                 HStack(spacing: Spacing.xs) {
-                                    Text(item.subject)
-                                        .textStyle(TextStyle.footnote.weight(.semibold))
-                                        .foregroundStyle(Palette.textPrimary)
-                                        .lineLimit(1)
-                                    Text(Fmt.dateShort(item.date))
-                                        .textStyle(TextStyle.caption2.tabularDigits)
-                                        .foregroundStyle(Palette.textTertiary)
-                                        .lineLimit(1)
-                                        .fixedSize()
-                                    Spacer(minLength: 0)
+                                    VStack(alignment: .leading, spacing: 0) {
+                                        Text(item.subject)
+                                            .textStyle(TextStyle.footnote.weight(.semibold))
+                                            .foregroundStyle(Palette.textPrimary)
+                                            .lineLimit(1)
+                                        Text(Fmt.dateShort(item.date))
+                                            .textStyle(TextStyle.caption2.tabularDigits)
+                                            .foregroundStyle(Palette.textTertiary)
+                                            .lineLimit(1)
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
                                     Text(GradesLook.num(item.value, s))
                                         .textStyle(TextStyle.footnote.weight(.semibold).tabularDigits)
                                         .foregroundStyle(GradesLook.band(item.value))
@@ -889,9 +913,10 @@ private struct RecentStatCard: View {
                             }
                         }
                         .frame(maxHeight: .infinity)
+                        .padding(.vertical, Spacing.xxs)
                     }
                 }
-                .padding(.top, Spacing.md)
+                .padding(.top, Spacing.sm)
             } else {
                 VStack(spacing: Spacing.xs) {
                     ForEach(d.recent) { item in

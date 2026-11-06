@@ -31,6 +31,9 @@ extension AppState {
 }
 
 /// The scanner has no Android text to come from: Android's own names Google Play.
+/// The website the texts send people to, from the build's config.
+private var websiteHost: String { AppConfig.current.websiteURL.host() ?? AppConfig.current.websiteURL.absoluteString }
+
 private struct QrText {
     let unavailable: String
 
@@ -50,7 +53,7 @@ struct WebSignInHost: ViewModifier {
     @Binding var working: Bool
     /// The app shell's copy answers codes opened from the camera; the settings' one scans.
     var takesLinks = false
-    @EnvironmentObject var app: AppState
+    @Environment(AppState.self) var app
     @Environment(\.strings) private var s
     @State private var scanned: String?
     @State private var confirm: Confirmation?
@@ -122,7 +125,7 @@ struct WebSignInHost: ViewModifier {
         guard let text = scanned else { return }
         scanned = nil
         guard let code = WebSignInCode.of(text, host: AppConfig.current.websiteURL.host()) else {
-            failure = Failure(message: s.settings.webSignInNotPokyh, scanAgain: true)
+            failure = Failure(message: s.settings.webSignInNotPokyh(websiteHost), scanAgain: true)
             return
         }
         Task { await lookUp(code) }
@@ -235,7 +238,7 @@ struct QrScannerScreen: View {
     private var message: String? {
         switch camera {
         case .asking: nil
-        case .ready: s.account.scanPrompt
+        case .ready: s.account.scanPrompt(websiteHost)
         case .refused: s.account.cameraNeeded
         case .unavailable: QrText.of(s.lang).unavailable
         }

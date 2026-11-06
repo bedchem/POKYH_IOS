@@ -1,4 +1,5 @@
 import Foundation
+import PokyhCore
 
 /// Noten-Mathematik — 1:1 portiert aus `lib/grades.ts` + der Fach-Detailseite.
 /// Skala 1–10 (Südtirol), positiv ab 6.
@@ -50,7 +51,7 @@ enum GradeMath {
             return TargetResult(target: target, status: .impossible, count: 0, needed: 0)
         } else {
             if target <= 4 + 1e-6 { return TargetResult(target: target, status: .impossible, count: 0, needed: 0) }
-            let kMin = Int(((sum - target * n) / (target - 4) - 1e-9).rounded(.up))
+            let kMin = Int(saturating: ((sum - target * n) / (target - 4) - 1e-9).rounded(.up))
             if kMin <= 0 || kMin > 50 { return TargetResult(target: target, status: .impossible, count: 0, needed: 0) }
             let perGrade = (target * (n + Double(kMin)) - sum) / Double(kMin)
             return TargetResult(target: target, status: .reachable, count: kMin,

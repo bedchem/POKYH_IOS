@@ -340,7 +340,7 @@ public enum BellFeed {
     public static func rowText(_ item: Item, now: Int64, strings: Strings, clock: DayClock = DayClock()) -> (title: String, subtitle: String) {
         let t = strings.bell
         let at = whenText(item, now: now, strings: strings, clock: clock)
-        let days = Int(item.value ?? 0)
+        let days = Int(saturating: item.value ?? 0)
         let title: String
         let parts: [String]
         switch item.kind {

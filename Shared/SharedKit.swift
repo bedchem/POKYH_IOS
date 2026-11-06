@@ -33,14 +33,7 @@ enum Brand {
 
 /// Note ohne überflüssige Nullen, deutsche Schreibweise (8 / 8,5) — App + Widget.
 enum GradeFormat {
-    static func string(_ v: Double) -> String {
-        let r = (v * 100).rounded() / 100
-        if r == r.rounded() { return String(Int(r)) }
-        var s = String(format: "%.2f", r)
-        while s.hasSuffix("0") { s.removeLast() }
-        if s.hasSuffix(".") { s.removeLast() }
-        return s.replacingOccurrences(of: ".", with: ",")
-    }
+    static func string(_ v: Double) -> String { MarkText.string(v) }
 }
 
 #if canImport(SwiftUI)
@@ -277,7 +270,7 @@ enum SharedStore {
 
 #if os(iOS)
 /// Live-Activity-Definition: zeigt die laufende/nächste Stunde mit Countdown.
-struct LessonActivityAttributes: ActivityAttributes {
+nonisolated struct LessonActivityAttributes: ActivityAttributes {
     public struct ContentState: Codable, Hashable {
         var subject: String
         var room: String

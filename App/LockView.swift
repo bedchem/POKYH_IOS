@@ -6,7 +6,7 @@ import PokyhDesign
 /// accounts and "Manuell anmelden" are always there; only the status line reacts to failed
 /// attempts. Same calm layout as sign-in. Nothing of the account's data is shown here.
 struct LockView: View {
-    @EnvironmentObject var app: AppState
+    @Environment(AppState.self) var app
     @Environment(\.strings) private var s
     @State private var appeared = false
     @State private var failures = 0
@@ -38,7 +38,7 @@ struct LockView: View {
             // Signing in by hand: the failed unlock's message no longer applies.
             if open { problem = nil }
         }
-        .sheet(isPresented: $app.showAddAccount) {
+        .sheet(isPresented: Bindable(app).showAddAccount) {
             NavigationStack { LoginView(isAdditional: true) }
         }
     }

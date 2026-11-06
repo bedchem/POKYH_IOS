@@ -8,7 +8,16 @@ APP = $(DERIVED)/Build/Products/Debug-iphonesimulator/POKYH.app
 BUNDLE_ID = $(shell sed -n 's/^POKYH_BUNDLE_ID = //p' Config/Base.xcconfig)
 XCODEBUILD = xcodebuild -project POKYH.xcodeproj -derivedDataPath $(DERIVED) -quiet
 
-.PHONY: setup project open build build-ipad build-watch test run clean
+.PHONY: setup project open build build-ipad build-watch test run clean uitest uitest-tsan uitest-asan
+
+# The UI tests against the stub server. DEVICE takes a simulator id, ONLY narrows them down
+# (ONLY=BadDataTests/testHugeValues), OUT is where the logs and sanitizer reports land.
+DEVICE ?= platform=iOS Simulator,name=$(SIMULATOR)
+ONLY ?= POKYHUITests
+OUT ?= build/uitest
+UITEST = TEST_RUNNER_POKYH_UITEST_DIR="$(abspath $(OUT))" TEST_RUNNER_POKYH_MAIN_THREAD_CHECK=1 \
+	xcodebuild test -project POKYH.xcodeproj -scheme POKYH -destination '$(DEVICE)' -derivedDataPath $(DERIVED) \
+	-parallel-testing-enabled NO -only-testing:$(if $(findstring POKYHUITests,$(ONLY)),$(ONLY),POKYHUITests/$(ONLY))
 
 setup: Config/Secrets.xcconfig Config/Local.xcconfig project
 
@@ -35,6 +44,18 @@ build-watch: project
 
 test:
 	cd Packages/PokyhKit && swift test
+
+uitest:
+	mkdir -p $(OUT)
+	$(UITEST) -resultBundlePath $(OUT)/plain-$$(date +%s).xcresult
+
+uitest-tsan:
+	mkdir -p $(OUT)
+	$(UITEST) -enableThreadSanitizer YES -resultBundlePath $(OUT)/tsan-$$(date +%s).xcresult
+
+uitest-asan:
+	mkdir -p $(OUT)
+	$(UITEST) -enableAddressSanitizer YES -enableUndefinedBehaviorSanitizer YES -resultBundlePath $(OUT)/asan-$$(date +%s).xcresult
 
 run: build
 	xcrun simctl boot '$(SIMULATOR)' 2>/dev/null || true

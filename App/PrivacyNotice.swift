@@ -38,7 +38,7 @@ extension AppState {
 /// A banner at the top, where the offline notice sits. Blocks nothing and stays until
 /// "Verstanden". It informs, it doesn't ask, so there's nothing to decline.
 struct PrivacyNoticeBanner: View {
-    @EnvironmentObject var app: AppState
+    @Environment(AppState.self) var app
     let notice: PrivacyNoticePrompt
     @Environment(\.strings) private var s
     @State private var saving = false

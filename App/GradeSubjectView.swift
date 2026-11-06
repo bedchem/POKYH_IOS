@@ -105,8 +105,6 @@ struct GradeSubjectView: View {
                     } else {
                         TrendChart(points: points)
                     }
-                    Text(s.grades.trendSub).textStyle(.caption).foregroundStyle(Palette.textTertiary)
-                        .padding(.top, Spacing.xs)
                 }
                 .fadeIn(delay: 0.05)
 
@@ -151,7 +149,7 @@ struct GradeSubjectView: View {
             }
             Spacer(minLength: Spacing.lg)
             HStack(alignment: .lastTextBaseline) {
-                Text(avg > 0 ? GradesLook.num(avg, s) : "—")
+                Text(avg > 0 ? GradesLook.num(avg, s) : "–")
                     .textStyle(.statLarge)
                     .foregroundStyle(tone.ink)
                     .contentTransition(.numericText())
@@ -184,10 +182,7 @@ struct GradeSubjectView: View {
         let rate = values.isEmpty ? 0 : Double(positive) * 100 / Double(values.count)
         return VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(s.grades.ratioTitle).textStyle(TextStyle.callout.weight(.bold)).foregroundStyle(Palette.textPrimary)
-                    Text(s.grades.ratioSub).textStyle(.footnote).foregroundStyle(Palette.textSecondary)
-                }
+                Text(s.grades.ratioTitle).textStyle(TextStyle.callout.weight(.bold)).foregroundStyle(Palette.textPrimary)
                 Spacer(minLength: Spacing.sm)
                 Text("\(Int(rate.rounded())) %")
                     .textStyle(TextStyle.caption.weight(.bold))
@@ -321,7 +316,6 @@ struct GradeSubjectView: View {
     private var calcSection: some View {
         PokyhSection(s.grades.avgCalc) {
             VStack(alignment: .leading, spacing: Spacing.md) {
-                Text(s.grades.avgCalcSub).textStyle(.footnote).foregroundStyle(Palette.textSecondary)
                 HStack(spacing: Spacing.sm) {
                     TextField("", text: gradeBinding($newGradeInput), prompt: Text(s.grades.examplePlaceholder).foregroundStyle(Palette.textTertiary))
                         .keyboardType(.decimalPad)
@@ -365,6 +359,8 @@ struct GradeSubjectView: View {
                     ChipFlow(spacing: 6) {
                         ForEach(Array(draft.customGrades.enumerated()), id: \.offset) { idx, value in
                             Button {
+                                // Still tappable while it animates out, by then with a stale index.
+                                guard draft.customGrades.indices.contains(idx) else { return }
                                 withAnimation(Motion.snappy) { _ = draft.customGrades.remove(at: idx) }
                             } label: {
                                 HStack(spacing: 6) {
@@ -560,6 +556,9 @@ struct TrendChart: View {
                 }
             }
             .frame(height: 200)
+            // Every new grade shows at once: a morph per grade restarted with each tap, so a quick
+            // run of grades only drew the curve at the end. Tapping a dot still animates.
+            .transaction(value: points) { $0.animation = nil }
 
             // The first, middle and last grade's dates.
             let dated = points.enumerated().compactMap { i, p in p.date.map { (i, $0) } }

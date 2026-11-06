@@ -169,7 +169,7 @@ extension LoginStrings {
 
 extension LoginStrings {
     static let it = LoginStrings(
-        tagline: "L’app scolastica della LBS Bressanone",
+        tagline: "La tua scuola in un’app",
         username: "Nome utente",
         password: "Password",
         showPassword: "Mostra password",
@@ -253,7 +253,7 @@ extension LoginStrings {
 
 extension LoginStrings {
     static let en = LoginStrings(
-        tagline: "The school app for LBS Brixen",
+        tagline: "Your school in one app",
         username: "Username",
         password: "Password",
         showPassword: "Show password",

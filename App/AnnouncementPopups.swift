@@ -97,7 +97,7 @@ enum PresentedModal {
 /// Shows what's due over the whole app. A popup never flashes past while the sign-in check or a
 /// sheet is still settling, and waits behind a recap that's open.
 struct AnnouncementPopupHost: ViewModifier {
-    @EnvironmentObject private var app: AppState
+    @Environment(AppState.self) private var app
     @ObservedObject private var store = PopupStore.shared
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion

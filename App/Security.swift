@@ -4,8 +4,8 @@ import PokyhCore
 import Security
 
 /// Saved passwords, one Keychain item per account. Reading one takes Face ID, Touch ID or the
-/// device passcode (`.userPresence`); the items only open while the phone is unlocked and never
-/// leave it (no iCloud Keychain, no backup). WebUntis wants the password itself on the next
+/// device passcode (`.userPresence`); the items only open while the phone is unlocked, never
+/// leave it (no iCloud Keychain, no backup) and are gone if the passcode is ever turned off. WebUntis wants the password itself on the next
 /// sign-in, so it can't be kept as a hash.
 ///
 /// Reads never show UI here. The app runs the check first (`Biometric.authenticate`) and hands
@@ -25,10 +25,15 @@ enum Keychain {
     @discardableResult
     static func set(password: String, for username: String) -> Bool {
         let account = AccountRoster.key(username)
+        #if DEBUG
+        if StubServer.isActive {
+            StubKeychain.set(password, for: account)
+            return true
+        }
+        #endif
         SecItemDelete(query(account) as CFDictionary)
         guard Biometric.available,
-              let access = SecAccessControlCreateWithFlags(
-                nil, kSecAttrAccessibleWhenUnlockedThisDeviceOnly, .userPresence, nil)
+              let access = SecAccessControlCreateWithFlags(nil, protectionClass, .userPresence, nil)
         else { return false }
         var add = query(account)
         add[kSecValueData as String] = Data(password.utf8)
@@ -37,16 +42,29 @@ enum Keychain {
         return SecItemAdd(add as CFDictionary, nil) == errSecSuccess
     }
 
+    /// Only while a passcode is set: turning it off deletes the item instead of leaving it open.
+    private static var protectionClass: CFString { kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly }
+
     /// The password, read with a context the person already confirmed. nil without one.
     static func password(for username: String, context: LAContext?) -> String? {
+        #if DEBUG
+        if StubServer.isActive { return context == nil ? nil : StubKeychain.password(for: AccountRoster.key(username)) }
+        #endif
         var q = query(AccountRoster.key(username))
         q[kSecReturnData as String] = true
+        q[kSecReturnAttributes as String] = true
         q[kSecMatchLimit as String] = kSecMatchLimitOne
         q[kSecUseAuthenticationContext as String] = context ?? silent
         var item: CFTypeRef?
         guard SecItemCopyMatching(q as CFDictionary, &item) == errSecSuccess,
-              let data = item as? Data else { return nil }
-        return String(decoding: data, as: UTF8.self)
+              let found = item as? [String: Any],
+              let data = found[kSecValueData as String] as? Data else { return nil }
+        let password = String(decoding: data, as: UTF8.self)
+        // Saved by a build that only asked for an unlocked phone: moved over now that it's open.
+        if let current = found[kSecAttrAccessible as String] as? String, current != protectionClass as String {
+            set(password: password, for: username)
+        }
+        return password
     }
 
     /// Only while the app is unlocked; never asks.
@@ -56,6 +74,9 @@ enum Keychain {
 
     /// Whether a password is kept, without reading it (attributes need no Face ID).
     static func exists(username: String) -> Bool {
+        #if DEBUG
+        if StubServer.isActive { return StubKeychain.password(for: AccountRoster.key(username)) != nil }
+        #endif
         var q = query(AccountRoster.key(username))
         q[kSecMatchLimit as String] = kSecMatchLimitOne
         q[kSecReturnAttributes as String] = true
@@ -65,11 +86,17 @@ enum Keychain {
     }
 
     static func delete(username: String) {
+        #if DEBUG
+        if StubServer.isActive { StubKeychain.delete(AccountRoster.key(username)); return }
+        #endif
         SecItemDelete(query(AccountRoster.key(username)) as CFDictionary)
     }
 
     /// Every saved password, also from older builds. Deleting needs no Face ID.
     static func purgeAll() {
+        #if DEBUG
+        if StubServer.isActive { StubKeychain.purge(); return }
+        #endif
         for svc in [service] + Legacy.services {
             SecItemDelete([
                 kSecClass as String: kSecClassGenericPassword,
@@ -199,6 +226,10 @@ nonisolated enum Biometric {
     nonisolated(unsafe) private static let probeContext = LAContext()
 
     static let info: Info = {
+        #if DEBUG
+        // The simulator has no passcode, so the real check can't pass in a UI test.
+        if StubServer.isActive { return Info(available: true, kind: .faceID, symbol: "faceid") }
+        #endif
         let ok = probeContext.canEvaluatePolicy(.deviceOwnerAuthentication, error: nil)
         switch probeContext.biometryType {
         case .faceID:  return Info(available: ok, kind: .faceID, symbol: "faceid")
@@ -217,6 +248,12 @@ nonisolated enum Biometric {
     @MainActor
     static func authenticate(reason: String) async -> LAContext? {
         let ctx = LAContext()
+        #if DEBUG
+        if StubServer.isActive {
+            try? await Task.sleep(for: .milliseconds(100))
+            return StubServer.biometryFails ? nil : ctx
+        }
+        #endif
         guard ctx.canEvaluatePolicy(.deviceOwnerAuthentication, error: nil) else { return nil }
         let ok = await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
             ctx.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason) { success, _ in

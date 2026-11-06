@@ -21,10 +21,10 @@ private enum ProfileType {
 }
 
 /// Between two settings groups.
-private let groupGap: CGFloat = 56
+let groupGap: CGFloat = 56
 
 struct ProfileView: View {
-    @EnvironmentObject var app: AppState
+    @Environment(AppState.self) var app
     @Environment(\.dismiss) private var dismiss
     @Environment(\.strings) private var s
     @Environment(\.openURL) private var openURL
@@ -55,14 +55,15 @@ struct ProfileView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
+                // No fade-ins here: the sheet already slides in, staggered parts only made it feel slow.
                 if let session = app.session {
-                    ProfileHeader(session: session).fadeIn()
+                    ProfileHeader(session: session)
                 }
-                accountsSection.fadeIn(delay: 0.06)
+                ActivitySection { showSettings = true }
+                accountsSection
                 if let session = app.session {
                     accountGroup(session)
                         .padding(.top, groupGap)
-                        .fadeIn(delay: 0.1)
                 }
             }
             .padding(.horizontal, Spacing.screenH)
@@ -95,7 +96,7 @@ struct ProfileView: View {
         .animation(switchSpring, value: app.accounts)
         .sensoryFeedback(.success, trigger: app.session?.username)
         .sensoryFeedback(.selection, trigger: app.defaultUsername)
-        .sheet(isPresented: $app.showAddAccount) {
+        .sheet(isPresented: Bindable(app).showAddAccount) {
             NavigationStack { LoginView(isAdditional: true) }
         }
         .sheet(isPresented: $showConnectionStatus) {
@@ -111,10 +112,6 @@ struct ProfileView: View {
                 .textStyle(ProfileType.groupTitle)
                 .foregroundStyle(Palette.textPrimary)
                 .accessibilityAddTraits(.isHeader)
-            Text(s.account.accountsHint)
-                .textStyle(ProfileType.lead)
-                .foregroundStyle(Palette.textSecondary)
-                .padding(.top, 6)
                 .padding(.bottom, Spacing.md)
             ForEach(sortedAccounts) { acc in
                 AccountRow(
@@ -187,7 +184,7 @@ struct ProfileView: View {
             (p.username, session.username, true, false),
             (p.studentId, session.hasUntis && session.studentId > 0 ? "\(session.studentId)" : "", true, false),
             (p.klasse, session.klasseName, false, false),
-            (s.account.schoolLabel, DefaultSchool.name, false, false),
+            (s.account.schoolLabel, session.schoolRef.name, false, false),
             (p.userId, session.stableUid ?? "", true, true),
             (p.classIdLabel, session.classId ?? "", true, true),
         ].filter { !$0.value.isEmpty }
@@ -209,8 +206,8 @@ struct ProfileView: View {
                 let connected = app.backendStatus == .connected
                 ProfilePill(text: BackendStatusText.label(app.backendStatus, s), tone: connected ? Decorative.sage : Decorative.butter)
             }
-            SettingsLinkRow(p.settings, hint: s.account.settingsHint) { showSettings = true }
-            SettingsLinkRow(s.account.website, hint: s.account.websiteHint, external: true) {
+            SettingsLinkRow(p.settings) { showSettings = true }
+            SettingsLinkRow(s.account.website, external: true) {
                 openURL(AppConfig.current.websiteURL)
             }
             LogoutRow { confirmLogout = true }
@@ -226,7 +223,7 @@ private struct ProfileHeader: View {
 
     var body: some View {
         let name = session.personName ?? session.username
-        let meta = [session.klasseName, DefaultSchool.name, session.isParent ? s.profile.parent : s.profile.student]
+        let meta = [session.klasseName, session.schoolRef.name, session.isParent ? s.profile.parent : s.profile.student]
             .filter { !$0.isEmpty }
             .joined(separator: " · ")
         HStack(spacing: Spacing.xl) {
@@ -376,7 +373,7 @@ private struct AddAccountRow: View {
 
 /// Every confirmation of the profile page in one place.
 private struct ProfileDialogs: ViewModifier {
-    @EnvironmentObject var app: AppState
+    @Environment(AppState.self) var app
     @Environment(\.dismiss) private var dismiss
     @Environment(\.strings) private var s
     @Binding var confirmLogout: Bool
@@ -447,7 +444,7 @@ private struct ProfileDialogs: ViewModifier {
 /// Android's SettingsScreen: how POKYH looks and speaks, notifications, the watch, privacy,
 /// storage and about, each group's rows under thin rules.
 struct SettingsView: View {
-    @EnvironmentObject var app: AppState
+    @Environment(AppState.self) var app
     @Environment(\.dismiss) private var dismiss
     @Environment(\.strings) private var s
     @Environment(\.openURL) private var openURL
@@ -456,6 +453,7 @@ struct SettingsView: View {
     @State private var language = LanguageChoice.chosen(in: .standard)
     @State private var cacheCleared = false
     @State private var showDevices = false
+    @State private var untisAccount = UntisAccountModel()
     @State private var scanningWebSignIn = false
     @State private var webSignInWorking = false
 
@@ -471,7 +469,7 @@ struct SettingsView: View {
                     LanguageChoice.choose(choice, in: shared)
                 }
                 WidgetCenter.shared.reloadAllTimelines()
-                app.objectWillChange.send()
+                app.language = LanguageChoice.current(in: .standard)
             }
         )
     }
@@ -479,33 +477,27 @@ struct SettingsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                SettingsPageHeader(s.settings.title, lead: s.account.settingsLead).fadeIn()
-
                 SettingsGroup(s.settings.appearance) {
                     SettingsRule()
-                    settingBlock(s.settings.theme, hint: s.account.themeHint) {
-                        ThemeChooser(selection: $app.themeMode).padding(.top, Spacing.lg)
+                    settingBlock(s.settings.theme) {
+                        ThemeChooser(selection: Bindable(app).themeMode).padding(.top, Spacing.lg)
                     }
-                    SettingsRow(s.settings.language, hint: s.settings.languageHint) {
+                    SettingsRow(s.settings.language) {
                         LanguageMenu(selection: languageSelection)
                     }
                 }
-                .fadeIn(delay: 0.02)
+                .padding(.top, Spacing.sm)
 
                 accountGroup
                     .padding(.top, groupGap)
-                    .fadeIn(delay: 0.025)
 
                 SettingsGroup(s.settings.notifications) {
                     NotificationsItem()
                     NotificationKindRows()
                 }
                 .padding(.top, groupGap)
-                .fadeIn(delay: 0.03)
 
                 WatchSettingsGroup()
-                    .padding(.top, groupGap)
-                    .fadeIn(delay: 0.04)
 
                 SettingsGroup(s.settings.privacySection) {
                     if app.session?.apiToken != nil { PrivacySettingsRows() }
@@ -517,25 +509,26 @@ struct SettingsView: View {
                     }
                 }
                 .padding(.top, groupGap)
-                .fadeIn(delay: 0.05)
 
                 SettingsGroup(s.settings.storage) {
-                    SettingsRow(s.account.clearCacheTitle, hint: s.account.clearCacheHint) {
-                        if cacheCleared {
-                            ProfilePill(text: s.account.cleared, tone: Decorative.sage, symbol: "checkmark")
-                                .transition(.scale.combined(with: .opacity))
-                        } else {
-                            Button(s.account.clearCacheTitle) { clearCache() }
-                                .buttonStyle(.secondary(compact: true))
+                    // Whole rows to tap, like the system's own settings, not a row with its own name on a button.
+                    Button { clearCache() } label: {
+                        SettingsRow(s.account.clearCacheTitle) {
+                            if cacheCleared {
+                                ProfilePill(text: s.account.cleared, tone: Decorative.sage, symbol: "checkmark")
+                                    .transition(.scale.combined(with: .opacity))
+                            }
                         }
+                        .contentShape(.rect)
                     }
-                    SettingsRow(s.settings.clearAll, hint: s.settings.clearAllHint, danger: true) {
-                        Button(s.settings.clearAllConfirm) { confirmClearData = true }
-                            .buttonStyle(.destructive)
+                    .buttonStyle(.rowPress)
+                    .disabled(cacheCleared)
+                    Button { confirmClearData = true } label: {
+                        SettingsRow(s.settings.clearAll, danger: true).contentShape(.rect)
                     }
+                    .buttonStyle(.rowPress)
                 }
                 .padding(.top, groupGap)
-                .fadeIn(delay: 0.06)
 
                 SettingsGroup(s.settings.about) {
                     SettingsRow(s.settings.version) {
@@ -551,7 +544,6 @@ struct SettingsView: View {
                     }
                 }
                 .padding(.top, groupGap)
-                .fadeIn(delay: 0.08)
 
                 Text(s.settings.footer)
                     .textStyle(.caption2)
@@ -564,7 +556,7 @@ struct SettingsView: View {
             .frame(maxWidth: .infinity)
         }
         .navigationTitle(s.settings.title)
-        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarTitleDisplayMode(.large)
         .appBackground()
         .confirmationDialog(s.settings.logoutTitle, isPresented: $confirmLogout, titleVisibility: .visible) {
             Button(s.settings.logout, role: .destructive) { app.logout(); dismiss() }
@@ -584,25 +576,26 @@ struct SettingsView: View {
 
     /// A teacher has no POKYH account, so there's nothing to see or delete on the backend.
     @ViewBuilder private var accountGroup: some View {
-        if app.session != nil, app.backendStatus != .notStudent {
+        if let session = app.session, session.hasUntis || app.backendStatus != .notStudent {
             SettingsGroup(s.settings.accountSecurity) {
+                if session.hasUntis { UntisSecurityRows(model: untisAccount) }
                 if app.session?.apiToken != nil {
-                    SettingsLinkRow(s.settings.devicesTitle, hint: s.settings.devicesHint) { showDevices = true }
-                    SettingsLinkRow(s.settings.webSignIn, hint: s.settings.webSignInHint, action: { scanningWebSignIn = true }) {
+                    SettingsLinkRow(s.settings.devicesTitle) { showDevices = true }
+                    SettingsLinkRow(s.settings.webSignIn, action: { scanningWebSignIn = true }) {
                         if webSignInWorking { ProgressView().controlSize(.small) }
                     }
                     .disabled(webSignInWorking)
                 }
-                DeleteAccountRow()
+                if session.hasUntis { UntisPreferenceRows(model: untisAccount) }
+                if app.backendStatus != .notStudent { DeleteAccountRow() }
             }
         }
     }
 
-    /// Title and hint over a control that needs the full width.
-    private func settingBlock<Control: View>(_ title: String, hint: String, @ViewBuilder control: () -> Control) -> some View {
+    /// A title over a control that needs the full width.
+    private func settingBlock<Control: View>(_ title: String, @ViewBuilder control: () -> Control) -> some View {
         VStack(alignment: .leading, spacing: Spacing.xs) {
             Text(title).textStyle(ProfileType.rowTitle).foregroundStyle(Palette.textPrimary)
-            Text(hint).textStyle(ProfileType.rowHint).foregroundStyle(Palette.textSecondary)
             control()
         }
         .padding(.vertical, Spacing.xl)
@@ -613,6 +606,7 @@ struct SettingsView: View {
         UntisClient.shared.clearCaches()
         BackendClient.shared.clearCaches()
         ImageCache.purge()
+        RemotePhotos.purge()
         DiskCache.purge()
         URLCache.shared.removeAllCachedResponses()
         withAnimation(Motion.snappy) { cacheCleared = true }
@@ -824,7 +818,7 @@ private struct NotificationsItem: View {
     private var isOn: Bool { status == .authorized || status == .provisional || status == .ephemeral }
 
     var body: some View {
-        SettingsRow(s.account.push, hint: isOn ? s.settings.notificationsOn : status == .denied ? s.account.pushBlocked : s.account.pushOff) {
+        SettingsRow(s.account.push, hint: status == .denied ? s.account.pushBlocked : nil) {
             if isOn {
                 ProfilePill(text: s.account.pushOn, tone: Decorative.sage, symbol: "checkmark")
             } else if status != nil {
@@ -860,7 +854,7 @@ private struct NotificationsItem: View {
 
 /// One switch per kind, for what this account can get at all.
 private struct NotificationKindRows: View {
-    @EnvironmentObject var app: AppState
+    @Environment(AppState.self) var app
     @Environment(\.strings) private var s
     @State private var on = Dictionary(uniqueKeysWithValues: NotificationKind.allCases.map { ($0, NotificationPrefs.isOn($0)) })
 
@@ -879,7 +873,7 @@ private struct NotificationKindRows: View {
     var body: some View {
         let t = NotificationText.of(s.lang)
         ForEach(kinds, id: \.self) { kind in
-            SettingsRow(t.title(kind), hint: t.hint(kind)) {
+            SettingsRow(t.title(kind)) {
                 Toggle(t.title(kind), isOn: binding(kind))
                     .labelsHidden()
                     .tint(Palette.accent)
@@ -900,7 +894,7 @@ private struct NotificationKindRows: View {
 
 /// Paired? POKYH on the watch? And the button that hands the signed-in account over again.
 private struct WatchSettingsGroup: View {
-    @EnvironmentObject var app: AppState
+    @Environment(AppState.self) var app
     @Environment(\.strings) private var s
     @State private var result: WatchSync.PairResult?
     @State private var sending = false
@@ -909,19 +903,25 @@ private struct WatchSettingsGroup: View {
 
     var body: some View {
         let t = ProfileText.of(s.lang)
-        SettingsGroup(t.watchTitle) {
-            SettingsRow(t.watchStatus, hint: statusHint(t)) {
-                ProfilePill(text: statusLabel(t), tone: pairing.canSend ? Decorative.sage : Decorative.butter,
-                            symbol: pairing.canSend ? "applewatch.radiowaves.left.and.right" : "applewatch.slash")
-            }
-            SettingsRow(t.connect, hint: connectHint(t), alert: alert(t)) {
-                Button {
-                    connect()
-                } label: {
-                    ButtonLabel(t.connectButton, symbol: "applewatch", busy: sending)
+        // An iPad, or a phone without a watch, has nothing to set up here.
+        Group {
+            if pairing.state != .unsupported && pairing.state != .notPaired {
+                SettingsGroup(t.watchTitle) {
+                    SettingsRow(t.watchStatus) {
+                        ProfilePill(text: statusLabel(t), tone: pairing.canSend ? Decorative.sage : Decorative.butter,
+                                    symbol: pairing.canSend ? "applewatch.radiowaves.left.and.right" : "applewatch.slash")
+                    }
+                    SettingsRow(t.connect, hint: lastSentHint(t), alert: alert(t)) {
+                        Button {
+                            connect()
+                        } label: {
+                            ButtonLabel(t.connectButton, symbol: "applewatch", busy: sending)
+                        }
+                        .buttonStyle(.secondary(compact: true))
+                        .disabled(sending || app.session == nil)
+                    }
                 }
-                .buttonStyle(.secondary(compact: true))
-                .disabled(sending || app.session == nil || pairing.state == .unsupported)
+                .padding(.top, groupGap)
             }
         }
         .animation(Motion.standardEase, value: pairing.state)
@@ -951,19 +951,9 @@ private struct WatchSettingsGroup: View {
         }
     }
 
-    private func statusHint(_ t: ProfileText) -> String {
-        switch pairing.state {
-        case .checking: t.checkingHint
-        case .unsupported: t.unsupportedHint
-        case .notPaired: t.notPairedHint
-        case .appMissing: t.appMissingHint
-        case .ready: t.readyHint
-        }
-    }
-
-    private func connectHint(_ t: ProfileText) -> String {
-        guard let sent = pairing.lastSent else { return t.connectHint }
-        return t.connectHint + " " + t.lastSent(TaskDates.dueLabel(sent, s))
+    /// Only when it says something: when the account last went over.
+    private func lastSentHint(_ t: ProfileText) -> String? {
+        pairing.lastSent.map { t.lastSent(TaskDates.dueLabel($0, s)) }
     }
 
     private func alert(_ t: ProfileText) -> String? {
@@ -981,7 +971,7 @@ private struct WatchSettingsGroup: View {
 /// technical details for support, folded away.
 struct ConnectionStatusView: View {
     let session: UserSession
-    @EnvironmentObject var app: AppState
+    @Environment(AppState.self) var app
     @Environment(\.dismiss) private var dismiss
     @Environment(\.strings) private var s
     @State private var details: String?
@@ -1038,7 +1028,7 @@ struct ConnectionStatusView: View {
                         if !session.klasseName.isEmpty {
                             SettingsRow(s.profile.klasse) { SettingsValue(session.klasseName) }
                         }
-                        SettingsRow(s.profile.school) { SettingsValue(DefaultSchool.name) }
+                        SettingsRow(s.profile.school) { SettingsValue(session.schoolRef.name) }
                         SettingsRow(s.profile.role) {
                             SettingsValue(session.isParent ? s.profile.parent : (session.isStudent ? s.profile.student : s.profile.staff))
                         }
@@ -1052,7 +1042,7 @@ struct ConnectionStatusView: View {
                             .buttonStyle(.secondary(compact: true))
                             .disabled(loadingDetails)
                         }
-                        SettingsLinkRow(s.profile.technicalDetails, hint: s.profile.forSupport) {
+                        SettingsLinkRow(s.profile.technicalDetails) {
                             withAnimation(Motion.standardEase) { showDetails.toggle() }
                         }
                         if showDetails {
@@ -1072,11 +1062,6 @@ struct ConnectionStatusView: View {
                             .padding(.bottom, Spacing.lg)
                             .transition(.opacity)
                         }
-                        SettingsRule()
-                        Label(s.profile.detailsNote, systemImage: "lock.shield")
-                            .textStyle(.caption)
-                            .foregroundStyle(Palette.textTertiary)
-                            .padding(.top, Spacing.lg)
                     }
                     .padding(.top, groupGap)
                 }
@@ -1124,7 +1109,7 @@ enum BackendStatusText {
 
 /// A row that goes somewhere: title, hint, an optional trailing view, then the chevron (or the
 /// arrow out of the app).
-private struct SettingsLinkRow<Trailing: View>: View {
+struct SettingsLinkRow<Trailing: View>: View {
     let title: String
     let hint: String?
     let external: Bool
@@ -1175,7 +1160,7 @@ private struct LogoutRow: View {
     @Environment(\.strings) private var s
 
     var body: some View {
-        SettingsRow(s.settings.logout, hint: s.account.logoutHint, danger: true) {
+        SettingsRow(s.settings.logout, danger: true) {
             Button(action: action) {
                 ButtonLabel(s.settings.logout, symbol: "rectangle.portrait.and.arrow.right")
             }
@@ -1184,7 +1169,7 @@ private struct LogoutRow: View {
     }
 }
 
-private struct ProfilePill: View {
+struct ProfilePill: View {
     let text: String
     let tone: Tone
     var symbol: String?
@@ -1238,17 +1223,13 @@ struct ProfileText {
     let watchTitle: String
     let watchStatus: String
     let checking: String
-    let checkingHint: String
     let unsupported: String
-    let unsupportedHint: String
     let notPaired: String
     let notPairedHint: String
     let appMissing: String
     let appMissingHint: String
     let ready: String
-    let readyHint: String
     let connect: String
-    let connectHint: String
     let connectButton: String
     let lastSent: (String) -> String
     let noAccount: String
@@ -1266,17 +1247,13 @@ struct ProfileText {
         watchTitle: "Apple Watch",
         watchStatus: "Status",
         checking: "Wird geprüft",
-        checkingHint: "POKYH fragt gerade bei der Apple Watch nach.",
         unsupported: "Nicht verfügbar",
-        unsupportedHint: "Auf diesem Gerät gibt es keine Apple Watch.",
         notPaired: "Nicht gekoppelt",
         notPairedHint: "Mit diesem iPhone ist keine Apple Watch gekoppelt.",
         appMissing: "App fehlt",
         appMissingHint: "Die Apple Watch ist gekoppelt, aber POKYH ist darauf nicht installiert. Installiere es in der Watch-App.",
         ready: "Bereit",
-        readyHint: "Gekoppelt, POKYH ist auf der Uhr installiert.",
         connect: "Mit Apple Watch verbinden",
-        connectHint: "Überträgt dein angemeldetes Konto auf die Uhr. Sie bleibt danach angemeldet.",
         connectButton: "Verbinden",
         lastSent: { "Zuletzt gesendet: \($0)." },
         noAccount: "Melde dich zuerst auf dem iPhone an.",
@@ -1287,17 +1264,13 @@ struct ProfileText {
         watchTitle: "Apple Watch",
         watchStatus: "Stato",
         checking: "Verifica in corso",
-        checkingHint: "POKYH sta contattando l’Apple Watch.",
         unsupported: "Non disponibile",
-        unsupportedHint: "Su questo dispositivo non c’è un Apple Watch.",
         notPaired: "Non abbinato",
         notPairedHint: "Nessun Apple Watch è abbinato a questo iPhone.",
         appMissing: "App mancante",
         appMissingHint: "L’Apple Watch è abbinato, ma POKYH non è installato. Installalo dall’app Watch.",
         ready: "Pronto",
-        readyHint: "Abbinato, POKYH è installato sull’orologio.",
         connect: "Collega ad Apple Watch",
-        connectHint: "Trasferisce il tuo account sull’orologio, che poi resta connesso.",
         connectButton: "Collega",
         lastSent: { "Ultimo invio: \($0)." },
         noAccount: "Prima accedi sull’iPhone.",
@@ -1308,17 +1281,13 @@ struct ProfileText {
         watchTitle: "Apple Watch",
         watchStatus: "Status",
         checking: "Checking",
-        checkingHint: "POKYH is asking the Apple Watch right now.",
         unsupported: "Not available",
-        unsupportedHint: "There's no Apple Watch on this device.",
         notPaired: "Not paired",
         notPairedHint: "No Apple Watch is paired with this iPhone.",
         appMissing: "App missing",
         appMissingHint: "The Apple Watch is paired, but POKYH isn't installed on it. Install it from the Watch app.",
         ready: "Ready",
-        readyHint: "Paired, POKYH is installed on the watch.",
         connect: "Connect to Apple Watch",
-        connectHint: "Sends your signed-in account to the watch. It stays signed in after that.",
         connectButton: "Connect",
         lastSent: { "Last sent: \($0)." },
         noAccount: "Sign in on the iPhone first.",

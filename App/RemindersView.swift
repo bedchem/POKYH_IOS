@@ -5,7 +5,7 @@ import PokyhDesign
 /// Class reminders: the same swipeable tile rows as the to-dos next door, what's due first, then
 /// one section per day. The own ones (all of them for an admin) swipe to edit or delete.
 struct RemindersView: View {
-    @EnvironmentObject var app: AppState
+    @Environment(AppState.self) var app
     @Environment(\.strings) private var s
     @State private var reminders: [ApiReminder] = []
     @State private var myClass: ApiClass?
@@ -17,8 +17,18 @@ struct RemindersView: View {
     @State private var isAdmin = false
     @State private var actionFailed = false
     @State private var saves = 0
+    @State private var settled = false
+    @State private var query = ""
+    @State private var showMembers = false
+    @State private var offlineBlocked = false
 
-    private var hasBackend: Bool { app.session?.apiToken != nil }
+    private var hasBackend: Bool { app.session?.hasBackend ?? false }
+    private var online: Bool { app.session?.apiToken != nil }
+    /// Made offline, not sent yet.
+    private var pending: [PendingItem] {
+        guard let session = app.session else { return [] }
+        return Outbox.shared.items(.reminder, for: session.username).filter { SearchMatch.matches(query, $0.title, $0.text) }
+    }
 
     var body: some View {
         Group {
@@ -30,11 +40,25 @@ struct RemindersView: View {
                 ErrorStateView(message: error) { Task { await load() } }
             } else if myClass == nil {
                 emptyState(s.tasks.noClass, s.tasks.noClassText, symbol: "person.3")
-            } else if visibleReminders.isEmpty {
-                emptyState(s.tasks.remindersEmpty, s.tasks.remindersEmptyText, symbol: "bell")
+            } else if visibleReminders.isEmpty && pending.isEmpty && query.isEmpty {
+                emptyState(s.tasks.remindersEmpty, symbol: "bell")
+            } else if visibleReminders.isEmpty && pending.isEmpty {
+                ContentUnavailableView.search(text: query)
             } else {
                 list
             }
+        }
+        .listSearch($query, prompt: s.tasks.searchReminders)
+        .toolbar {
+            if myClass != nil {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { showMembers = true } label: { Image(systemName: "person.3") }
+                        .accessibilityLabel(s.tasks.members)
+                }
+            }
+        }
+        .sheet(isPresented: $showMembers) {
+            if let c = myClass { ClassMembersSheet(klass: c) }
         }
         .navigationTitle(s.tasks.reminders)
         .navigationSubtitle(upcomingCount > 0 ? s.tasks.upcoming(upcomingCount) : "")
@@ -46,7 +70,7 @@ struct RemindersView: View {
                     .padding(.bottom, Spacing.lg)
             }
         }
-        .navigationDestination(item: $selectedId) { id in
+        .pushed(item: $selectedId) { id in
             if let r = reminders.first(where: { $0.id == id }), let c = myClass {
                 ReminderDetailView(reminder: r, classId: c.id, onDelete: { await delete(r) }, onEdited: { changed in
                     if let i = reminders.firstIndex(where: { $0.id == changed.id }) { reminders[i] = changed }
@@ -66,12 +90,22 @@ struct RemindersView: View {
         .alert(s.tasks.saveFailed, isPresented: $actionFailed) {
             Button(s.common.ok, role: .cancel) {}
         }
+        .alert(s.common.offlineTitle, isPresented: $offlineBlocked) {
+            Button(s.common.ok, role: .cancel) {}
+        }
         .sensoryFeedback(.success, trigger: saves)
-        .task { if hasBackend { await load() } }
-        .refreshable { await load() }
+        // Again when the offline session turns into a real one, and when queued ones went out.
+        .task(id: online) { if hasBackend { await load() } }
+        .onChange(of: pending.count) { before, after in
+            if after < before { Task { await load() } }
+        }
+        .refreshable {
+            await app.reconnect()
+            await load()
+        }
     }
 
-    private func emptyState(_ title: String, _ text: String, symbol: String) -> some View {
+    private func emptyState(_ title: String, _ text: String? = nil, symbol: String) -> some View {
         StateView(title, message: text, art: {
             IconTile(symbol, color: Brand.accent, size: 64)
         })
@@ -86,6 +120,17 @@ struct RemindersView: View {
             MessageFormat.parse(r.remindAt).map { Calendar.current.startOfDay(for: $0) } ?? .distantFuture
         }
         return List {
+            ForEach(pending) { item in
+                PendingRow(title: item.title, text: item.text)
+                    .taskListRow()
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        Button(role: .destructive) {
+                            if let session = app.session { Outbox.shared.remove(item.id, for: session.username) }
+                        } label: {
+                            Label(s.common.delete, systemImage: "trash")
+                        }
+                    }
+            }
             if !due.isEmpty {
                 TaskListLabel(s.tasks.due)
                 ForEach(due) { r in row(r, overdue: true) }
@@ -98,7 +143,8 @@ struct RemindersView: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .contentMargins(.bottom, 96, for: .scrollContent)
-        .animation(Motion.standardEase, value: reminders)
+        // Only once the list is on screen: animating the first load slid rows over each other.
+        .animation(settled ? Motion.standardEase : nil, value: reminders)
     }
 
     private func row(_ r: ApiReminder, overdue: Bool) -> some View {
@@ -110,6 +156,14 @@ struct RemindersView: View {
         .listRowInsets(EdgeInsets(top: Spacing.rowGap / 2, leading: Spacing.screenH, bottom: Spacing.rowGap / 2, trailing: Spacing.screenH))
         .listRowBackground(Color.clear)
         .listRowSeparator(.hidden)
+        .contextMenu {
+            if isMine(r) || isAdmin {
+                Button { editing = r } label: { Label(s.tasks.edit, systemImage: "pencil") }
+                Button(role: .destructive) { Task { await delete(r) } } label: {
+                    Label(s.common.delete, systemImage: "trash")
+                }
+            }
+        }
         .swipeActions(allowsFullSwipe: true) {
             if isMine(r) || isAdmin {
                 Button(role: .destructive) { Task { await delete(r) } } label: {
@@ -144,31 +198,51 @@ struct RemindersView: View {
     }
 
     private func load() async {
-        guard let s = app.session, let token = s.apiToken else { return }
+        guard let s = app.session, s.hasBackend else { return }
+        Outbox.shared.prepare(s.username)
         loading = reminders.isEmpty
         error = nil
-        if let me = try? await BackendClient.shared.me(token: token) { isAdmin = me.isAdmin }
+        if let token = s.apiToken, let me = try? await BackendClient.shared.me(token: token) { isAdmin = me.isAdmin }
         do {
-            myClass = try await BackendClient.shared.myClass(token: token)
+            myClass = await BackendClient.shared.myClass(s)
             if let c = myClass {
-                reminders = try await BackendClient.shared.reminders(classId: c.id, token: token)
+                reminders = try await BackendClient.shared.reminders(classId: c.id, s)
                 // Local notifications, so they fire with the app closed too.
-                NotificationManager.shared.scheduleReminders(reminders)
+                if s.apiToken != nil { NotificationManager.shared.scheduleReminders(reminders) }
             }
         } catch { self.error = (error as? AppError)?.message ?? error.localizedDescription }
         loading = false
+        DispatchQueue.main.async { settled = true }
     }
 
+    /// Offline it waits in the queue and goes out with the next sign-in, as on Android.
     private func add(title: String, body: String, remindAt: Date) async throws {
-        guard let s = app.session, let token = s.apiToken, let c = myClass else { return }
+        guard let s = app.session, let c = myClass else { return }
         let iso = ISO8601DateFormatter().string(from: remindAt)
-        _ = try await BackendClient.shared.createReminder(classId: c.id, title: title, body: body, remindAt: iso, token: token)
+        guard let token = s.apiToken else {
+            try queue(title: title, body: body, remindAt: iso, for: s)
+            return
+        }
+        do {
+            _ = try await BackendClient.shared.createReminder(classId: c.id, title: title, body: body, remindAt: iso, token: token)
+        } catch is URLError {
+            try queue(title: title, body: body, remindAt: iso, for: s)
+            return
+        }
         saves += 1
         await load()
     }
 
+    private func queue(title: String, body: String, remindAt: String, for s: UserSession) throws {
+        guard Outbox.shared.add(.reminder, title: title, text: body, date: remindAt, for: s.username) else {
+            throw AppError(message: self.s.tasks.saveFailed)
+        }
+        saves += 1
+    }
+
     private func edit(_ r: ApiReminder, title: String, body: String, remindAt: Date) async throws {
-        guard let s = app.session, let token = s.apiToken, let c = myClass else { return }
+        guard let s = app.session, let c = myClass else { return }
+        guard let token = s.apiToken else { throw AppError(message: self.s.common.offlineTitle) }
         let iso = ISO8601DateFormatter().string(from: remindAt)
         let changed = try await BackendClient.shared.editReminder(classId: c.id, id: r.id, title: title, body: body, remindAt: iso, token: token)
         if let i = reminders.firstIndex(where: { $0.id == r.id }) { reminders[i] = changed }
@@ -181,11 +255,13 @@ struct RemindersView: View {
         let cutoff = Date().addingTimeInterval(-25 * 3600)
         return reminders
             .filter { (MessageFormat.parse($0.remindAt) ?? .distantFuture) >= cutoff }
+            .filter { SearchMatch.matches(query, $0.title, $0.body, $0.createdByName) }
             .sorted { (MessageFormat.parse($0.remindAt) ?? .distantFuture) < (MessageFormat.parse($1.remindAt) ?? .distantFuture) }
     }
 
     private func delete(_ reminder: ApiReminder) async {
-        guard let s = app.session, let token = s.apiToken, let c = myClass else { return }
+        guard let s = app.session, let c = myClass else { return }
+        guard let token = s.apiToken else { offlineBlocked = true; return }
         reminders.removeAll { $0.id == reminder.id }
         do {
             try await BackendClient.shared.deleteReminder(classId: c.id, id: reminder.id, token: token)
@@ -200,7 +276,7 @@ struct ReminderDetailView: View {
     let classId: String
     var onDelete: (() async -> Void)?
     var onEdited: ((ApiReminder) -> Void)?
-    @EnvironmentObject var app: AppState
+    @Environment(AppState.self) var app
     @Environment(\.strings) private var s
     @Environment(\.dismiss) private var dismiss
     @State private var reminder: ApiReminder
@@ -285,7 +361,7 @@ struct ReminderDetailView: View {
     }
 
     private func save(title: String, body: String, remindAt: Date) async throws {
-        guard let token = app.session?.apiToken else { return }
+        guard let token = app.session?.apiToken else { throw AppError(message: s.common.offlineTitle) }
         let iso = ISO8601DateFormatter().string(from: remindAt)
         let changed = try await BackendClient.shared.editReminder(classId: classId, id: reminder.id, title: title, body: body, remindAt: iso, token: token)
         withAnimation(Motion.standardEase) { reminder = changed }
@@ -303,7 +379,7 @@ struct ReminderDetailView: View {
             dismiss()
             return
         }
-        guard let token = app.session?.apiToken else { return }
+        guard let token = app.session?.apiToken else { failed = true; return }
         do {
             try await BackendClient.shared.deleteReminder(classId: classId, id: reminder.id, token: token)
             dismiss()
@@ -471,5 +547,44 @@ private struct ReminderSheet: View {
         } catch {
             self.error = (error as? AppError)?.message ?? s.tasks.saveFailed
         }
+    }
+}
+
+/// Who's in the class, from the reminders' toolbar: the same rows as on the class page.
+private struct ClassMembersSheet: View {
+    let klass: ApiClass
+    @Environment(\.strings) private var s
+    @Environment(\.dismiss) private var dismiss
+    @State private var query = ""
+
+    private var shown: [ApiClassMember] {
+        klass.members
+            .filter { SearchMatch.matches(query, $0.username) }
+            .sorted { $0.username.localizedCaseInsensitiveCompare($1.username) == .orderedAscending }
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                if shown.isEmpty && !query.isEmpty {
+                    ContentUnavailableView.search(text: query)
+                } else {
+                    ListCard(shown) { MemberRow(member: $0) }
+                        .padding(.horizontal, Spacing.screenH)
+                        .padding(.vertical, Spacing.md)
+                }
+            }
+            .listSearch($query, prompt: s.tasks.members)
+            .navigationTitle(s.tasks.members)
+            .navigationSubtitle("\(klass.members.count)")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button(role: .close) { dismiss() }
+                }
+            }
+            .background(Palette.bg.ignoresSafeArea())
+        }
+        .presentationDetents([.medium, .large])
     }
 }

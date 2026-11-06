@@ -172,7 +172,7 @@ enum Timetable {
     static func hhmm(_ m: Int) -> String { String(format: "%02d:%02d", m / 60, m % 60) }
 
     static func subjectText(_ e: TimetableEntry) -> String {
-        e.subjectName.isEmpty ? (e.note ?? "—") : e.subjectName
+        e.subjectName.isEmpty ? (e.note ?? "–") : e.subjectName
     }
 }
 
@@ -230,6 +230,8 @@ enum SubjectPhotos {
         cache.countLimit = 40
         return cache
     }()
+    /// The sheet's header at its widest, in pixels.
+    private static let maxPixel = 1200
 
     private static func file(_ key: String) -> String { "subject-image-\(key)" }
 
@@ -243,7 +245,8 @@ enum SubjectPhotos {
             DiskCache.save(Array(fresh), key: keysFile)
             return fresh
         }
-        return keys ?? Set(DiskCache.load([String].self, key: keysFile) ?? [])
+        if let keys { return keys }
+        return Set(await DiskCache.loaded([String].self, key: keysFile, owner: nil) ?? [])
     }
 
     /// nil without a photo; the sheet then keeps the subject's monogram.
@@ -251,7 +254,7 @@ enum SubjectPhotos {
         let key = SubjectImageKeys.key(long: long, short: short)
         guard !key.isEmpty else { return nil }
         if let image = memory.object(forKey: key as NSString) { return image }
-        if let data = DiskCache.load(Data.self, key: file(key)), let image = UIImage(data: data) {
+        if let data = await DiskCache.loaded(Data.self, key: file(key), owner: nil), let image = RemotePhotos.decode(data, maxPixel: maxPixel) {
             memory.setObject(image, forKey: key as NSString)
             // Shows at once; a photo replaced on the backend arrives with the next launch.
             Task { _ = await download(key) }
@@ -263,7 +266,7 @@ enum SubjectPhotos {
     private static func download(_ key: String) async -> UIImage? {
         guard await availableKeys().contains(key),
               let data = try? await BackendClient.shared.request(SubjectImageKeys.path(for: key), token: nil),
-              let image = UIImage(data: data) else { return nil }
+              let image = RemotePhotos.decode(data, maxPixel: maxPixel) else { return nil }
         DiskCache.save(data, key: file(key))
         memory.setObject(image, forKey: key as NSString)
         return image
@@ -319,7 +322,7 @@ extension TimetableKind {
 // ── Screen ──────────────────────────────────────────────────────────────────
 
 struct TimetableView: View {
-    @EnvironmentObject var app: AppState
+    @Environment(AppState.self) var app
     @Environment(\.strings) private var s
     @State private var weekOffset = 0
     @State private var entries: [TimetableEntry] = []
@@ -679,6 +682,7 @@ struct TimetableView: View {
                     .padding(.horizontal, Spacing.screenH)
                     .padding(.bottom, Spacing.xxxl)
             }
+            .scrollBounceBehavior(.basedOnSize)
             .id(selectedDay)
             .transition(.opacity.combined(with: .scale(scale: 0.98)))
             .simultaneousGesture(daySwipe)
@@ -699,7 +703,8 @@ struct TimetableView: View {
             if source != nil, name == nil {
                 InlineNotice(s.timetable.noLessons, symbol: "checkmark.circle.fill", tint: Brand.success)
             } else {
-                SpecialDayCard(kind: .holiday, compact: false, plate: true, holidayKey: SchoolHolidays.weekKey(monday), holidayName: name)
+                SpecialDayCard(kind: .holiday, compact: false, plate: true, holidayKey: SchoolHolidays.weekKey(monday), holidayName: name,
+                               month: Calendar.current.component(.month, from: monday))
             }
         } else {
             let slots = Timetable.buildSlots(de)
@@ -714,7 +719,8 @@ struct TimetableView: View {
                 let tappable = kind != .allCancelled && kind != .holiday
                 SpecialDayCard(kind: kind, compact: false, plate: true,
                                holidayKey: kind == .holiday ? holidayKey(selectedDay) : nil,
-                               holidayName: kind == .holiday ? holidayName : nil)
+                               holidayName: kind == .holiday ? holidayName : nil,
+                               month: dayNum(selectedDay) / 100 % 100)
                     .contentShape(.rect)
                     .onTapGesture {
                         if tappable, let first = slots.first {
@@ -806,7 +812,7 @@ struct TimetableView: View {
 
     private func loadHolidays() async {
         guard let session = app.session, session.hasUntis else { return }
-        holidays = UntisClient.shared.storedHolidays(session)
+        holidays = await UntisClient.shared.storedHolidays(session)
         holidays = await UntisClient.shared.refreshedHolidays(session)
     }
 
@@ -815,7 +821,7 @@ struct TimetableView: View {
     private func loadAbsences() async {
         guard source == nil, let session = app.session, session.hasUntis else { return }
         let year = schoolYear(of: weekOffset)
-        if absencesByYear[year] == nil, let stored = UntisClient.shared.storedAbsences(year: year, session) {
+        if absencesByYear[year] == nil, let stored = await UntisClient.shared.storedAbsences(year: year, session) {
             absencesByYear[year] = stored
         }
         let from = DateFmt.compact.string(from: monday), to = DateFmt.compact.string(from: dayDate(5))
@@ -878,7 +884,7 @@ struct TimetableSourceChip: View {
 struct OtherTimetablesSheet: View {
     let source: TimetableSource?
     let pick: (TimetableSource?) -> Void
-    @EnvironmentObject private var app: AppState
+    @Environment(AppState.self) private var app
     @Environment(\.strings) private var s
     @Environment(\.dismiss) private var dismiss
     @State private var kind: TimetableKind
@@ -1053,7 +1059,7 @@ struct WeekTimetablePage: View {
     let absences: [AbsenceEntry]
     let holidays: [SchoolHoliday]
     let onTap: (MergedSlot, Tone) -> Void
-    @EnvironmentObject var app: AppState
+    @Environment(AppState.self) var app
     @Environment(\.strings) private var s
     @State private var entries: [TimetableEntry]
     @State private var loading: Bool
@@ -1261,6 +1267,8 @@ struct WeekGrid: View, Equatable {
     private let colGap: CGFloat = 3
     private let edge: CGFloat = 6
     private let headerRoom: CGFloat = 64
+    private let bottomRoom: CGFloat = Spacing.sm
+    private let fitsScreen: Bool
     private let minCellHeight: CGFloat = 26
     /// Below this an absence's label takes its short form.
     private let narrowColumn: CGFloat = 110
@@ -1317,8 +1325,11 @@ struct WeekGrid: View, Equatable {
         let mx = all.map { Fmt.minutes($0.endTime) }.max() ?? periods.last!.e
         minMins = mn
         maxMins = mx
-        let fitted = (size.height - headerRoom - Spacing.xxxl) / CGFloat(max(1, mx - mn))
+        let fitted = (size.height - headerRoom - bottomRoom) / CGFloat(max(1, mx - mn))
         pxPerMin = min(max(fitted, 0.62), 2.4)
+        // The whole week on one screen. Below this scale text no longer fits a lesson (a phone on
+        // its side), so only then the grid scrolls.
+        fitsScreen = fitted >= 0.62
 
         // Period numbers only when the lessons actually follow this bell schedule.
         let onGrid = all.filter { e in periods.contains { $0.s == Fmt.minutes(e.startTime) } }.count
@@ -1357,8 +1368,9 @@ struct WeekGrid: View, Equatable {
                 }
             }
             .padding(.horizontal, edge)
-            .padding(.bottom, Spacing.xxxl)
+            .padding(.bottom, bottomRoom)
         }
+        .scrollDisabled(fitsScreen)
         .scrollIndicators(.hidden)
     }
 
@@ -1429,7 +1441,8 @@ struct WeekGrid: View, Equatable {
                 let first = daySlots[d].first
                 let tappable = kind != .allCancelled && kind != .holiday
                 SpecialDayCard(kind: kind, compact: true, plate: true, holidayKey: holidayKeys[d],
-                               holidayName: holidayTitles.indices.contains(d) ? holidayTitles[d] : nil)
+                               holidayName: holidayTitles.indices.contains(d) ? holidayTitles[d] : nil,
+                               month: dayNums[d] / 100 % 100)
                     .frame(width: colW, height: max(0, totalHeight - 4))
                     .offset(y: 2)
                     .contentShape(.rect)
@@ -1442,8 +1455,10 @@ struct WeekGrid: View, Equatable {
                 ForEach(dayCells[d]) { cell in
                     cellView(cell, dayNum: dayNums[d], minute: minute)
                 }
-                ForEach(Array(absenceBands(d, minute: minute).enumerated()), id: \.offset) { _, band in
-                    AbsenceOverlay(mark: band.mark, narrow: colW < narrowColumn)
+                let bands = absenceBands(d, minute: minute)
+                let wholeDay = Self.coversDay(bands, cells: dayCells[d])
+                ForEach(Array(bands.enumerated()), id: \.offset) { _, band in
+                    AbsenceOverlay(mark: band.mark, narrow: colW < narrowColumn, wholeDay: wholeDay)
                         .frame(width: colW, height: max(0, CGFloat(band.endMinute - band.startMinute) * pxPerMin))
                         .offset(y: CGFloat(band.startMinute - minMins) * pxPerMin)
                         .allowsHitTesting(false)
@@ -1451,6 +1466,14 @@ struct WeekGrid: View, Equatable {
             }
         }
         .frame(width: colW, height: totalHeight, alignment: .topLeading)
+    }
+
+    /// One excused band over every lesson of the day: the web draws a day in bed there.
+    private static func coversDay(_ bands: [AbsenceBand], cells: [GridCell]) -> Bool {
+        let lessons = cells.filter { !$0.isCancelled }
+        guard bands.count == 1, let band = bands.first, band.mark != .absent,
+              let start = lessons.map(\.start).min(), let end = lessons.map(\.end).max() else { return false }
+        return band.startMinute <= start && band.endMinute >= end
     }
 
     private func absenceBands(_ d: Int, minute: Int) -> [AbsenceBand] {
@@ -1499,6 +1522,7 @@ struct WeekGrid: View, Equatable {
 struct AbsenceOverlay: View {
     let mark: AbsenceMark
     let narrow: Bool
+    var wholeDay = false
     @Environment(\.strings) private var s
     @Environment(\.colorScheme) private var scheme
 
@@ -1508,12 +1532,19 @@ struct AbsenceOverlay: View {
         let ink: Color = mark == .absent
             ? Color(hex: dark ? 0xEF4444 : 0xB91C1C)
             : Color(hex: dark ? 0x22C55E : 0x15803D)
-        Text(narrow ? s.timetable.shortLabel(mark) : s.timetable.label(mark))
-            .font(.system(size: 13, weight: .heavy))
-            .foregroundStyle(ink)
-            .lineLimit(1)
-            .minimumScaleFactor(0.5)
-            .padding(.horizontal, 2)
+        VStack(spacing: Spacing.xs) {
+            if wholeDay {
+                PixelArt(scene: PixelSprite.excused.scene, animate: false)
+                    .frame(maxWidth: 52)
+                    .padding(.horizontal, 2)
+            }
+            Text(narrow ? s.timetable.shortLabel(mark) : s.timetable.label(mark))
+                .font(.system(size: 13, weight: .heavy))
+                .foregroundStyle(ink)
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
+                .padding(.horizontal, 2)
+        }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(shape.fill(dark ? Color(hex: 0x14171D, opacity: 0.88) : Color(hex: 0xCBD5E1, opacity: 0.90)))
             // A hairline of light along the edge: a dark outline on a dark block can't be seen.
@@ -1756,8 +1787,21 @@ struct SpecialDayCard: View {
     var holidayKey: String? = nil
     /// The school's own name for it, which wins over the one going by the date.
     var holidayName: String? = nil
+    /// The day's month, so a holiday looks like its time of year.
+    var month: Int? = nil
     @Environment(\.strings) private var s
     @Environment(\.colorScheme) private var scheme
+
+    /// The web's pixel scenes for days without lessons; the weekend keeps its plain sun.
+    private var sprite: PixelSprite? {
+        switch kind {
+        case .holiday: .forHoliday(month: month ?? Calendar.current.component(.month, from: .now), wholeWeek: false)
+        case .allCancelled: .cancelled
+        case .allReplacement: .swap
+        case .fullDayEvent: .event
+        case .weekend, .normal: nil
+        }
+    }
 
     private var config: (color: Color, icon: String, title: String, subtitle: String) {
         let t = s.timetable
@@ -1775,11 +1819,17 @@ struct SpecialDayCard: View {
         let c = config
         let dark = scheme == .dark
         VStack(spacing: compact ? Spacing.sm : Spacing.lg) {
-            Image(systemName: c.icon)
-                .font(.system(size: compact ? 15 : 32, weight: .semibold))
-                .foregroundStyle(c.color)
-                .frame(width: compact ? 30 : 72, height: compact ? 30 : 72)
-                .background(c.color.opacity(0.14), in: .circle)
+            if let sprite {
+                // Still in the narrow grid column, where a moving scene would only cost frames.
+                PixelArt(scene: sprite.scene, animate: !compact)
+                    .frame(maxWidth: compact ? 52 : 200)
+            } else {
+                Image(systemName: c.icon)
+                    .font(.system(size: compact ? 15 : 32, weight: .semibold))
+                    .foregroundStyle(c.color)
+                    .frame(width: compact ? 30 : 72, height: compact ? 30 : 72)
+                    .background(c.color.opacity(0.14), in: .circle)
+            }
             if compact {
                 // In a narrow column a long word shrinks to fit instead of breaking in the middle.
                 VStack(spacing: 0) {
@@ -1825,23 +1875,11 @@ struct HolidayWeek: View {
     var name: String? = nil
     @Environment(\.strings) private var s
 
-    private var symbol: String {
-        switch month {
-        case 12, 1, 2: "snowflake"
-        case 3, 4, 5: "leaf.fill"
-        case 6, 7, 8: "beach.umbrella.fill"
-        default: "wind"
-        }
-    }
-
     var body: some View {
         ScrollView {
             VStack(spacing: 0) {
-                Image(systemName: symbol)
-                    .font(.system(size: 64, weight: .regular))
-                    .foregroundStyle(Brand.orange)
-                    .frame(width: 160, height: 160)
-                    .background(Brand.orange.opacity(0.12), in: .circle)
+                PixelArt(scene: PixelSprite.forHoliday(month: month).scene)
+                    .frame(maxWidth: 260)
                 Text(name ?? holidayKey.flatMap { s.timetable.holidayNames[$0] } ?? s.timetable.holiday)
                     .textStyle(.largeTitle)
                     .foregroundStyle(Palette.textPrimary)
@@ -1866,7 +1904,7 @@ struct OfflineWeekState: View {
 
     var body: some View {
         StateView(s.timetable.unknownTitle, message: s.timetable.offlineUnknown) {
-            IconTile("wifi.slash", color: Brand.warning, size: 64)
+            PixelArt(scene: PixelSprite.unplugged.scene).frame(maxWidth: 160)
         } actions: {
             Button(s.common.retry, action: retry).buttonStyle(.secondary(compact: true))
         }
@@ -1986,7 +2024,7 @@ struct TileRowSkeleton: View {
 struct LessonDetailView: View {
     let item: LessonDetailItem
     var absences: [AbsenceEntry] = []
-    @EnvironmentObject private var app: AppState
+    @Environment(AppState.self) private var app
     @State private var detail: LessonDetail?
     @State private var loading = true
     @State private var waited = false
@@ -2018,7 +2056,7 @@ struct LessonDetailView: View {
     /// offline too; the fresh answer replaces it when it lands.
     private func loadDetail() async {
         guard !entry.isCancelled, let session = app.session, session.hasUntis else { loading = false; return }
-        if let stored = UntisClient.shared.storedLessonDetail(entry, source: item.source, session) {
+        if let stored = await UntisClient.shared.storedLessonDetail(entry, source: item.source, session) {
             detail = stored
             loading = false
         }

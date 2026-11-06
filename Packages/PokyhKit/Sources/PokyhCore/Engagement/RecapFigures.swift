@@ -329,7 +329,7 @@ public enum RecapFigures {
     }
 
     private static func round(_ x: Double) -> Int {
-        Int((x + 0.5).rounded(.down))
+        Int(saturating: (x + 0.5).rounded(.down))
     }
 
     /// Lessons at the same time once: merged spans.

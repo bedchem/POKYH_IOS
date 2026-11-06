@@ -1,5 +1,4 @@
 import SwiftUI
-import Combine
 import LocalAuthentication
 import PokyhCore
 #if canImport(WidgetKit)
@@ -51,62 +50,75 @@ enum BackendStatus: Equatable {
 }
 
 @MainActor
-final class AppState: ObservableObject {
+@Observable
+final class AppState {
     enum Phase { case lock, login, authed }
 
-    @Published var phase: Phase
-    @Published var session: UserSession? {
+    var phase: Phase
+    var session: UserSession? {
         // Ein anderes Konto (oder abgemeldet): dessen Hinweis gilt nicht mehr.
         didSet {
+            PushRegistration.shared.sessionDidChange(session, in: self)
             if session?.username != privacyNotice?.username { privacyNotice = nil }
             UntisImageAuth.current = UntisImageAuth(session)
             ensureProfileImageUrl()
         }
     }
     /// Die Datenschutzerklärung, die gerade bestätigt werden soll (siehe PrivacyNotice.swift).
-    @Published var privacyNotice: PrivacyNoticePrompt?
+    var privacyNotice: PrivacyNoticePrompt?
     /// A website sign-in opened from the phone's camera, waiting for the signed-in app.
-    @Published var pendingWebSignIn: String?
-    @Published var accounts: [SavedAccount]
-    @Published var busy = false
+    var pendingWebSignIn: String?
+    var accounts: [SavedAccount] {
+        didSet {
+            storeRevision += 1
+            PushRegistration.shared.accountsDidChange(accounts, in: self)
+        }
+    }
+    /// The app's language; views read it so a pick in the settings shows everywhere at once.
+    var language = LanguageChoice.current(in: .standard)
+    /// Bumped whenever `store` changes, which isn't observed itself, so reads through it refresh.
+    private var storeRevision = 0
+    var busy = false
     /// Offline-Modus aktiv (gecachte Daten, Login kam nicht durch).
-    @Published var isOffline = false
-    @Published var statusText = ""
-    @Published var error: String?
-    @Published var showAddAccount = false
-    @Published var prefillUsername: String?   // vorausgefüllter Benutzername bei Passwort-Neueingabe
+    var isOffline = false
+    var statusText = ""
+    var error: String?
+    var showAddAccount = false
+    var prefillUsername: String?   // vorausgefüllter Benutzername bei Passwort-Neueingabe
     /// A sign-in waiting for the authenticator app's code, from any path: the sign-in screen, an
     /// unlock, a relaunch. An account like that can't sign itself in.
-    @Published private(set) var twoFactor: TwoFactorRequest?
-    @Published var selectedTab: AppTab = .home {
+    private(set) var twoFactor: TwoFactorRequest?
+    var selectedTab: AppTab = .home {
         didSet { if selectedTab != oldValue { UsageReporter.shared.noteScreen() } }
     }
-    @Published var backendStatus: BackendStatus = .unknown
+    var backendStatus: BackendStatus = .unknown
     /// Unread inbox messages, for the badges. Refreshed with the notification sync.
-    @Published var unreadMessages = 0
+    var unreadMessages = 0
     /// Biometrie-Status (Face ID / Touch ID). Wird off-main ermittelt (siehe init),
     /// startet mit einem günstigen Default → kein Hänger beim ersten Render.
-    @Published var biometricInfo = Biometric.Info.unknown
+    var biometricInfo = Biometric.Info.unknown
     /// Erhöht sich, wenn der Stundenplan-Tab angetippt wird → Ansicht springt auf „heute".
-    @Published var timetableHomeSignal = 0
-    @Published var themeMode: ThemeMode {
+    var timetableHomeSignal = 0
+    var themeMode: ThemeMode {
         didSet { UserDefaults.standard.set(themeMode.rawValue, forKey: "pokyh_theme") }
     }
     /// The Face ID / passcode sheet is up. It makes the app inactive, which must not bring up
     /// the privacy cover over it.
-    @Published private(set) var authenticating = false
+    private(set) var authenticating = false
     /// Hides the app in the app switcher and whenever it isn't the active app.
-    @Published private(set) var privacyCover = false
+    private(set) var privacyCover = false
 
-    private let store = CredentialStore.shared
+    @ObservationIgnored private let store = CredentialStore.shared
     private var unlockText: UnlockStrings { .of(Strings.current.lang) }
     /// The lock screen tries Face ID by itself on launch and after the auto-lock, not right
     /// after someone signed out on purpose.
-    private var autoUnlockArmed = true
+    @ObservationIgnored private var autoUnlockArmed = true
     /// Goes up with every lock, so a sign-in still running from before can't open the app again.
-    private var lockEpoch = 0
+    @ObservationIgnored private var lockEpoch = 0
     /// While the account is being deleted a token renewal would create it anew, empty.
-    private var deletingAccount = false
+    @ObservationIgnored private var deletingAccount = false
+    /// A sign-in in the background while offline; one at a time.
+    @ObservationIgnored private var reconnecting = false
 
     init() {
         accounts = store.accounts
@@ -122,6 +134,14 @@ final class AppState: ObservableObject {
         }
         BackgroundRefresh.liveSession = { [weak self] in self?.sessionForBackgroundWork() }
         BackendClient.shared.tokenRenewal = { [weak self] in await self?.renewBackendToken(expired: $0) }
+        NetworkMonitor.shared.onReconnect = { [weak self] in Task { await self?.reconnect() } }
+        #if DEBUG
+        if let seconds = StubServer.autoLockSeconds { autoLock = AutoLock(interval: .seconds(seconds)) }
+        if let account = StubServer.autoSignIn {
+            let school = School(loginName: StubServer.school.loginName, server: StubServer.school.server, name: StubServer.school.name)
+            Task { await loginNew(username: account, password: "stub", save: true, school: school) }
+        }
+        #endif
     }
 
     var colorScheme: ColorScheme? {
@@ -137,8 +157,8 @@ final class AppState: ObservableObject {
 
     // ── Standard-Konto (Einstellungen) ───────────────────────────────────────
     var defaultUsername: String? {
-        get { store.defaultUsername }
-        set { store.defaultUsername = newValue; objectWillChange.send() }
+        get { _ = storeRevision; return store.defaultUsername }
+        set { store.defaultUsername = newValue; storeRevision += 1 }
     }
 
     // ── Sperrbildschirm: Face ID → automatischer Login ───────────────────────
@@ -203,7 +223,7 @@ final class AppState: ObservableObject {
 
     /// The school picked on the sign-in screen, for the sign-in under way only: a failed one at
     /// the wrong school must not stick to later silent or Face ID re-logins.
-    private var loginSchool: (username: String, school: School)?
+    @ObservationIgnored private var loginSchool: (username: String, school: School)?
 
     /// Where `username` signs in: the school just picked, the saved account's, or the fallback.
     func school(for username: String) -> School {
@@ -271,6 +291,11 @@ final class AppState: ObservableObject {
 
         // Offline-Fallback nur für wiederkehrende Konten mit vorhandenem Cache.
         let snap: UserSession? = allowOffline ? Self.offlineCandidate(username: username) : nil
+        if let snap, !NetworkMonitor.shared.isOnline {
+            // No way out at all: the stored copy right away, the sign-in once the connection is back.
+            await enterOffline(snap, viaSheet: viaSheet, epoch: epoch)
+            return
+        }
         let school = school(for: username)
         let loginTask = Task { try await self.buildSession(username: username, password: password, school: school, renewal: !fresh, token: token) }
 
@@ -303,7 +328,9 @@ final class AppState: ObservableObject {
             // im Hintergrund weiter und „upgradet" die Sitzung bei Erfolg.
             guard let snap else { busy = false; statusText = ""; return }
             await enterOffline(snap, viaSheet: viaSheet, epoch: epoch)
+            reconnecting = true
             Task { [weak self] in
+                defer { self?.reconnecting = false }
                 do {
                     let s = try await loginTask.value
                     await self?.upgradeFromBackground(s, save: save, password: password, epoch: epoch)
@@ -417,7 +444,7 @@ final class AppState: ObservableObject {
         store.updateImageUrl(s.imageUrl, for: s.username)
         accounts = store.accounts
         // Token-losen Snapshot für späteren Offline-Restore ablegen.
-        if s.hasUntis { DiskCache.save(Self.offlineSnapshot(s), key: Self.sessionKey(s.username)) }
+        if s.hasUntis { DiskCache.save(Self.offlineSnapshot(s), key: Self.sessionKey, owner: s.username) }
 
         if viaSheet {
             busy = false; statusText = ""
@@ -468,7 +495,7 @@ final class AppState: ObservableObject {
             store.save(account, password: password)
             accounts = store.accounts
         }
-        if s.hasUntis { DiskCache.save(Self.offlineSnapshot(s), key: Self.sessionKey(s.username)) }
+        if s.hasUntis { DiskCache.save(Self.offlineSnapshot(s), key: Self.sessionKey, owner: s.username) }
         withAnimation(.easeInOut(duration: 0.3)) {
             session = s
             isOffline = false
@@ -477,16 +504,34 @@ final class AppState: ObservableObject {
         Task { await checkPrivacyNotice(fresh: false) }
     }
 
+    /// Signed in offline: tries the real sign-in again with the password this unlock already
+    /// opened, so it never asks for Face ID by itself. On the way back online, on returning to
+    /// the app, and from pull to refresh.
+    func reconnect() async {
+        guard isOffline, phase == .authed, !reconnecting, !busy, let snap = session,
+              let password = store.password(for: snap.username, context: UnlockSession.context) else { return }
+        reconnecting = true
+        defer { reconnecting = false }
+        let epoch = lockEpoch
+        let school = school(for: snap.username)
+        do {
+            let fresh = try await buildSession(username: snap.username, password: password, school: school, renewal: true)
+            await upgradeFromBackground(fresh, save: false, password: password, epoch: epoch)
+        } catch {
+            guard epoch == lockEpoch else { return }
+            _ = askForCode(error, username: snap.username, password: password, save: false, school: school)
+        }
+    }
+
     // ── Offline-Helfer ────────────────────────────────────────────────────────
 
-    private static func sessionKey(_ username: String) -> String {
-        "session-\(username.lowercased())"
-    }
+    /// In the account's own folder, like everything else it left offline.
+    private static let sessionKey = "session"
 
     /// Liefert einen Offline-Snapshot nur, wenn ein WebUntis-Konto gecacht ist
     /// (`studentId > 0` → Stundenplan-Cache kann gelesen werden).
     private static func offlineCandidate(username: String) -> UserSession? {
-        guard let snap = DiskCache.load(UserSession.self, key: sessionKey(username)),
+        guard let snap = DiskCache.load(UserSession.self, key: sessionKey, owner: username),
               snap.studentId > 0 else { return nil }
         return snap
     }
@@ -534,9 +579,9 @@ final class AppState: ObservableObject {
         UserSession(
             sessionId: "", bearerToken: "", studentId: s.studentId,
             klasseId: s.klasseId, klasseName: s.klasseName, username: s.username,
-            personName: s.personName, personType: s.personType, isParent: s.isParent,
-            apiToken: nil, apiRefresh: nil, stableUid: nil, classId: nil,
-            imageUrl: s.imageUrl, school: s.school)
+            personName: s.personName, firstName: s.firstName, personType: s.personType, isParent: s.isParent,
+            apiToken: nil, apiRefresh: nil, stableUid: s.stableUid, classId: s.classId,
+            imageUrl: s.imageUrl, school: s.school, backendLinked: s.apiToken != nil ? true : nil)
     }
 
     // ── Kontowechsel / -verwaltung ───────────────────────────────────────────
@@ -556,7 +601,20 @@ final class AppState: ObservableObject {
         await loginSaved(username: username, context: ctx)
     }
 
-    func accountHasPassword(_ username: String) -> Bool { store.hasPassword(username) }
+    /// A Keychain query per account on every redraw of the profile adds up; asked once per change.
+    func accountHasPassword(_ username: String) -> Bool {
+        let revision = storeRevision
+        if passwordsKnownAt != revision {
+            passwordsKnown = [:]
+            passwordsKnownAt = revision
+        }
+        if let known = passwordsKnown[username] { return known }
+        let has = store.hasPassword(username)
+        passwordsKnown[username] = has
+        return has
+    }
+    @ObservationIgnored private var passwordsKnown: [String: Bool] = [:]
+    @ObservationIgnored private var passwordsKnownAt = -1
 
     /// Widgets/Live Activity zeigen die Daten des **Standard-Kontos**. Ist kein
     /// Standard gesetzt, zählt das aktive Konto (Einzelnutzer-Fall).
@@ -602,13 +660,32 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Abmelden: nur das Passwort entfernen — Konto bleibt gespeichert.
+    /// Signing out keeps the account in the list (name and picture, to sign in again quickly) and
+    /// takes everything else: the password, its offline copies, unsent to-dos, the widgets'
+    /// data if they showed it.
     func signOutAccount(username: String) {
         WatchSync.signedOut(username: username)
         store.signOut(username)
+        let wasActive = isActive(username)
+        forgetData(of: username)
         accounts = store.accounts
-        if isActive(username) { lock(deliberate: true) }
-        objectWillChange.send()
+        if wasActive { lock(deliberate: true) }
+    }
+
+    /// What an account left on this device besides its row in the list.
+    private func forgetData(of username: String) {
+        DiskCache.forget(owner: username)
+        Outbox.shared.forget(username)
+        if AccountRoster.same(store.defaultUsername ?? "", username) {
+            SharedStore.purgeAll()
+            #if canImport(WidgetKit)
+            WidgetCenter.shared.reloadAllTimelines()
+            #endif
+        }
+        if isActive(username) {
+            LiveActivityManager.endAll()
+            NotificationManager.shared.withdrawReminders()
+        }
     }
 
     /// Konto komplett vom Gerät entfernen, mit seinem Offline-Stand. Showed the widgets its
@@ -618,8 +695,8 @@ final class AppState: ObservableObject {
         WatchSync.signedOut(username: username)
         let wasDefault = AccountRoster.same(store.defaultUsername ?? "", username)
         let wasActive = isActive(username)
+        forgetData(of: username)
         store.remove(username)
-        DiskCache.remove(key: Self.sessionKey(username))
         accounts = store.accounts
         if accounts.isEmpty {
             DiskCache.purge()
@@ -689,6 +766,9 @@ final class AppState: ObservableObject {
         unreadMessages = 0
         session = nil
         isOffline = false
+        // What was loaded stays sealed on disk; nothing of it lingers in memory behind the lock.
+        UntisClient.shared.clearCaches()
+        BackendClient.shared.clearCaches()
         phase = accounts.isEmpty ? .login : .lock
     }
 
@@ -709,8 +789,13 @@ final class AppState: ObservableObject {
         Keychain.purgeAll()
         // 3. Offline-Disk-Cache + geteilte Snapshots (App Group), then the key they were sealed with
         DiskCache.purge()
+        Outbox.shared.clearAll()
         SharedStore.purgeAll()
         LocalVault.destroy()
+        // Scheduled reminders and banners still in the Notification Center carry titles and names.
+        let notifications = UNUserNotificationCenter.current()
+        notifications.removeAllPendingNotificationRequests()
+        notifications.removeAllDeliveredNotifications()
         // 4. Alle eigenen UserDefaults-Schlüssel (kein Hardcoding einzelner Keys). The storage
         //    format markers stay: without them the next launch would treat what's saved after
         //    this as left over from an old build and wipe it.
@@ -739,7 +824,7 @@ final class AppState: ObservableObject {
     }
 
     // ── Profile picture ───────────────────────────────────────────────────────
-    private var profileImageAttempted: Set<String> = []
+    @ObservationIgnored private var profileImageAttempted: Set<String> = []
 
     /// Sign-in only learns the picture's address when it happened to need app data for something
     /// else, so it's asked for here, once per account, as on Android.
@@ -756,7 +841,7 @@ final class AppState: ObservableObject {
     }
 
     // ── Backend token ─────────────────────────────────────────────────────────
-    private var tokenRenewal: Task<(token: String, refresh: String)?, Never>?
+    @ObservationIgnored private var tokenRenewal: Task<(token: String, refresh: String)?, Never>?
 
     /// The POKYH access token lasts an hour. After a 401 the app signs in to the backend again,
     /// the way Android does. Requests failing together share one renewal.
@@ -796,7 +881,7 @@ final class AppState: ObservableObject {
 
     // ── Auto-Sperre nach Inaktivität im Hintergrund, Sichtschutz ──────────────
     /// Ten minutes in the background lock the app (Face ID again), as on Android.
-    private var autoLock = AutoLock()
+    @ObservationIgnored private var autoLock = AutoLock()
 
     /// Leaving the screen for a moment (app switcher, Control Center, a call): cover it.
     func appWillResignActive() {
@@ -812,6 +897,7 @@ final class AppState: ObservableObject {
         // Lock first, lift the cover after, so the content never shows in between.
         if autoLock.didReturn(), phase == .authed { lock(deliberate: false) }
         privacyCover = false
+        if isOffline { Task { await reconnect() } }
     }
 
     /// For background refresh: the live session, unless the app should have locked by now.
@@ -828,6 +914,11 @@ final class AppState: ObservableObject {
         NotificationManager.shared.configure()
         requestNotificationPermissionIfNeeded()
         Task { await syncNotifications() }
+        if let session {
+            // Online again: what was typed offline goes out, and copies nobody reads go.
+            Task { await Outbox.shared.flush(session) }
+            DiskCache.pruneIfDue()
+        }
     }
 
     private func requestNotificationPermissionIfNeeded() {
@@ -839,11 +930,11 @@ final class AppState: ObservableObject {
     }
 
     // ── Benachrichtigungen synchronisieren (Nachrichten + Erinnerungen) ───────
-    private var lastNotifSync = Date.distantPast
+    @ObservationIgnored private var lastNotifSync = Date.distantPast
     // Eigener, längerer Throttle für die teureren Abrufe (Noten/Stundenplan):
     // Noten lädt pro Fach – das ist zu schwer für den 60-s-Takt der Nachrichten.
-    private var lastHeavySync = Date.distantPast
-    private let heavySyncInterval: TimeInterval = 1800   // 30 min
+    @ObservationIgnored private var lastHeavySync = Date.distantPast
+    @ObservationIgnored private let heavySyncInterval: TimeInterval = 1800   // 30 min
 
     func syncNotifications() async {
         guard let s = session else { return }

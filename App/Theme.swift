@@ -243,8 +243,12 @@ extension View {
     /// The same recipe as PokyhDesign's `cardSurface`, which wins in files that import it.
     @_disfavoredOverload
     func cardSurface(radius: CGFloat = Radius.xl, fill: Color = Palette.card, elevation: Elevation = .level1) -> some View {
-        self.background(fill, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
-            .modifier(WarmShadow(elevation: elevation))
+        // Shadow on the shape only, so scrolling doesn't re-render the card's rows offscreen.
+        self.background {
+            RoundedRectangle(cornerRadius: radius, style: .continuous)
+                .fill(fill)
+                .modifier(WarmShadow(elevation: elevation))
+        }
     }
 
     /// Caps login and lock forms at a comfortable width and centers them.

@@ -5,7 +5,7 @@ import PokyhDesign
 /// Home: a personal greeting instead of a title, then the blocks in the order the day happens.
 /// On wide windows the shortcuts span the width and the other blocks pair up side by side.
 struct HomeView: View {
-    @EnvironmentObject var app: AppState
+    @Environment(AppState.self) var app
     @Environment(\.strings) private var s
 
     // Timetable: this week and the next, so "tomorrow" works on a Friday too.
@@ -53,7 +53,7 @@ struct HomeView: View {
 
     private var wide: Bool { width >= 760 }
     private var hasUntis: Bool { app.session?.hasUntis ?? false }
-    private var hasBackend: Bool { app.session?.apiToken != nil }
+    private var hasBackend: Bool { app.session?.hasBackend ?? false }
     private var showsMensa: Bool { loadingMensa || mensaDay != nil }
 
     private var layout: Binding<HomeLayout> {
@@ -142,9 +142,13 @@ struct HomeView: View {
         .sheet(isPresented: $arranging) { HomeArrangeSheet(layout: layout) }
         .sheet(isPresented: $showProfile) { NavigationStack { ProfileView() } }
         .animation(.spring(response: 0.42, dampingFraction: 0.86), value: storedLayout)
-        .navigationDestination(item: $route) { destination($0) }
-        .task { await loadAll() }
-        .refreshable { await loadAll() }
+        .pushed(item: $route) { destination($0) }
+        // Again once the offline session turns into a real one.
+        .task(id: app.isOffline) { await loadAll() }
+        .refreshable {
+            await app.reconnect()
+            await loadAll()
+        }
     }
 
     @ViewBuilder
@@ -205,13 +209,16 @@ struct HomeView: View {
         return hour < 11 ? s.home.morning : hour < 17 ? s.home.day : s.home.evening
     }
 
-    /// WebUntis gives "Pfeifer Emanuel", surname first, so the word a part of the login name
-    /// starts with is the first name. Guardians are greeted without one.
+    /// The first name WebUntis gives; else the word of the name a part of the login starts with
+    /// (app data writes "Pfeifer Emanuel", surname first); else the whole name, so there's always
+    /// one. Guardians are greeted without one.
     private var firstName: String {
         guard let session = app.session else { return "" }
         if session.isParent { return "" }
         if !session.hasUntis { return session.username }
-        let words = (session.personName ?? "").split(whereSeparator: \.isWhitespace).map(String.init)
+        if let first = session.firstName, !first.isEmpty { return first }
+        let name = (session.personName ?? "").trimmingCharacters(in: .whitespaces)
+        let words = name.split(whereSeparator: \.isWhitespace).map(String.init)
         let parts = session.username.lowercased()
             .split(whereSeparator: { "-._ ".contains($0) })
             .map(String.init)
@@ -219,7 +226,7 @@ struct HomeView: View {
         for part in parts.reversed() {
             if let w = words.first(where: { $0.lowercased().hasPrefix(part) }) { return w }
         }
-        return ""
+        return name
     }
 
     private var heading: AttributedString {
@@ -1132,7 +1139,7 @@ struct HomeView: View {
 
     private func loadAbsences() async {
         guard let session = app.session else { return }
-        if let list = try? await UntisClient.shared.absences(startDate: SchoolDates.yearStart(), endDate: SchoolDates.yearEnd(), session) {
+        if let list = try? await UntisClient.shared.schoolYearAbsences(year: SchoolDates.currentSchoolYear, session) {
             absenceHours = list.reduce(0) { $0 + $1.hours }
         }
     }
@@ -1142,6 +1149,8 @@ struct HomeView: View {
         defer { loadingMensa = false }
         guard let dishes = try? await BackendClient.shared.dishes() else { return }
         WatchSync.mensa(dishes)
+        // The Mensa tab then opens with its photos already on disk.
+        RemotePhotos.prefetch(dishes.compactMap { $0.imageUrl.flatMap(URL.init(string:)) })
         // Same date rule as the Mensa tab: today or the next day the menu has.
         guard let day = MensaSchedule.days(from: dishes).first(where: { !$0.dishes.isEmpty }) else {
             mensaDay = nil
@@ -1157,10 +1166,11 @@ struct HomeView: View {
     }
 
     private func loadTasks() async {
-        guard let session = app.session, let token = session.apiToken else { return }
+        guard let session = app.session, session.hasBackend else { return }
+        Outbox.shared.prepare(session.username)
         do {
-            todos = try await BackendClient.shared.todos(username: session.username, token: token)
-            WatchSync.todos(todos, for: session)
+            todos = try await BackendClient.shared.todos(session)
+            if session.apiToken != nil { WatchSync.todos(todos, for: session) }
             todosFailed = false
         } catch {
             todosFailed = true
@@ -1168,10 +1178,8 @@ struct HomeView: View {
         todosLoaded = true
 
         do {
-            var classId = session.classId
-            if classId == nil { classId = try await BackendClient.shared.myClass(token: token)?.id }
-            if let classId {
-                reminders = try await BackendClient.shared.reminders(classId: classId, token: token)
+            if let classId = await BackendClient.shared.classId(session) {
+                reminders = try await BackendClient.shared.reminders(classId: classId, session)
             }
             remindersFailed = false
         } catch {
@@ -1287,23 +1295,6 @@ private enum HomeSection: String, CaseIterable, Identifiable {
         case .average: t.sectionAverage
         case .todos: t.sectionTodos
         case .reminders: t.sectionReminders
-        }
-    }
-
-    /// What the block is for, under its name in the arrange list.
-    func info(_ t: HomeStrings) -> String {
-        switch self {
-        case .shortcuts: t.sectionShortcutsInfo
-        case .exam: t.sectionExamInfo
-        case .grades: t.sectionGradesInfo
-        case .messages: t.sectionMessagesInfo
-        case .mensa: t.sectionMensaInfo
-        case .today: t.sectionTodayInfo
-        case .nowNext: t.sectionNowNextInfo
-        case .changes: t.sectionChangesInfo
-        case .average: t.sectionAverageInfo
-        case .todos: t.sectionTodosInfo
-        case .reminders: t.sectionRemindersInfo
         }
     }
 }
@@ -1461,15 +1452,10 @@ private struct HomeArrangeSheet: View {
         HStack(spacing: Spacing.iconText) {
             control()
             IconTile(section.symbol, color: Brand.accent, size: 38)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(section.title(s.home))
-                    .textStyle(.headline)
-                    .foregroundStyle(Palette.textPrimary)
-                Text(section.info(s.home))
-                    .textStyle(.footnote)
-                    .foregroundStyle(Palette.textSecondary)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            Text(section.title(s.home))
+                .textStyle(.headline)
+                .foregroundStyle(Palette.textPrimary)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.vertical, 2)
         .listRowBackground(Palette.card)

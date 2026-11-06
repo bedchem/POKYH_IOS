@@ -57,8 +57,8 @@ public struct TasksStrings: Sendable {
     public let exam: String
     public let homeworkOne: String
     public let due: String
-    public let joinCode: String
-    public let joinCodeHint: String
+    public let searchTodos: String
+    public let searchReminders: String
     public let collapse: String
     public let expand: String
     public let username: String
@@ -161,8 +161,8 @@ extension TasksStrings {
         exam: "Prüfung",
         homeworkOne: "Hausaufgabe",
         due: "Fällig",
-        joinCode: "Beitrittscode",
-        joinCodeHint: "Zum Teilen mit Klassenkamerad:innen",
+        searchTodos: "To-dos durchsuchen",
+        searchReminders: "Erinnerungen durchsuchen",
         collapse: "Einklappen",
         expand: "Aufklappen",
         username: "Benutzername",
@@ -265,8 +265,8 @@ extension TasksStrings {
         exam: "Verifica",
         homeworkOne: "Compito",
         due: "In scadenza",
-        joinCode: "Codice di accesso",
-        joinCodeHint: "Da condividere con i compagni di classe",
+        searchTodos: "Cerca nei to-do",
+        searchReminders: "Cerca nei promemoria",
         collapse: "Comprimi",
         expand: "Espandi",
         username: "Nome utente",
@@ -369,8 +369,8 @@ extension TasksStrings {
         exam: "Exam",
         homeworkOne: "Homework",
         due: "Due",
-        joinCode: "Join code",
-        joinCodeHint: "To share with your classmates",
+        searchTodos: "Search to-dos",
+        searchReminders: "Search reminders",
         collapse: "Collapse",
         expand: "Expand",
         username: "Username",

@@ -6,7 +6,7 @@ import PokyhDesign
 /// object, five cards made it look like five things), the composer right under it. The own
 /// comments edit in a small sheet, from the pencil or a long press.
 struct CommentSection: View {
-    @EnvironmentObject var app: AppState
+    @Environment(AppState.self) var app
     @Environment(\.strings) private var s
     @Environment(\.openURL) private var openURL
     let title: String
@@ -73,7 +73,7 @@ struct CommentSection: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, Spacing.xl)
         } else if comments.isEmpty {
-            Text("\(s.common.noComments) \(s.common.noCommentsHint)")
+            Text(s.common.noComments)
                 .textStyle(.footnote)
                 .foregroundStyle(Palette.textTertiary)
         } else {
@@ -85,7 +85,7 @@ struct CommentSection: View {
 
     private func row(_ c: ApiComment) -> some View {
         let mine = myUid != nil && c.stableUid == myUid
-        let stars = ratings[c.stableUid].map { Int($0.rounded()) } ?? 0
+        let stars = ratings[c.stableUid].map { Int(saturating: $0.rounded()) } ?? 0
         return HStack(alignment: .top, spacing: Spacing.iconText) {
             InitialAvatar(name: c.username, size: 34, colorSeed: c.username)
             VStack(alignment: .leading, spacing: Spacing.xs) {
@@ -114,34 +114,24 @@ struct CommentSection: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if mine {
-                HStack(spacing: 0) {
-                    if update != nil {
-                        IconButton("pencil", label: s.common.editComment, size: 32, tint: Palette.textTertiary) {
-                            editing = c
-                        }
-                    }
-                    IconButton("trash", label: s.common.delete, size: 32, tint: Palette.textTertiary) {
-                        confirmDelete = c
-                    }
+            // One "…" per comment, like Messages and Notes: edit and delete your own, report others'.
+            if mine || myUid != nil {
+                Menu {
+                    actions(for: c, mine: mine)
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Palette.textTertiary)
+                        .frame(width: 36, height: 32)
+                        .contentShape(.rect)
                 }
-            } else if myUid != nil {
-                IconButton("flag", label: s.common.reportComment, size: 32, tint: Palette.textTertiary) {
-                    report(c)
-                }
+                .accessibilityLabel(s.common.more)
             }
         }
         .padding(Spacing.card)
         .contentShape(.rect)
         .contextMenu {
-            if mine {
-                if update != nil {
-                    Button { editing = c } label: { Label(s.common.editComment, systemImage: "pencil") }
-                }
-                Button(role: .destructive) { confirmDelete = c } label: { Label(s.common.delete, systemImage: "trash") }
-            } else if myUid != nil {
-                Button { report(c) } label: { Label(s.common.reportComment, systemImage: "flag") }
-            }
+            if mine || myUid != nil { actions(for: c, mine: mine) }
         }
     }
 
@@ -256,6 +246,17 @@ struct CommentSection: View {
             URLQueryItem(name: "body", value: s.common.reportBody(website + reportPath, c.username, date, c.id, text)),
         ]
         if let url = mail.url { openURL(url) }
+    }
+
+    @ViewBuilder private func actions(for c: ApiComment, mine: Bool) -> some View {
+        if mine {
+            if update != nil {
+                Button { editing = c } label: { Label(s.common.editComment, systemImage: "pencil") }
+            }
+            Button(role: .destructive) { confirmDelete = c } label: { Label(s.common.delete, systemImage: "trash") }
+        } else {
+            Button { report(c) } label: { Label(s.common.reportComment, systemImage: "flag") }
+        }
     }
 
     private func timeAgo(_ c: ApiComment) -> String {

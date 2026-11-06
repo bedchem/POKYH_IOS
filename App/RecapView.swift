@@ -291,6 +291,9 @@ private enum RecapUntisCalls {
         config.httpShouldSetCookies = false
         config.timeoutIntervalForRequest = 15
         config.requestCachePolicy = .reloadIgnoringLocalCacheData
+        #if DEBUG
+        StubServer.attach(to: config)
+        #endif
         return URLSession(configuration: config)
     }()
 
@@ -314,9 +317,9 @@ private enum RecapUntisCalls {
         let list = root.data.absenceTimes.exists ? root.data.absenceTimes : root.absenceTimes
         guard list.exists else { throw AppError(message: Strings.current.errors.badAnswer) }
         return list.array.map {
-            RecapFigures.TimeIn(absenceId: $0.absenceId.int ?? 0, minutes: max(0, $0.missedMins.int ?? 0),
+            RecapFigures.TimeIn(absenceId: $0.absenceId.int ?? 0, minutes: UntisRange.amount($0.missedMins.int),
                                 subject: ($0.subjectName.string ?? "").trimmingCharacters(in: .whitespaces),
-                                excused: $0.excused.bool ?? false, date: $0.date.int ?? 0)
+                                excused: $0.excused.bool ?? false, date: UntisRange.day($0.date.int))
         }
     }
 }
@@ -421,7 +424,7 @@ struct RecapBanner: View {
 
 /// Keeps the store going and shows the story while one is open.
 struct RecapHost: ViewModifier {
-    @EnvironmentObject private var app: AppState
+    @Environment(AppState.self) private var app
     @ObservedObject private var store = RecapStore.shared
 
     func body(content: Content) -> some View {
@@ -495,7 +498,7 @@ struct RecapStoryView: View {
     let recap: Recap
     @ObservedObject var store: RecapStore
 
-    @EnvironmentObject private var app: AppState
+    @Environment(AppState.self) private var app
     @Environment(\.strings) private var s
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 

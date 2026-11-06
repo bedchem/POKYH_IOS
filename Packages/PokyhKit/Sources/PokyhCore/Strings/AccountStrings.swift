@@ -51,7 +51,8 @@ public struct AccountStrings: Sendable {
     public let more: String
     public let accountsHint: String
     public let consentLink: String
-    public let scanPrompt: String
+    /// The website's host goes in, from the build's config.
+    public let scanPrompt: @Sendable (String) -> String
     public let cameraNeeded: String
     public let openSettings: String
     public let crashTitle: String
@@ -112,7 +113,7 @@ extension AccountStrings {
         more: "Mehr",
         accountsHint: "Auf diesem Gerät gespeichert. Tippe auf ein Konto, um zu wechseln.",
         consentLink: "In den Einstellungen einschalten",
-        scanPrompt: "Halte die Kamera auf den QR-Code auf pokyh.com.",
+        scanPrompt: { "Halte die Kamera auf den QR-Code auf \($0)." },
         cameraNeeded: "Zum Scannen braucht POKYH die Kamera. Erlaube sie in den Einstellungen.",
         openSettings: "Einstellungen öffnen",
         crashTitle: "POKYH ist abgestürzt",
@@ -173,7 +174,7 @@ extension AccountStrings {
         more: "Più",
         accountsHint: "Salvati su questo dispositivo. Tocca un account per passare a quello.",
         consentLink: "Attiva nelle impostazioni",
-        scanPrompt: "Inquadra il codice QR su pokyh.com.",
+        scanPrompt: { "Inquadra il codice QR su \($0)." },
         cameraNeeded: "Per scansionare POKYH ha bisogno della fotocamera. Consentila nelle impostazioni.",
         openSettings: "Apri impostazioni",
         crashTitle: "POKYH si è chiuso",
@@ -234,7 +235,7 @@ extension AccountStrings {
         more: "More",
         accountsHint: "Saved on this device. Tap an account to switch to it.",
         consentLink: "Turn it on in settings",
-        scanPrompt: "Point the camera at the QR code on pokyh.com.",
+        scanPrompt: { "Point the camera at the QR code on \($0)." },
         cameraNeeded: "POKYH needs the camera to scan. Allow it in the settings.",
         openSettings: "Open settings",
         crashTitle: "POKYH crashed",

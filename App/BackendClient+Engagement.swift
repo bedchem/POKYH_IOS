@@ -36,6 +36,13 @@ extension BackendClient {
         return try JSONDecoder().decode(BellActivity.self, from: data)
     }
 
+    /// All of it, for the profile and the statistics.
+    func accountActivity(token: String) async throws -> AccountActivity {
+        let data = try await request(Config.Routes.Engagement.activity, token: token)
+        guard let activity = AccountActivity(data: data) else { throw AppError(message: Strings.current.errors.badAnswer) }
+        return activity
+    }
+
     // ── Recaps ──────────────────────────────────────────────────────────────
 
     /// The recaps the account may open now, the newest period first.

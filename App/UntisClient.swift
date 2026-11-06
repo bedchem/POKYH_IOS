@@ -22,6 +22,9 @@ final class UntisClient {
         cfg.httpShouldSetCookies = false
         cfg.timeoutIntervalForRequest = 20
         cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
+        #if DEBUG
+        StubServer.attach(to: cfg)
+        #endif
         session = URLSession(configuration: cfg)
     }
 
@@ -40,7 +43,20 @@ final class UntisClient {
         return h
     }
 
+    /// The offline session has no WebUntis session at all. Sent anyway, a request would come back
+    /// as "signed out" the moment the network returns and lock the app; this way it reads as
+    /// "no connection" and the stored copy shows.
+    private func requireSession(_ s: UserSession) throws {
+        if s.sessionId.isEmpty { throw URLError(.notConnectedToInternet) }
+    }
+
+    /// Same for writes, with words for the screen: nothing can be saved offline.
+    private func requireSessionToWrite(_ s: UserSession) throws {
+        if s.sessionId.isEmpty { throw AppError(message: Strings.current.common.offlineTitle) }
+    }
+
     private func get(_ urlString: String, _ s: UserSession, timeout: TimeInterval? = nil) async throws -> (Data, HTTPURLResponse) {
+        try requireSession(s)
         guard let url = URL(string: urlString) else { throw AppError(message: Strings.current.errors.badAnswer) }
         var req = URLRequest(url: url)
         if let timeout { req.timeoutInterval = timeout }
@@ -255,6 +271,7 @@ final class UntisClient {
         if isStudentType || isStudentSelf {
             let me = studentList.first { $0.id == studentId }
             s.personName = me?.name
+            s.firstName = me.map(\.fore).flatMap { $0.isEmpty ? nil : $0 }
             // Eigene klasseId aus dem Schüler-Datensatz, falls `authenticate` 0 lieferte.
             if s.klasseId <= 0, let kid = me?.klasseId, kid > 0 { s.klasseId = kid }
         } else if let first = studentList.first {
@@ -262,6 +279,7 @@ final class UntisClient {
             s.studentId = first.id
             if let kid = first.klasseId { s.klasseId = kid }
             s.personName = first.name
+            s.firstName = first.fore.isEmpty ? nil : first.fore
             s.isParent = true
         }
 
@@ -442,7 +460,7 @@ final class UntisClient {
     }
 
     /// Liefert (id, klasseId?, name) der zugänglichen Schüler.
-    private func fetchStudents(_ s: UserSession) async throws -> [(id: Int, klasseId: Int?, name: String)] {
+    private func fetchStudents(_ s: UserSession) async throws -> [(id: Int, klasseId: Int?, name: String, fore: String)] {
         let result = try await rpc("getStudents", s, id: "pockyh-students")
         return result.array.compactMap { st in
             guard let id = st.id.int else { return nil }
@@ -451,7 +469,7 @@ final class UntisClient {
             let full = [fore, long].filter { !$0.isEmpty }.joined(separator: " ")
             // klasseId direkt oder als eingebettetes `klasse`-Objekt.
             let kid = st.klasseId.int ?? st.klasse.id.int
-            return (id, kid, full.isEmpty ? (st.name.string ?? "") : full)
+            return (id, kid, full.isEmpty ? (st.name.string ?? "") : full, fore)
         }
     }
 
@@ -468,7 +486,7 @@ final class UntisClient {
     /// angepasst werden kann.
     func classDiagnostics(_ s: UserSession) async -> String {
         var out = "studentId=\(s.studentId)  personType=\(s.personType.map(String.init) ?? "nil")\n"
-        out += "klasseId=\(s.klasseId)  klasseName=\(s.klasseName.isEmpty ? "—" : s.klasseName)\n\n"
+        out += "klasseId=\(s.klasseId)  klasseName=\(s.klasseName.isEmpty ? "–" : s.klasseName)\n\n"
 
         // 1) getStudents (JSON-RPC) — liefert je Schüler oft die klasseId.
         out += "── getStudents ──\n"
@@ -667,18 +685,21 @@ final class UntisClient {
     /// Kommende Prüfungen/Schularbeiten (ab heute, ~40 Tage), gecacht.
     func upcomingExams(_ s: UserSession) async throws -> [TimetableEntry] {
         if let cached = examsCache.get(s.studentId) { return cached }
-        if s.bearerToken.isEmpty { return [] }   // Offline: keine Prüfungs-Abfrage
-        let start = DateFmt.isoString(Date())
-        let end = DateFmt.isoString(Calendar.current.date(byAdding: .day, value: 40, to: Date())!)
-        let url = "\(base(s))\(Config.Routes.timetable)?start=\(start)&end=\(end)&format=1&resourceType=STUDENT&resources=\(s.studentId)&periodTypes=&timetableType=MY_TIMETABLE&layout=START_TIME"
-        let (data, http) = try await get(url, s)
-        if isHtmlOrAuthError(data, http) { throw AppError.sessionExpired }
-        guard http.statusCode == 200 else { return [] }
         let todayNum = DateFmt.num(Date())
-        let exams = Self.parseTimetable(JSON.parse(data))
-            .filter { $0.isExam && $0.date >= todayNum }
+        let all = try await storedOrFresh(diskKey("exams", s), s) { () async throws -> [TimetableEntry] in
+            let start = DateFmt.isoString(Date())
+            let end = DateFmt.isoString(Calendar.current.date(byAdding: .day, value: 40, to: Date()) ?? Date())
+            let url = "\(base(s))\(Config.Routes.timetable)?start=\(start)&end=\(end)&format=1&resourceType=STUDENT&resources=\(s.studentId)&periodTypes=&timetableType=MY_TIMETABLE&layout=START_TIME"
+            let (data, http) = try await get(url, s)
+            if isHtmlOrAuthError(data, http) { throw AppError.sessionExpired }
+            guard http.statusCode == 200 else { return [] }
+            return Self.parseTimetable(JSON.parse(data)).filter(\.isExam)
+        }
+        // A stored copy can be days old: what's past by now drops out.
+        let exams = all
+            .filter { $0.date >= todayNum }
             .sorted { $0.date != $1.date ? $0.date < $1.date : $0.startTime < $1.startTime }
-        examsCache.set(s.studentId, exams)
+        if !s.sessionId.isEmpty { examsCache.set(s.studentId, exams) }
         return exams
     }
 
@@ -690,7 +711,7 @@ final class UntisClient {
         let key = "\(s.schoolRef.loginName)-\(s.studentId)-\(date)"  // two schools can share a student id
         if let mem = timetableCache.get(key) { return mem }
         // Offline (token-los): persistierten Stundenplan sofort ohne Spinner zeigen.
-        if s.bearerToken.isEmpty { return DiskCache.load([TimetableEntry].self, key: "tt-\(key)") }
+        if s.bearerToken.isEmpty { return DiskCache.load([TimetableEntry].self, key: "tt-\(key)", owner: s.username) }
         return nil
     }
 
@@ -701,11 +722,11 @@ final class UntisClient {
         // liefert eine Auth-/HTML-Antwort und würde abmelden. Stattdessen direkt den
         // zuvor geladenen, persistierten Stundenplan zeigen (die Fächer der Woche).
         if s.bearerToken.isEmpty {
-            return DiskCache.load([TimetableEntry].self, key: "tt-\(key)") ?? []
+            return await DiskCache.loaded([TimetableEntry].self, key: "tt-\(key)", owner: s.username) ?? []
         }
         // Ende = Start + 5 Tage (Mo–Sa)
         guard let d = DateFmt.iso.date(from: date) else { throw AppError(message: Strings.current.errors.badAnswer) }
-        let end = DateFmt.isoString(Calendar.current.date(byAdding: .day, value: 5, to: d)!)
+        let end = DateFmt.isoString(Calendar.current.date(byAdding: .day, value: 5, to: d) ?? d)
         let url = "\(base(s))/api/rest/view/v1/timetable/entries?start=\(date)&end=\(end)&format=1&resourceType=STUDENT&resources=\(s.studentId)&periodTypes=&timetableType=MY_TIMETABLE&layout=START_TIME"
         do {
             let (data, http) = try await get(url, s)
@@ -713,11 +734,11 @@ final class UntisClient {
             guard http.statusCode == 200 else { throw AppError(message: Strings.current.errors.timetable(http.statusCode)) }
             let entries = Self.parseTimetable(JSON.parse(data))
             timetableCache.set(key, entries)
-            DiskCache.save(entries, key: "tt-\(key)")   // Offline-Fallback persistieren
+            DiskCache.save(entries, key: "tt-\(key)", owner: s.username)   // Offline-Fallback persistieren
             return entries
         } catch let netErr as URLError {
             // Nur bei echten Netzwerkfehlern offline ausweichen (Auth-Fehler nicht).
-            if let offline = DiskCache.load([TimetableEntry].self, key: "tt-\(key)") { return offline }
+            if let offline = DiskCache.load([TimetableEntry].self, key: "tt-\(key)", owner: s.username) { return offline }
             throw netErr
         }
     }
@@ -726,7 +747,7 @@ final class UntisClient {
         var entries: [TimetableEntry] = []
         for day in json.days.array {
             guard let dateStr = day.date.string else { continue }
-            let dateNum = Int(dateStr.replacingOccurrences(of: "-", with: "")) ?? 0
+            let dateNum = UntisRange.day(Int(dateStr.replacingOccurrences(of: "-", with: "")))
             for ge in day.gridEntries.array {
                 guard let startStr = ge.duration.start.string,
                       let endStr = ge.duration.end.string else { continue }
@@ -734,9 +755,9 @@ final class UntisClient {
                     let parts = iso.split(separator: "T")
                     guard parts.count == 2 else { return 0 }
                     let t = parts[1].split(separator: ":")
-                    let h = Int(t.first ?? "0") ?? 0
-                    let m = t.count > 1 ? (Int(t[1]) ?? 0) : 0
-                    return h * 100 + m
+                    let h = UntisRange.clock(Int(t.first ?? "0"))
+                    let m = t.count > 1 ? UntisRange.clock(Int(t[1])) : 0
+                    return UntisRange.clock(h * 100 + m)
                 }
                 let startTime = hm(startStr), endTime = hm(endStr)
 
@@ -796,7 +817,7 @@ final class UntisClient {
         if let cached = gradesCache.get(cacheKey) { return cached }
         // Token-lose (Offline-)Sitzung: direkt die persistierten Noten zeigen.
         if s.bearerToken.isEmpty {
-            return DiskCache.load([SubjectGrades].self, key: "grades-\(cacheKey)") ?? []
+            return DiskCache.load([SubjectGrades].self, key: "grades-\(cacheKey)", owner: s.username) ?? []
         }
         do {
             guard let schoolyearId = try await schoolyearId(year: year, s) else {
@@ -831,11 +852,11 @@ final class UntisClient {
             let result = subjects.filter { !$0.subjectName.isEmpty && !$0.grades.isEmpty }
                 .sorted { $0.subjectName.localizedCaseInsensitiveCompare($1.subjectName) == .orderedAscending }
             gradesCache.set(cacheKey, result)
-            DiskCache.save(result, key: "grades-\(cacheKey)")   // Offline-Fallback
+            DiskCache.save(result, key: "grades-\(cacheKey)", owner: s.username)   // Offline-Fallback
             return result
         } catch let netErr as URLError {
             // Nur bei echten Netzwerkfehlern offline ausweichen (Auth-Fehler nicht).
-            if let offline = DiskCache.load([SubjectGrades].self, key: "grades-\(cacheKey)") { return offline }
+            if let offline = DiskCache.load([SubjectGrades].self, key: "grades-\(cacheKey)", owner: s.username) { return offline }
             throw netErr
         }
     }
@@ -847,14 +868,16 @@ final class UntisClient {
         let json = JSON.parse(data)
         let entries: [GradeEntry] = json.data.grades.array.compactMap { g in
             let markValue = g.mark.markValue.double ?? 0
-            guard markValue > 0 else { return nil }
+            let display = g.mark.markDisplayValue.double ?? markValue
+            // What can't be a grade would break every sum and chart after this.
+            guard markValue > 0, MarkText.isUsable(markValue), MarkText.isUsable(display) else { return nil }
             return GradeEntry(
                 id: g.id.int ?? 0,
                 text: g.text.string ?? "",
-                date: g.date.int ?? 0,
+                date: UntisRange.day(g.date.int),
                 markName: g.mark.name.string ?? "",
                 markValue: markValue,
-                markDisplayValue: g.mark.markDisplayValue.double ?? markValue,
+                markDisplayValue: display,
                 examType: g.examType.longname.string ?? g.examType.name.string ?? ""
             )
         }
@@ -945,9 +968,9 @@ final class UntisClient {
     }
 
     static func parseAbsence(_ item: JSON) -> AbsenceEntry {
-        let startTime = item.startTime.int ?? 0
-        let endTime = item.endTime.int ?? 0
-        let rawHours = item.hours.int ?? item.lessonHours.int
+        let startTime = UntisRange.clock(item.startTime.int)
+        let endTime = UntisRange.clock(item.endTime.int)
+        let rawHours = (item.hours.int ?? item.lessonHours.int).map(UntisRange.amount)
         let hours: Int
         if let rh = rawHours, rh > 0 {
             hours = rh
@@ -961,8 +984,8 @@ final class UntisClient {
         }
         return AbsenceEntry(
             id: item.id.int ?? 0,
-            startDate: item.startDate.int ?? 0,
-            endDate: item.endDate.int ?? 0,
+            startDate: UntisRange.day(item.startDate.int),
+            endDate: UntisRange.day(item.endDate.int),
             startTime: startTime, endTime: endTime,
             isExcused: item.isExcused.bool ?? false,
             reasonName: item.reasonName.string ?? item.reason.string,
@@ -978,7 +1001,13 @@ final class UntisClient {
     // ── Nachrichten ────────────────────────────────────────────────────────
 
     func messages(folder: MessageFolder, _ s: UserSession) async throws -> [MessagePreview] {
-        if s.bearerToken.isEmpty { return [] }   // kein WebUntis (offline/Backend-only)
+        guard s.hasUntis else { return [] }   // POKYH-only account
+        return try await storedOrFresh(diskKey("messages", s, folder.rawValue), s) {
+            try await fetchMessages(folder: folder, s)
+        }
+    }
+
+    private func fetchMessages(folder: MessageFolder, _ s: UserSession) async throws -> [MessagePreview] {
         let path: String
         switch folder {
         case .inbox: path = "/api/rest/view/v1/messages"
@@ -1051,7 +1080,12 @@ final class UntisClient {
         .filter { !$0.isEmpty && seen.insert($0).inserted }
     }
 
+    /// Opened messages stay readable offline.
     func messageDetail(id: Int, _ s: UserSession) async throws -> MessageDetail {
+        try await storedOrFresh(diskKey("message", s, "\(id)"), s) { try await fetchMessageDetail(id: id, s) }
+    }
+
+    private func fetchMessageDetail(id: Int, _ s: UserSession) async throws -> MessageDetail {
         let url = "\(base(s))\(Config.Routes.messageDetail(id))"
         let (data, http) = try await get(url, s)
         if isHtmlOrAuthError(data, http) { throw AppError.sessionExpired }
@@ -1114,7 +1148,7 @@ final class UntisClient {
     }
 
     func markRead(id: Int, _ s: UserSession) async {
-        guard let url = URL(string: "\(base(s))/api/rest/view/v1/messages/\(id)/markasread") else { return }
+        guard !s.sessionId.isEmpty, let url = URL(string: "\(base(s))/api/rest/view/v1/messages/\(id)/markasread") else { return }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         for (k, v) in headers(s) { req.setValue(v, forHTTPHeaderField: k) }
@@ -1136,7 +1170,7 @@ final class UntisClient {
                 id: r.id.int ?? 0,
                 subjectName: r.subjectName.string ?? "",
                 creatorName: r.creatorName.string ?? "",
-                createDate: r.createDate.int ?? 0,
+                createDate: UntisRange.day(r.createDate.int),
                 eventReasonName: r.eventReasonName.string ?? "",
                 categoryName: r.categoryName.string ?? "",
                 text: r.text.string ?? ""
@@ -1152,7 +1186,7 @@ final class UntisClient {
         if [-8500, -8501, -8520].contains(j.error.code.int ?? 0) { throw AppError.sessionExpired }
         return j.result.array.compactMap { y in
             guard let id = y.id.int else { return nil }
-            return SchoolYear(id: id, name: y.name.string ?? "", startDate: y.startDate.int ?? 0, endDate: y.endDate.int ?? 0)
+            return SchoolYear(id: id, name: y.name.string ?? "", startDate: UntisRange.day(y.startDate.int), endDate: UntisRange.day(y.endDate.int))
         }
         .sorted { $0.startDate < $1.startDate }
     }
@@ -1434,7 +1468,7 @@ final class UntisClient {
         let json = JSON.parse(data)
         return MessagePermissions(
             recipientOption: json.recipientOptions.array.first?.string ?? fallback.recipientOption,
-            maxFileSize: json.maxFileSize.double.map { Int($0) } ?? fallback.maxFileSize,
+            maxFileSize: json.maxFileSize.double.map { Int(saturating: $0) } ?? fallback.maxFileSize,
             maxFileCount: json.maxFileCount.int ?? fallback.maxFileCount
         )
     }
@@ -1452,6 +1486,7 @@ final class UntisClient {
 
     private func sendMultipart(_ urlString: String, method: String, meta: [String: Any], attachments: [OutgoingAttachment],
                                token: String, schoolYearId: Int?, _ s: UserSession) async throws -> (Data, HTTPURLResponse) {
+        try requireSessionToWrite(s)
         guard let url = URL(string: urlString) else { throw AppError(message: Strings.current.errors.badAnswer) }
         let boundary = "pokyh-\(UUID().uuidString)"
         var body = Data()
@@ -1541,7 +1576,7 @@ final class UntisClient {
         return AbsenceMeta(
             reasons: Self.reasons(list),
             defaultReasonId: d.defaultAbsenceReason.id.int,
-            defaultDate: d.defaultDate.int,
+            defaultDate: d.defaultDate.int.map { UntisRange.day($0) },
             defaultStartTime: d.defaultStartTime.int.map(Self.hhmm),
             defaultEndTime: d.defaultEndTime.int.map(Self.hhmm)
         )
@@ -1759,6 +1794,66 @@ final class UntisClient {
         throw AppError(message: Self.untisError(reply.json) ?? t.passwordFailed)
     }
 
+    // ── The account's own settings ───────────────────────────────────────────
+
+    /// As the web's settings read it. Only the first answer has to come; without the others the
+    /// account shows without two-factor or a language choice.
+    func untisAccount(_ s: UserSession) async throws -> UntisAccount {
+        async let general = get(base(s) + Config.Routes.profileGeneral, s, timeout: 12)
+        async let access = try? get(base(s) + Config.Routes.profileAccess, s, timeout: 12)
+        async let languages = try? get(base(s) + Config.Routes.profileLanguages, s, timeout: 12)
+        let (data, http) = try await general
+        if isHtmlOrAuthError(data, http) { throw AppError.sessionExpired }
+        let extras = await (access: access?.0, languages: languages?.0)
+        guard let account = UntisAccount(general: data, access: extras.access, languages: extras.languages) else {
+            throw AppError(message: Strings.current.errors.badAnswer)
+        }
+        return account
+    }
+
+    /// Changes some of the settings. WebUntis takes the whole set, so it's read first.
+    func saveUntisAccount(_ s: UserSession, email: String? = nil, forwardToEmail: Bool? = nil, languageCode: String? = nil) async throws {
+        let failed = Strings.current.settings.saveError
+        let (data, http) = try await get(base(s) + Config.Routes.profileGeneral, s, timeout: 12)
+        if isHtmlOrAuthError(data, http) { throw AppError.sessionExpired }
+        guard let body = UntisAccount.saveBody(general: data, email: email, forwardToEmail: forwardToEmail, languageCode: languageCode) else {
+            throw AppError(message: failed)
+        }
+        let reply = try await classicWrite(s, Config.Routes.profileGeneral, method: "POST", body: body)
+        if reply.expired { throw AppError.sessionExpired }
+        if reply.ok, reply.json.errors.array.isEmpty { return }
+        throw AppError(message: Self.untisError(reply.json) ?? failed)
+    }
+
+    /// A new secret for the authenticator app; nothing is on until the first code came back.
+    func startTwoFactorSetup(_ s: UserSession) async throws -> TwoFactorSetup {
+        let reply = try await classicWrite(s, Config.Routes.profileTotpCreate, method: "POST", body: [:])
+        if reply.expired { throw AppError.sessionExpired }
+        guard reply.ok, let setup = TwoFactorSetup(created: reply.data) else {
+            throw AppError(message: Self.untisError(reply.json) ?? Strings.current.errors.badAnswer)
+        }
+        return setup
+    }
+
+    /// Turns it on with the app's current code.
+    func enableTwoFactor(_ s: UserSession, secret: String, code: String) async throws {
+        let wrong = Strings.current.login.codeWrong
+        guard let token = Int(TwoFactorCode.digits(code)) else { throw AppError(message: wrong) }
+        let reply = try await classicWrite(s, Config.Routes.profileTotp, method: "POST",
+                                           body: ["key": secret, "token": token, "algorithm": "STANDARD"])
+        if reply.expired { throw AppError.sessionExpired }
+        guard reply.ok, reply.json.errors.array.isEmpty, !reply.json.data.totpCredentials.dictionary.isEmpty else {
+            throw AppError(message: wrong)
+        }
+    }
+
+    func disableTwoFactor(_ s: UserSession) async throws {
+        let reply = try await classicWrite(s, Config.Routes.profileTotp, method: "DELETE", body: [:])
+        if reply.expired { throw AppError.sessionExpired }
+        if reply.ok, reply.json.errors.array.isEmpty { return }
+        throw AppError(message: Self.untisError(reply.json) ?? Strings.current.settings.saveError)
+    }
+
     /// "Passwort vergessen": WebUntis' own reset request, which e-mails a link to the address the
     /// account has stored. POKYH never sees a password. Needs the login page's anonymous session.
     func requestPasswordReset(username: String, email: String, school: School) async throws {
@@ -1842,6 +1937,7 @@ final class UntisClient {
     /// A classic write: cookie session, X-CSRF-TOKEN, Tenant-Id and JSON, no bearer. A 403 is a
     /// stale CSRF token (nothing was written), so it goes once more with a fresh one.
     private func classicWrite(_ s: UserSession, _ path: String, method: String, body: [String: Any]) async throws -> UntisReply {
+        try requireSessionToWrite(s)
         guard let url = URL(string: base(s) + path) else { throw AppError(message: Strings.current.errors.badAnswer) }
         let payload = try JSONSerialization.data(withJSONObject: body)
         func send(_ config: PageConfig) async throws -> UntisReply {
@@ -1863,6 +1959,7 @@ final class UntisClient {
 
     /// A REST call with the session's auth and no body.
     private func send(_ urlString: String, method: String, _ s: UserSession) async throws -> (Data, HTTPURLResponse) {
+        try requireSessionToWrite(s)
         guard let url = URL(string: urlString) else { throw AppError(message: Strings.current.errors.badAnswer) }
         var req = URLRequest(url: url)
         req.httpMethod = method
@@ -1890,10 +1987,7 @@ final class UntisClient {
         #""(?:STUDABS_REPORT|SELF_ABSENCEREASON|WRITE_OWN_ABSENCE|WRITE_STUD_ABSENCE|STUDENT_ABSENCE|SELF_ABSENCE)(?::[A-Z]*[WC][A-Z]*)?""#
 
     /// WebUntis sends HHMM (750) or minutes since midnight (470); always answers HHMM.
-    static func hhmm(_ n: Int) -> Int {
-        let minutes = (n > 2359 || n % 100 > 59) ? n : (n / 100) * 60 + n % 100
-        return (minutes / 60) * 100 + minutes % 60
-    }
+    static func hhmm(_ n: Int) -> Int { UntisRange.hhmm(n) }
 
     /// Plain text from WebUntis' rich text: line breaks kept, tags and entities resolved.
     static func plainText(_ value: String) -> String {
@@ -2107,17 +2201,19 @@ private enum ExcuseMessage {
         guard Lang.allCases.contains(where: { lower.hasPrefix(wording($0).prefix.lowercased() + ":") }) else { return nil }
         let ns = s as NSString
         let full = NSRange(location: 0, length: ns.length)
-        guard let dateRe = try? NSRegularExpression(pattern: #"(\d{1,2})[./](\d{1,2})[./](\d{4})"#),
-              let timeRe = try? NSRegularExpression(pattern: #"(?<![\d.:/])(\d{1,2}):(\d{2})(?![\d.:/])"#) else { return nil }
+        // [0-9], not \\d: that also matches other scripts' digits, which Int() can't read.
+        guard let dateRe = try? NSRegularExpression(pattern: #"([0-9]{1,2})[./]([0-9]{1,2})[./]([0-9]{4})"#),
+              let timeRe = try? NSRegularExpression(pattern: #"(?<![0-9.:/])([0-9]{1,2}):([0-9]{2})(?![0-9.:/])"#) else { return nil }
+        func number(_ m: NSTextCheckingResult, _ group: Int) -> Int { Int(ns.substring(with: m.range(at: group))) ?? 0 }
         let dates = dateRe.matches(in: s, range: full).map { m in
-            Int(ns.substring(with: m.range(at: 3)))! * 10_000 + Int(ns.substring(with: m.range(at: 2)))! * 100 + Int(ns.substring(with: m.range(at: 1)))!
+            number(m, 3) * 10_000 + number(m, 2) * 100 + number(m, 1)
         }
         guard let firstDate = dates.first, let lastDate = dates.last else { return nil }
         let times = timeRe.matches(in: s, range: full).map { m in
-            Int(ns.substring(with: m.range(at: 1)))! * 100 + Int(ns.substring(with: m.range(at: 2)))!
+            number(m, 1) * 100 + number(m, 2)
         }.filter { $0 / 100 < 24 && $0 % 100 < 60 }
-        let startTime = times.count >= 2 ? times.first! : 0
-        let endTime = times.count >= 2 ? times.last! : 2359
+        let startTime = times.count >= 2 ? times[0] : 0
+        let endTime = times.count >= 2 ? times[times.count - 1] : 2359
         let start = firstDate * 10_000 + startTime
         let end = lastDate * 10_000 + endTime
         return end > start ? Span(start: start, end: end) : nil
@@ -2143,15 +2239,15 @@ extension UntisClient {
     /// which then replaces the copy.
     private func storedOrFresh<T: Codable>(_ key: String, _ s: UserSession, fetch: () async throws -> T) async throws -> T {
         if s.bearerToken.isEmpty {
-            if let copy = DiskCache.load(T.self, key: key) { return copy }
+            if let copy = await DiskCache.loaded(T.self, key: key, owner: s.username) { return copy }
             throw AppError(message: Strings.current.tasks.offlineNotStored)
         }
         do {
             let fresh = try await fetch()
-            DiskCache.save(fresh, key: key)
+            DiskCache.save(fresh, key: key, owner: s.username)
             return fresh
         } catch let error as URLError {
-            if let copy = DiskCache.load(T.self, key: key) { return copy }
+            if let copy = await DiskCache.loaded(T.self, key: key, owner: s.username) { return copy }
             throw error
         }
     }
@@ -2162,8 +2258,8 @@ extension UntisClient {
         diskKey("lesson", s, "\(source?.key ?? "own")-\(entry.date)-\(entry.startTime)-\(entry.endTime)")
     }
 
-    func storedLessonDetail(_ entry: TimetableEntry, source: TimetableSource?, _ s: UserSession) -> LessonDetail? {
-        DiskCache.load(LessonDetail.self, key: lessonKey(entry, source: source, s))
+    func storedLessonDetail(_ entry: TimetableEntry, source: TimetableSource?, _ s: UserSession) async -> LessonDetail? {
+        await DiskCache.loaded(LessonDetail.self, key: lessonKey(entry, source: source, s), owner: s.username)
     }
 
     /// Asks for the lesson as the timetable it was tapped in has it: at the same hour the student's
@@ -2206,14 +2302,14 @@ extension UntisClient {
     func cachedTimetable(source: TimetableSource, date: String, _ s: UserSession) -> [TimetableEntry]? {
         let key = sourceKey(source, date: date, s)
         if let cached = timetableCache.get(key) { return cached }
-        return s.bearerToken.isEmpty ? DiskCache.load([TimetableEntry].self, key: "tt-\(key)") : nil
+        return s.bearerToken.isEmpty ? DiskCache.load([TimetableEntry].self, key: "tt-\(key)", owner: s.username) : nil
     }
 
     /// Another timetable's week, as far as the school shows it to this account.
     func timetable(source: TimetableSource, date: String, _ s: UserSession) async throws -> [TimetableEntry] {
         let key = sourceKey(source, date: date, s)
         if let cached = timetableCache.get(key) { return cached }
-        if s.bearerToken.isEmpty { return DiskCache.load([TimetableEntry].self, key: "tt-\(key)") ?? [] }
+        if s.bearerToken.isEmpty { return DiskCache.load([TimetableEntry].self, key: "tt-\(key)", owner: s.username) ?? [] }
         guard let start = DateFmt.iso.date(from: date),
               let saturday = Calendar.current.date(byAdding: .day, value: 5, to: start) else {
             throw AppError(message: Strings.current.errors.badAnswer)
@@ -2228,10 +2324,10 @@ extension UntisClient {
             guard http.statusCode == 200 else { throw AppError(message: Strings.current.errors.timetable(http.statusCode)) }
             let entries = Self.parseTimetable(JSON.parse(data))
             timetableCache.set(key, entries)
-            DiskCache.save(entries, key: "tt-\(key)")
+            DiskCache.save(entries, key: "tt-\(key)", owner: s.username)
             return entries
         } catch let error as URLError {
-            if let copy = DiskCache.load([TimetableEntry].self, key: "tt-\(key)") { return copy }
+            if let copy = DiskCache.load([TimetableEntry].self, key: "tt-\(key)", owner: s.username) { return copy }
             throw error
         }
     }
@@ -2240,22 +2336,22 @@ extension UntisClient {
 
     private func holidaysKey(_ s: UserSession) -> String { "holidays-\(s.schoolRef.loginName)" }
 
-    func storedHolidays(_ s: UserSession) -> [SchoolHoliday] {
-        DiskCache.load([SchoolHoliday].self, key: holidaysKey(s)) ?? []
+    func storedHolidays(_ s: UserSession) async -> [SchoolHoliday] {
+        await DiskCache.loaded([SchoolHoliday].self, key: holidaysKey(s), owner: nil) ?? []
     }
 
     /// An empty answer is a failed one here (getHolidays has no errors to tell apart), so it
     /// never replaces the list on disk.
     func refreshedHolidays(_ s: UserSession) async -> [SchoolHoliday] {
-        guard !s.bearerToken.isEmpty, let fresh = try? await holidays(s), !fresh.isEmpty else { return storedHolidays(s) }
+        guard !s.bearerToken.isEmpty, let fresh = try? await holidays(s), !fresh.isEmpty else { return await storedHolidays(s) }
         DiskCache.save(fresh, key: holidaysKey(s))
         return fresh
     }
 
     // ── Absences of a school year ────────────────────────────────────────────
 
-    func storedAbsences(year: Int, _ s: UserSession) -> [AbsenceEntry]? {
-        DiskCache.load([AbsenceEntry].self, key: diskKey("absences", s, "\(year)"))
+    func storedAbsences(year: Int, _ s: UserSession) async -> [AbsenceEntry]? {
+        await DiskCache.loaded([AbsenceEntry].self, key: diskKey("absences", s, "\(year)"), owner: s.username)
     }
 
     func schoolYearAbsences(year: Int, _ s: UserSession) async throws -> [AbsenceEntry] {
@@ -2267,7 +2363,7 @@ extension UntisClient {
     // ── Class register ───────────────────────────────────────────────────────
 
     func storedClassreg(year: Int, _ s: UserSession) -> [ClassregEvent]? {
-        DiskCache.load([ClassregEvent].self, key: diskKey("classreg", s, "\(year)"))
+        DiskCache.load([ClassregEvent].self, key: diskKey("classreg", s, "\(year)"), owner: s.username)
     }
 
     func classreg(year: Int, _ s: UserSession) async throws -> [ClassregEvent] {

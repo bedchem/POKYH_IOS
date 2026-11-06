@@ -1,3 +1,7 @@
 #include "Base.xcconfig"
 
 POKYH_APS_ENVIRONMENT = production
+
+// Coverage counters belong to test runs, not to the build that ships.
+ENABLE_CODE_COVERAGE = NO
+CLANG_COVERAGE_MAPPING = NO

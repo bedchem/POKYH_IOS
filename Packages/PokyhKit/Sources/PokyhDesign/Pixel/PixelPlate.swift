@@ -102,18 +102,22 @@ public struct PixelPlate: View {
     private func photoView(_ url: URL, _ g: PlateGeometry, _ fit: PixelFit) -> some View {
         let box = fit.rect(x: Double(g.boxX), y: Double(g.boxY), w: g.boxN, h: g.boxN)
         let well = PlateTones.color((scheme == .dark ? PlateTones.dark : PlateTones.light).map[.well] ?? 0)
-        return AsyncImage(url: url, transaction: Transaction(animation: .easeIn(duration: 0.25))) { phase in
-            if let image = phase.image {
-                // The well behind it: a photo with holes shouldn't show the stand-in.
-                image.resizable().scaledToFill().background(well)
-            } else {
-                Color.clear
-            }
-        }
-        .frame(width: box.width / displayScale, height: box.height / displayScale)
+        return photo(url, maxPixel: Int(max(box.width, box.height).rounded(.up)), well: well)
+            .frame(width: box.width / displayScale, height: box.height / displayScale)
         .clipShape(FoodShape(g: g))
         .position(x: box.midX / displayScale, y: box.midY / displayScale)
         .allowsHitTesting(false)
+    }
+}
+
+private extension PixelPlate {
+    // The well behind the photo: one with holes shouldn't show the stand-in.
+    @ViewBuilder func photo(_ url: URL, maxPixel: Int, well: Color) -> some View {
+        #if canImport(UIKit)
+        RemotePhoto(url: url, maxPixel: maxPixel) { $0.resizable().scaledToFill().background(well) } placeholder: { Color.clear }
+        #else
+        AsyncImage(url: url) { $0.resizable().scaledToFill().background(well) } placeholder: { Color.clear }
+        #endif
     }
 }
 

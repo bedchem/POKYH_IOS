@@ -18,9 +18,14 @@ struct WarmShadow: ViewModifier {
 
 extension View {
     /// The one card recipe: card fill, continuous corners, a whisper of warm shadow, no border.
+    /// The shadow belongs to the shape alone: on the whole card SwiftUI would render every
+    /// row offscreen again on each scrolled frame.
     public func cardSurface(radius: CGFloat = Radius.xl, fill: Color = Palette.card, elevation: Elevation = .level1) -> some View {
-        background(fill, in: .pokyh(radius))
-            .modifier(WarmShadow(elevation: elevation))
+        background {
+            RoundedRectangle.pokyh(radius)
+                .fill(fill)
+                .modifier(WarmShadow(elevation: elevation))
+        }
     }
 
     /// Recessed fill inside a card: inputs, segmented tracks, skeletons. No shadow.

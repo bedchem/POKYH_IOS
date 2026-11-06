@@ -118,7 +118,7 @@ struct TwoFactorCard: View {
 }
 
 private struct TwoFactorHost: View {
-    @ObservedObject var app: AppState
+    let app: AppState
 
     var body: some View {
         GeometryReader { geo in

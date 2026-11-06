@@ -2,11 +2,10 @@ import SwiftUI
 import PokyhCore
 import PokyhDesign
 
-/// The class page: the join code on top (it's what you open the page to read out), then what's
-/// new in the class register, open absences, class duties, the exams and homework of this and next
-/// week, the members. Every section shows even when empty: the empty line is the content.
+/// The class page: what's new in the class register, open absences, class duties, the exams and
+/// homework of this and next week, the members. The class comes from WebUntis, nobody joins one. Every section shows even when empty: the empty line is the content.
 struct ClassView: View {
-    @EnvironmentObject var app: AppState
+    @Environment(AppState.self) var app
     @Environment(\.strings) private var s
     @State private var klass: ApiClass?
     @State private var loading = true
@@ -27,19 +26,16 @@ struct ClassView: View {
         var events = false, absences = false, services = false, homework = false, thisWeek = false, nextWeek = false
     }
 
-    private var hasBackend: Bool { app.session?.apiToken != nil }
+    private var hasBackend: Bool { app.session?.hasBackend ?? false }
     private var hasUntis: Bool { app.session?.hasUntis ?? false }
     private var klasseName: String { app.session?.klasseName ?? "" }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Spacing.section) {
-                if let c = klass {
-                    JoinCodeCard(code: c.code).fadeIn()
-                }
 
                 if hasUntis {
-                    ClassOverviewSection(s.tasks.newClassreg, subtitle: s.tasks.last3Months,
+                    ClassOverviewSection(s.tasks.newClassreg,
                                          emptyText: unknown.events ? s.tasks.offlineNotStored : s.tasks.noClassreg3, items: recentEvents,
                                          loading: overviewLoading, onSeeAll: { route = .classreg }) { ClassregEventRow(event: $0) }
                         .fadeIn()
@@ -69,9 +65,8 @@ struct ClassView: View {
             .padding(.bottom, Spacing.xxxl)
         }
         .navigationTitle(klasseName.isEmpty ? s.tasks.myClass : s.tasks.klasseNamed(klasseName))
-        .navigationSubtitle(s.common.schoolYear(SchoolDates.currentSchoolYear))
         .appBackground()
-        .navigationDestination(item: $route) { route in
+        .pushed(item: $route) { route in
             switch route {
             case .classreg: ClassregEventsView()
             case .absences: AbsencesView()
@@ -179,19 +174,8 @@ struct ClassView: View {
         loading = klass == nil
         error = nil
         async let overview: Void = loadOverview(session)
-        let stored = "class-\(session.schoolRef.loginName)-\(session.username.lowercased())"
-        if let token = session.apiToken {
-            do {
-                let fresh = try await BackendClient.shared.myClass(token: token)
-                // nil is both "no class" and a failed request: a dropped connection mustn't erase the copy.
-                if let fresh { DiskCache.save(fresh, key: stored) }
-                klass = fresh
-            } catch {
-                self.error = (error as? AppError)?.message ?? error.localizedDescription
-            }
-        } else if app.isOffline {
-            klass = DiskCache.load(ApiClass.self, key: stored)
-        }
+        // The client keeps the account's copy and falls back to it offline.
+        if session.hasBackend { klass = await BackendClient.shared.myClass(session) }
         loading = false
         await overview
     }
@@ -350,37 +334,6 @@ private struct ClassLoadingLines: View {
         .padding(Spacing.card)
         .frame(maxWidth: .infinity, alignment: .leading)
         .nestedSurface(radius: Radius.lg)
-    }
-}
-
-/// The join code: the one accent-tinted thing on the page, since people read it out.
-private struct JoinCodeCard: View {
-    let code: String
-    @Environment(\.strings) private var s
-
-    var body: some View {
-        PokyhCard {
-            HStack(spacing: Spacing.md) {
-                VStack(alignment: .leading, spacing: 2) {
-                    EyebrowLabel(s.tasks.joinCode)
-                    Text(s.tasks.joinCodeHint).textStyle(.caption).foregroundStyle(Palette.textTertiary)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                Text(code)
-                    .font(.system(size: 17, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(Palette.accentText)
-                    .textSelection(.enabled)
-                    .padding(.horizontal, Spacing.lg)
-                    .padding(.vertical, Spacing.sm)
-                    .accentSurface(radius: 999)
-            }
-        }
-        .contextMenu {
-            Button { UIPasteboard.general.string = code } label: {
-                Label(s.profile.copy, systemImage: "doc.on.doc")
-            }
-            ShareLink(item: code)
-        }
     }
 }
 
@@ -557,8 +510,8 @@ private struct HomeworkRow: View {
     }
 }
 
-/// A member that opens to show what the class record knows about them.
-private struct MemberRow: View {
+/// A member that opens to show what the class record knows about them. Also in the reminders' class list.
+struct MemberRow: View {
     let member: ApiClassMember
     @Environment(\.strings) private var s
     @State private var expanded = false

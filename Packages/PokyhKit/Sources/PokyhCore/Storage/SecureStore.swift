@@ -11,15 +11,31 @@ public struct KeychainError: Error, Equatable {
     public let status: OSStatus
 }
 
-/// Generic-password items, this device only and readable after the first unlock, so background
-/// refreshes work but nothing ends up in backups or on another device.
+/// Generic-password items, this device only, so nothing ends up in backups or on another device.
+/// By default readable after the first unlock, so background refreshes work.
 public struct KeychainStore: SecureStore {
+    public enum Access: Sendable {
+        /// After the first unlock since boot: widgets and background work while the phone is locked.
+        case afterFirstUnlock
+        /// Only while the phone is unlocked.
+        case whenUnlocked
+    }
+
     let service: String
     let accessGroup: String?
+    let access: Access
 
-    public init(service: String, accessGroup: String? = nil) {
+    public init(service: String, accessGroup: String? = nil, access: Access = .afterFirstUnlock) {
         self.service = service
         self.accessGroup = accessGroup
+        self.access = access
+    }
+
+    private var accessible: CFString {
+        switch access {
+        case .afterFirstUnlock: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        case .whenUnlocked: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        }
     }
 
     private func query(_ key: String) -> [String: Any] {
@@ -52,7 +68,7 @@ public struct KeychainStore: SecureStore {
         }
         let attributes: [String: Any] = [
             kSecValueData as String: data,
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+            kSecAttrAccessible as String: accessible,
         ]
         var status = SecItemUpdate(query(key) as CFDictionary, attributes as CFDictionary)
         if status == errSecItemNotFound {

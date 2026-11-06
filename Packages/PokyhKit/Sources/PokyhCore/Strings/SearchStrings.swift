@@ -3,10 +3,18 @@
 public struct SearchStrings: Sendable {
     public let title: String
     public let placeholder: String
-    public let empty: String
     public let pages: String
     public let contents: String
     public let noResults: String
+    public let showAll: String
+    public let showLess: String
+    public let subjects: String
+    public let grades: String
+    public let messages: String
+    public let homework: String
+    public let duties: String
+    public let todos: String
+    public let reminders: String
     public let profileStats: String
     public let actionCompose: String
     public let actionReport: String
@@ -30,10 +38,18 @@ extension SearchStrings {
     static let de = SearchStrings(
         title: "Suchen",
         placeholder: "Seiten, Fächer, Nachrichten, Lehrer …",
-        empty: "Tippe, um Seiten und Inhalte zu durchsuchen.",
         pages: "Seiten",
         contents: "Inhalte",
         noResults: "Nichts gefunden.",
+        showAll: "Alle anzeigen",
+        showLess: "Weniger",
+        subjects: "Fächer",
+        grades: "Noten",
+        messages: "Nachrichten",
+        homework: "Hausaufgaben",
+        duties: "Klassendienste",
+        todos: "To-dos",
+        reminders: "Erinnerungen",
         profileStats: "Statistiken",
         actionCompose: "Nachricht an Lehrer schreiben",
         actionReport: "Abwesenheit melden",
@@ -57,10 +73,18 @@ extension SearchStrings {
     static let it = SearchStrings(
         title: "Cerca",
         placeholder: "Pagine, materie, messaggi, docenti …",
-        empty: "Scrivi per cercare pagine e contenuti.",
         pages: "Pagine",
         contents: "Contenuti",
         noResults: "Nessun risultato.",
+        showAll: "Mostra tutti",
+        showLess: "Mostra meno",
+        subjects: "Materie",
+        grades: "Voti",
+        messages: "Messaggi",
+        homework: "Compiti",
+        duties: "Servizi di classe",
+        todos: "To-do",
+        reminders: "Promemoria",
         profileStats: "Statistiche",
         actionCompose: "Scrivi un messaggio a un docente",
         actionReport: "Segnala un’assenza",
@@ -84,10 +108,18 @@ extension SearchStrings {
     static let en = SearchStrings(
         title: "Search",
         placeholder: "Pages, subjects, messages, teachers …",
-        empty: "Type to search pages and content.",
         pages: "Pages",
         contents: "Content",
         noResults: "Nothing found.",
+        showAll: "Show All",
+        showLess: "Show Less",
+        subjects: "Subjects",
+        grades: "Grades",
+        messages: "Messages",
+        homework: "Homework",
+        duties: "Class duties",
+        todos: "To-dos",
+        reminders: "Reminders",
         profileStats: "Statistics",
         actionCompose: "Write a message to a teacher",
         actionReport: "Report an absence",

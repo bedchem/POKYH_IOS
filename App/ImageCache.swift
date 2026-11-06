@@ -22,10 +22,13 @@ nonisolated enum ImageCache {
         cfg.timeoutIntervalForRequest = requestTimeout
         cfg.urlCache = nil
         cfg.httpCookieStorage = nil
+        #if DEBUG
+        StubServer.attach(to: cfg)
+        #endif
         return URLSession(configuration: cfg)
     }()
 
-    private nonisolated(unsafe) static let files = SealedFiles(
+    private static let files = SealedFiles(
         directory: SecureStorage.directory("images", caches: true),
         protection: .complete
     ) { LocalVault.current() }

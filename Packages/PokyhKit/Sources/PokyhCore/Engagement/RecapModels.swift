@@ -61,6 +61,12 @@ public struct RecapDetail: Decodable, Sendable {
 }
 
 /// The account's POKYH figures for a recap's period (services/recaps.ts).
+/// The story adds these up and multiplies them; a server's Int.max would trap there.
+enum RecapCount {
+    // Small enough for the watch's 32-bit Int, far above any real count.
+    static func clamp(_ value: Int?) -> Int { min(max(0, value ?? 0), 100_000_000) }
+}
+
 public struct RecapPokyh: Decodable, Equatable, Sendable {
     public struct Span: Decodable, Equatable, Sendable {
         public var from: String
@@ -84,9 +90,9 @@ public struct RecapPokyh: Decodable, Equatable, Sendable {
 
         public init(from decoder: any Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
-            activeDays = try c.decodeIfPresent(Int.self, forKey: .activeDays) ?? 0
-            activeSeconds = try c.decodeIfPresent(Int.self, forKey: .activeSeconds) ?? 0
-            longestStreak = try c.decodeIfPresent(Int.self, forKey: .longestStreak) ?? 0
+            activeDays = RecapCount.clamp(try c.decodeIfPresent(Int.self, forKey: .activeDays))
+            activeSeconds = RecapCount.clamp(try c.decodeIfPresent(Int.self, forKey: .activeSeconds))
+            longestStreak = RecapCount.clamp(try c.decodeIfPresent(Int.self, forKey: .longestStreak))
         }
 
         private enum CodingKeys: String, CodingKey { case activeDays, activeSeconds, longestStreak }
@@ -107,10 +113,10 @@ public struct RecapPokyh: Decodable, Equatable, Sendable {
 
         public init(from decoder: any Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
-            todosDone = try c.decodeIfPresent(Int.self, forKey: .todosDone) ?? 0
-            reminders = try c.decodeIfPresent(Int.self, forKey: .reminders) ?? 0
-            comments = try c.decodeIfPresent(Int.self, forKey: .comments) ?? 0
-            ratings = try c.decodeIfPresent(Int.self, forKey: .ratings) ?? 0
+            todosDone = RecapCount.clamp(try c.decodeIfPresent(Int.self, forKey: .todosDone))
+            reminders = RecapCount.clamp(try c.decodeIfPresent(Int.self, forKey: .reminders))
+            comments = RecapCount.clamp(try c.decodeIfPresent(Int.self, forKey: .comments))
+            ratings = RecapCount.clamp(try c.decodeIfPresent(Int.self, forKey: .ratings))
         }
 
         private enum CodingKeys: String, CodingKey { case todosDone, reminders, comments, ratings }
@@ -169,8 +175,8 @@ public struct RecapPokyh: Decodable, Equatable, Sendable {
         covered = try c.decodeIfPresent(Span.self, forKey: .covered)
         usageConsent = try c.decodeIfPresent(Bool.self, forKey: .usageConsent) ?? false
         totals = try c.decodeIfPresent(Totals.self, forKey: .totals)
-        weekdays = try c.decodeIfPresent([Int].self, forKey: .weekdays) ?? []
-        hours = try c.decodeIfPresent([Int].self, forKey: .hours)
+        weekdays = (try c.decodeIfPresent([Int].self, forKey: .weekdays) ?? []).map(RecapCount.clamp)
+        hours = try c.decodeIfPresent([Int].self, forKey: .hours)?.map(RecapCount.clamp)
         created = try c.decodeIfPresent(Created.self, forKey: .created)
         favouriteDish = try c.decodeIfPresent(Dish.self, forKey: .favouriteDish)
         rank = try c.decodeIfPresent(Rank.self, forKey: .rank)

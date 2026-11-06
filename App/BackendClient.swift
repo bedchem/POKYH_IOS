@@ -10,6 +10,9 @@ final class BackendClient {
     private init() {
         let cfg = URLSessionConfiguration.ephemeral
         cfg.timeoutIntervalForRequest = 20
+        #if DEBUG
+        StubServer.attach(to: cfg)
+        #endif
         session = URLSession(configuration: cfg)
     }
 
@@ -484,8 +487,18 @@ final class BackendClient {
     /// Leert alle In-Memory-Caches dieses Clients (z. B. „Cache leeren").
     func clearCaches() { dishCache.removeAll() }
 
+    /// The menu from memory, else the network, else (offline) the copy on disk.
     func dishes(force: Bool = false) async throws -> [Dish] {
         if !force, let cached = dishCache.get(dishKey) { return cached }
+        do {
+            return try await fetchDishes()
+        } catch let error as URLError {
+            if let stored = dishCache.stale(dishKey) ?? DiskCache.load([Dish].self, key: dishKey) { return stored }
+            throw error
+        }
+    }
+
+    private func fetchDishes() async throws -> [Dish] {
         guard let url = URL(string: "\(base)\(Config.Routes.dishes)") else { throw AppError(message: Strings.current.errors.badAnswer) }
         var req = URLRequest(url: url)
         req.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -504,8 +517,11 @@ final class BackendClient {
         if arr.isEmpty { arr = json.data.array }
         let dishes = arr.map(Self.parseDish)
         dishCache.set(dishKey, dishes)
+        // The menu is the same for everyone, so any account may show it offline.
+        DiskCache.save(dishes, key: dishKey)
         return dishes
     }
+
 
     static func localized(_ j: JSON) -> String {
         if let s = j.string { return s }
@@ -535,7 +551,8 @@ final class BackendClient {
 
     private static func parseRatings(_ j: JSON) -> DishRatingsData {
         var ratings: [String: Double] = [:]
-        for (k, v) in j.ratings.dictionary { ratings[k] = v.double ?? 0 }
+        // One to five stars; anything else can't be averaged or drawn.
+        for (k, v) in j.ratings.dictionary { ratings[k] = min(5, max(0, v.double.flatMap { $0.isFinite ? $0 : nil } ?? 0)) }
         return DishRatingsData(ratings: ratings, myRating: j.myRating.int)
     }
 
@@ -547,19 +564,81 @@ final class BackendClient {
             category: j.category.string ?? "",
             date: j.date.string ?? "",
             imageUrl: j.imageUrl.string,
-            price: j.price.double,
+            price: finite(j.price.double),
             allergens: j.allergens.array.compactMap { $0.string },
             tags: j.tags.array.compactMap { $0.string },
-            calories: j.calories.double,
-            protein: j.protein.double,
-            carbs: j.carbs.double,
-            fat: j.fat.double
+            calories: finite(j.calories.double),
+            protein: finite(j.protein.double),
+            carbs: finite(j.carbs.double),
+            fat: finite(j.fat.double)
         )
+    }
+
+    /// Double("NaN") is a valid parse, and these end up in widths and labels.
+    private static func finite(_ value: Double?) -> Double? {
+        guard let value, MarkText.isUsable(value) else { return nil }
+        return value
     }
 }
 
 extension String {
     var urlEncoded: String {
         addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? self
+    }
+}
+
+// ── Offline copies ────────────────────────────────────────────────────────────
+
+extension BackendClient {
+    /// The fresh answer, which then replaces the copy on disk; the copy when there's no token
+    /// (offline session) or no network. Kept in the account's own folder.
+    private func storedOrFresh<T: Codable>(_ key: String, _ s: UserSession, fetch: (String) async throws -> T) async throws -> T {
+        guard let token = s.apiToken else {
+            if let copy = DiskCache.load(T.self, key: key, owner: s.username) { return copy }
+            throw AppError(message: Strings.current.tasks.offlineNotStored)
+        }
+        do {
+            let fresh = try await fetch(token)
+            DiskCache.save(fresh, key: key, owner: s.username)
+            return fresh
+        } catch let error as URLError {
+            if let copy = DiskCache.load(T.self, key: key, owner: s.username) { return copy }
+            throw error
+        }
+    }
+
+    func todos(_ s: UserSession) async throws -> [ApiTodo] {
+        try await storedOrFresh("todos", s) { try await todos(username: s.username, token: $0) }
+    }
+
+    func reminders(classId: String, _ s: UserSession) async throws -> [ApiReminder] {
+        try await storedOrFresh("reminders-\(classId)", s) { try await reminders(classId: classId, token: $0) }
+    }
+
+    /// nil is no class. `myClass(token:)` also says nil when the request failed, so a nil only
+    /// replaces the copy when the backend really answered.
+    func myClass(_ s: UserSession) async -> ApiClass? {
+        let key = "class"
+        guard let token = s.apiToken else { return DiskCache.load(ApiClass.self, key: key, owner: s.username) }
+        do {
+            let data = try await request(Config.Routes.classesMine, token: token)
+            guard !data.isEmpty, let fresh = try? JSONDecoder().decode(ApiClass.self, from: data) else {
+                DiskCache.remove(key: key, owner: s.username)
+                return nil
+            }
+            DiskCache.save(fresh, key: key, owner: s.username)
+            return fresh
+        } catch let error as AppError where error.status == 404 {
+            DiskCache.remove(key: key, owner: s.username)
+            return nil
+        } catch {
+            return DiskCache.load(ApiClass.self, key: key, owner: s.username)
+        }
+    }
+
+    /// The class id to read reminders with: the session's, else the class's.
+    func classId(_ s: UserSession) async -> String? {
+        if let id = s.classId { return id }
+        return await myClass(s)?.id
     }
 }

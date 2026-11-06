@@ -8,7 +8,6 @@ public struct ProfileStrings: Sendable {
     public let username: String
     public let klasse: String
     public let school: String
-    public let schoolName: String
     public let pokyhAccount: String
     public let accounts: String
     public let addAccount: String
@@ -133,7 +132,6 @@ extension ProfileStrings {
         username: "Benutzername",
         klasse: "Klasse",
         school: "Schule",
-        schoolName: "LBS Brixen",
         pokyhAccount: "POKYH-Konto",
         accounts: "Konten",
         addAccount: "Konto hinzufügen",
@@ -169,7 +167,7 @@ extension ProfileStrings {
         connectionTitle: "Konto & Verbindung",
         heroOk: "Dein POKYH-Konto ist aktiv. Todos, Erinnerungen und Klasse stehen zur Verfügung.",
         heroNotStudent: "POKYH-Funktionen sind nur mit einem Schülerkonto verfügbar.",
-        heroNoClass: "Deine WebUntis-Klasse konnte nicht ermittelt werden — dadurch sind Todos & Erinnerungen gesperrt. Tippe auf Erneut prüfen; hilft das nicht, sende die technischen Details an den Support.",
+        heroNoClass: "Deine WebUntis-Klasse konnte nicht ermittelt werden, deshalb sind To-dos und Erinnerungen gesperrt. Tippe auf Erneut prüfen; hilft das nicht, sende die technischen Details an den Support.",
         heroFailed: { "Verbindung zum POKYH-Server fehlgeschlagen: \($0)" },
         heroUnknown: "Status noch nicht ermittelt.",
         heroOffline: "Du bist offline angemeldet. Todos, Erinnerungen und Klasse zeigen den zuletzt gespeicherten Stand.",
@@ -225,7 +223,7 @@ extension ProfileStrings {
         comments: "Kommentare",
         ratings: "Mensa-Bewertungen",
         memberSince: "Dabei seit",
-        statsFooter: "Gezeigt wird, was der POKYH-Server ohnehin speichert (Datenschutzerklärung). Nur du siehst diese Übersicht.",
+        statsFooter: "Das siehst nur du.",
         pageNames: [
                 "home": "Home", "timetable": "Stundenplan", "grades": "Noten", "messages": "Nachrichten",
                 "absences": "Abwesenheiten", "classregevents": "Klassenbuch", "todos": "To-dos", "reminders": "Erinnerungen",
@@ -248,7 +246,7 @@ extension ProfileStrings {
         classIdLabel: "Klassen-ID",
         copy: "Kopieren",
         copied: "Kopiert",
-        statsOffTitle: "Persönliche Statistiken sind ausgeschaltet",
+        statsOffTitle: "Persönliche Statistiken sind aus",
         statsOffText: "Darum siehst du hier nur, an welchen Tagen du online warst, nicht wie lange und was du am meisten öffnest. Du kannst sie in den Einstellungen jederzeit einschalten und wieder ausschalten.",
     )
 }
@@ -262,7 +260,6 @@ extension ProfileStrings {
         username: "Nome utente",
         klasse: "Classe",
         school: "Scuola",
-        schoolName: "LBS Bressanone",
         pokyhAccount: "Account POKYH",
         accounts: "Account",
         addAccount: "Aggiungi account",
@@ -354,7 +351,7 @@ extension ProfileStrings {
         comments: "Commenti",
         ratings: "Valutazioni mensa",
         memberSince: "Iscritto da",
-        statsFooter: "Viene mostrato ciò che il server POKYH salva comunque (informativa sulla privacy). Solo tu vedi questa panoramica.",
+        statsFooter: "Lo vedi solo tu.",
         pageNames: [
                 "home": "Home", "timetable": "Orario", "grades": "Voti", "messages": "Messaggi",
                 "absences": "Assenze", "classregevents": "Registro di classe", "todos": "To-do", "reminders": "Promemoria",
@@ -377,7 +374,7 @@ extension ProfileStrings {
         classIdLabel: "ID classe",
         copy: "Copia",
         copied: "Copiato",
-        statsOffTitle: "Le statistiche personali sono disattivate",
+        statsOffTitle: "Statistiche personali disattivate",
         statsOffText: "Per questo qui vedi solo in quali giorni sei stato online, non per quanto tempo né cosa apri di più. Puoi attivarle e disattivarle nelle impostazioni in qualsiasi momento.",
     )
 }
@@ -391,7 +388,6 @@ extension ProfileStrings {
         username: "Username",
         klasse: "Class",
         school: "School",
-        schoolName: "LBS Brixen",
         pokyhAccount: "POKYH account",
         accounts: "Accounts",
         addAccount: "Add account",
@@ -483,7 +479,7 @@ extension ProfileStrings {
         comments: "Comments",
         ratings: "Canteen ratings",
         memberSince: "Member since",
-        statsFooter: "This shows what the POKYH server stores anyway (privacy policy). Only you see this overview.",
+        statsFooter: "Only you can see this.",
         pageNames: [
                 "home": "Home", "timetable": "Timetable", "grades": "Grades", "messages": "Messages",
                 "absences": "Absences", "classregevents": "Class register", "todos": "To-dos", "reminders": "Reminders",
@@ -506,7 +502,7 @@ extension ProfileStrings {
         classIdLabel: "Class ID",
         copy: "Copy",
         copied: "Copied",
-        statsOffTitle: "Personal statistics are switched off",
+        statsOffTitle: "Personal statistics are off",
         statsOffText: "That’s why you only see which days you were online here, not for how long or what you open most. You can switch them on and off in the settings at any time.",
     )
 }

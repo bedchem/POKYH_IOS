@@ -8,7 +8,7 @@ nonisolated enum MensaSchedule {
     static func days(from dishes: [Dish]) -> [(date: Date, dishes: [Dish])] {
         let cal = Calendar.current
         let today = cal.startOfDay(for: Date())
-        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; f.locale = Locale(identifier: "en_US_POSIX")
+        let f = DateFmt.formatter("yyyy-MM-dd")
         var byDay: [Date: [Dish]] = [:]
         for d in dishes {
             if let date = f.date(from: String(d.date.prefix(10))) {
@@ -25,10 +25,7 @@ nonisolated enum MensaSchedule {
         let cal = Calendar.current
         if cal.isDateInToday(date) { return s.mensa.today }
         if cal.isDateInTomorrow(date) { return s.mensa.tomorrow }
-        let f = DateFormatter()
-        f.locale = s.lang.locale
-        f.dateFormat = s.mensa.dayPattern
-        let text = f.string(from: date)
+        let text = DateFmt.formatter(s.mensa.dayPattern, locale: s.lang.locale).string(from: date)
         return text.prefix(1).uppercased() + text.dropFirst()
     }
 
@@ -41,8 +38,7 @@ nonisolated enum MensaSchedule {
 
     /// The day a dish is served, parsed from its `yyyy-MM-dd…` date.
     static func date(of dish: Dish) -> Date? {
-        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; f.locale = Locale(identifier: "en_US_POSIX")
-        return f.date(from: String(dish.date.prefix(10)))
+        DateFmt.formatter("yyyy-MM-dd").date(from: String(dish.date.prefix(10)))
     }
 
     /// One decimal in the language's style ("4,2").
@@ -54,7 +50,7 @@ nonisolated enum MensaSchedule {
 /// Mensa: the next dish served large on its plate, the day's other dishes as chips, then the
 /// whole plan week by week. The one screen built from image cards, since the food is the point.
 struct MensaView: View {
-    @EnvironmentObject var app: AppState
+    @Environment(AppState.self) var app
     @Environment(\.strings) private var s
     @State private var dishes: [Dish] = []
     @State private var ratings: [String: DishRatingsData] = [:]
@@ -75,7 +71,7 @@ struct MensaView: View {
                 ErrorStateView(message: error) { Task { await load(force: true) } }
             } else if days.isEmpty {
                 ScrollView {
-                    EmptyStateView(sprite: .empty, title: s.mensa.emptyTitle, subtitle: s.mensa.emptySubtitle)
+                    EmptyStateView(sprite: .empty, title: s.mensa.emptyTitle)
                         .padding(.top, Spacing.huge)
                 }
             } else {
@@ -85,7 +81,7 @@ struct MensaView: View {
         .navigationTitle(s.nav.mensa)
         .profileToolbar()
         .appBackground()
-        .navigationDestination(item: $selectedDish) { dish in
+        .pushed(item: $selectedDish) { dish in
             DishDetailView(dish: dish, data: ratings[dish.id], canRate: token != nil) { stars in
                 Task { await rate(dish, stars) }
             }
@@ -99,6 +95,7 @@ struct MensaView: View {
         error = nil
         do {
             dishes = try await BackendClient.shared.dishes(force: force)
+            RemotePhotos.prefetch(dishes.compactMap { $0.imageUrl.flatMap(URL.init(string:)) })
             WatchSync.mensa(dishes)
             loading = false
             await loadRatings()
@@ -115,6 +112,7 @@ struct MensaView: View {
         ratingsLoading = ratings.isEmpty
         if let batch = try? await BackendClient.shared.dishRatingsBatch(ids: ids, token: token) {
             ratings = batch
+            WatchSync.mensaRatings(batch)
         }
         ratingsLoading = false
     }
@@ -128,6 +126,7 @@ struct MensaView: View {
         try? await BackendClient.shared.rateDish(id: dish.id, stars: stars, token: token)
         if let fresh = try? await BackendClient.shared.dishRatings(id: dish.id, token: token) {
             ratings[dish.id] = fresh
+            WatchSync.mensaRatings([dish.id: fresh])
         }
     }
 }
@@ -540,7 +539,7 @@ struct DishDetailView: View {
                 Text("(\(ratings.count))").textStyle(.callout).foregroundStyle(Palette.textSecondary)
                 if let kcal = dish.calories {
                     Text("·").textStyle(.callout).foregroundStyle(Palette.textSecondary)
-                    Text("\(Int(kcal)) kcal").textStyle(.callout).foregroundStyle(Palette.textSecondary)
+                    Text("\(Int(saturating: kcal)) kcal").textStyle(.callout).foregroundStyle(Palette.textSecondary)
                 }
             }
             if let desc = dish.description, !desc.isEmpty {
@@ -605,7 +604,7 @@ private struct DishRatingBlock: View {
     var body: some View {
         let values = Array(ratings.ratings.values)
         let count = values.count
-        let bins = [5, 4, 3, 2, 1].map { star in values.filter { Int($0.rounded()) == star }.count }
+        let bins = [5, 4, 3, 2, 1].map { star in values.filter { Int(saturating: $0.rounded()) == star }.count }
         let maxBin = max(1, bins.max() ?? 0)
 
         VStack(alignment: .leading, spacing: Spacing.xl) {
@@ -697,8 +696,8 @@ private struct DishNutritionSection: View {
                     .padding(.bottom, Spacing.lg)
 
                     HStack(spacing: Spacing.sm) {
-                        if let kcal = dish.calories { tile("\(Int(kcal))", "kcal", nil) }
-                        ForEach(macros, id: \.label) { m in tile("\(Int(m.value)) g", m.label, m.color) }
+                        if let kcal = dish.calories { tile("\(Int(saturating: kcal))", "kcal", nil) }
+                        ForEach(macros, id: \.label) { m in tile("\(Int(saturating: m.value)) g", m.label, m.color) }
                     }
 
                     let total = macros.reduce(0) { $0 + $1.value }

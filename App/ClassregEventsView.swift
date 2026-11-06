@@ -5,7 +5,7 @@ import PokyhDesign
 /// Klassenbuch: the year in four figures and its split by category, then the entries in a time
 /// range, by month, subject or category, each group one list card.
 struct ClassregEventsView: View {
-    @EnvironmentObject var app: AppState
+    @Environment(AppState.self) var app
     @Environment(\.strings) private var s
     @State private var events: [ClassregEvent] = []
     @State private var loading = true
@@ -20,7 +20,7 @@ struct ClassregEventsView: View {
             } else if let error {
                 ErrorStateView(message: error) { Task { await load() } }
             } else if events.isEmpty {
-                StateView(s.tasks.classregEmpty, message: s.tasks.classregEmptyText, art: {
+                StateView(s.tasks.classregEmpty, art: {
                     IconTile("book.closed", color: Brand.accent, size: 64)
                 })
                 .frame(maxHeight: .infinity)
@@ -36,7 +36,6 @@ struct ClassregEventsView: View {
             }
         }
         .navigationTitle(s.tasks.classreg)
-        .navigationSubtitle(s.common.schoolYear(year))
         .appBackground()
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -105,10 +104,7 @@ enum ClassregTone {
         var c = DateComponents()
         c.year = n / 10000; c.month = n / 100 % 100; c.day = n % 100
         guard let date = Calendar.current.date(from: c) else { return "" }
-        let f = DateFormatter()
-        f.locale = s.lang.locale
-        f.dateFormat = pattern
-        return f.string(from: date)
+        return DateFmt.formatter(pattern, locale: s.lang.locale).string(from: date)
     }
 }
 

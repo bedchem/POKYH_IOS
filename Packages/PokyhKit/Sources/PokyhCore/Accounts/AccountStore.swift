@@ -65,6 +65,21 @@ public struct AccountStore: Sendable {
         record()?.changedAt
     }
 
+    /// What to answer the watch with. Throws while the store can't be read (the phone is locked):
+    /// "nothing stored" then would sign the watch out.
+    public func handoff() throws -> AccountHandoff {
+        guard let data = try store.data(for: Self.key) else { return AccountHandoff(account: nil) }
+        guard let record = try? JSONDecoder().decode(Record.self, from: data) else { return AccountHandoff(account: nil) }
+        return AccountHandoff(account: record.account, sentAt: record.changedAt)
+    }
+
+    /// Writes the record again as it is, so it takes the store's current protection.
+    /// `changedAt` stays, the watch sees no change.
+    public func reseal() throws {
+        guard let data = try store.data(for: Self.key) else { return }
+        try store.set(data, for: Self.key)
+    }
+
     /// Applies a change unless a newer one is already stored. Returns whether it was applied.
     @discardableResult
     public func apply(_ account: StoredAccount?, changedAt: Date) throws -> Bool {
@@ -80,6 +95,15 @@ public struct AccountStore: Sendable {
 
     public func clear() throws {
         try apply(nil, changedAt: .now)
+    }
+
+    /// The account's password changed: stores the new one and returns what to tell the watch.
+    /// nil when another account is stored, or an app key, which goes on working without it.
+    public func replacePassword(_ password: String, of username: String) throws -> StoredAccount? {
+        guard var account = load(), AccountRoster.same(account.username, username), !AppKey.isKey(account.secret) else { return nil }
+        account.secret = password
+        try save(account)
+        return account
     }
 
     private func record() -> Record? {

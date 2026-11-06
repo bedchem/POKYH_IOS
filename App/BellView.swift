@@ -330,7 +330,7 @@ struct BellToolbarButton: View {
     /// Where a row leads; the bell has closed by then.
     let onPick: (BellFeed.Target) -> Void
 
-    @EnvironmentObject private var app: AppState
+    @Environment(AppState.self) private var app
     @ObservedObject private var store = BellStore.shared
     @Environment(\.strings) private var s
     @Environment(\.scenePhase) private var scenePhase
@@ -346,13 +346,8 @@ struct BellToolbarButton: View {
         } label: {
             Image(systemName: "bell")
                 .symbolEffect(.wiggle, options: .nonRepeating, value: ring)
-                .overlay(alignment: .topTrailing) {
-                    UnreadBadge(store.newCount)
-                        .fixedSize()
-                        .offset(x: 11, y: -9)
-                        .allowsHitTesting(false)
-                }
         }
+        .badge(store.newCount)
         .accessibilityLabel(store.newCount > 0 ? s.bell.labelNew(store.newCount) : s.bell.title)
         .popover(isPresented: $open) {
             BellPanel(store: store) { target in
@@ -651,10 +646,6 @@ private struct BellEmpty: View {
             Text(s.bell.emptyTitle)
                 .textStyle(.headline)
                 .foregroundStyle(Palette.textPrimary)
-            Text(s.bell.emptyText)
-                .textStyle(.footnote)
-                .foregroundStyle(Palette.textSecondary)
-                .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, Spacing.xl)

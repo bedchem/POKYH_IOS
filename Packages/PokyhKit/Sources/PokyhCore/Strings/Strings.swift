@@ -26,7 +26,9 @@ public enum Lang: String, CaseIterable, Sendable, Codable {
 
 /// Every text of the app in one language, one area per part of the app. Ported 1:1 from the
 /// Android tables so wording, plurals and the in-app language choice behave the same.
-public struct Strings: Sendable {
+/// A class: nearly every view holds it, and copying all the tables into each one cost a few
+/// hundred retains per redraw and megabytes of generated code.
+public final class Strings: Sendable {
     public let lang: Lang
     public let common: CommonStrings
     public let states: StateStrings
@@ -49,6 +51,54 @@ public struct Strings: Sendable {
     public let search: SearchStrings
     public let recap: RecapStrings
     public let watch: WatchStrings
+
+    init(
+        lang: Lang,
+        common: CommonStrings,
+        states: StateStrings,
+        grades: GradesStrings,
+        login: LoginStrings,
+        absences: AbsencesStrings,
+        profile: ProfileStrings,
+        settings: SettingsStrings,
+        account: AccountStrings,
+        bell: BellStrings,
+        nav: NavStrings,
+        home: HomeStrings,
+        timetable: TimetableStrings,
+        mensa: MensaStrings,
+        errors: ErrorStrings,
+        system: SystemStrings,
+        tasks: TasksStrings,
+        messages: MessagesStrings,
+        school: SchoolStrings,
+        search: SearchStrings,
+        recap: RecapStrings,
+        watch: WatchStrings
+    ) {
+        self.lang = lang
+        self.common = common
+        self.states = states
+        self.grades = grades
+        self.login = login
+        self.absences = absences
+        self.profile = profile
+        self.settings = settings
+        self.account = account
+        self.bell = bell
+        self.nav = nav
+        self.home = home
+        self.timetable = timetable
+        self.mensa = mensa
+        self.errors = errors
+        self.system = system
+        self.tasks = tasks
+        self.messages = messages
+        self.school = school
+        self.search = search
+        self.recap = recap
+        self.watch = watch
+    }
 
     public static func of(_ lang: Lang) -> Strings {
         switch lang {

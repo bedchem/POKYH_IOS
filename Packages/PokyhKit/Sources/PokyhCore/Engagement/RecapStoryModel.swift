@@ -128,7 +128,7 @@ public enum RecapStoryModel {
         }
     }
 
-    private static func round(_ x: Double) -> Int { Int((x + 0.5).rounded(.down)) }
+    private static func round(_ x: Double) -> Int { Int(saturating: (x + 0.5).rounded(.down)) }
     private static func hours(_ minutes: Int) -> Int { round(Double(minutes) / 60) }
 
     private static func maxIndex(_ values: [Int]) -> Int {

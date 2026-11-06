@@ -109,14 +109,10 @@ targets:
           - CFBundleURLName: $(POKYH_BUNDLE_ID)
             # pokyh-login: the website's QR code, read with the phone's own camera.
             CFBundleURLSchemes: [pokyh, pokyh-login]
-    entitlements:
-      path: App/POKYH.entitlements
-      properties:
-        com.apple.security.application-groups: [$(POKYH_APP_GROUP)]
-        keychain-access-groups: [$(POKYH_KEYCHAIN_GROUP)]
-        aps-environment: $(POKYH_APS_ENVIRONMENT)
     settings:
       base:
+        # App/POKYH.entitlements, or the one without push for a personal team (see Base.xcconfig).
+        CODE_SIGN_ENTITLEMENTS: $(POKYH_APP_ENTITLEMENTS)
         PRODUCT_BUNDLE_IDENTIFIER: $(POKYH_BUNDLE_ID)
         PRODUCT_NAME: POKYH
         SWIFT_VERSION: "5.0"
@@ -128,10 +124,30 @@ targets:
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         SUPPORTS_MACCATALYST: NO
         SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: YES
+      configs:
+        # The UI tests' stand-in server stays out of what ships.
+        Release:
+          EXCLUDED_SOURCE_FILE_NAMES: StubServer.swift StubRoutes.swift StubProfile.swift
     scheme:
       testTargets:
         - package: PokyhKit/PokyhCoreTests
+        - POKYHUITests
       gatherCoverageData: true
+
+  # Walks the app against a stubbed server, see App/Testing/StubServer.swift and `make uitest`.
+  POKYHUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: POKYHUITests
+    dependencies:
+      - target: POKYH
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(POKYH_BUNDLE_ID).uitests
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
 
   POKYHWidgets:
     type: app-extension

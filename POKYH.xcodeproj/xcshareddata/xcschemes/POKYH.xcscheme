@@ -51,6 +51,17 @@
                ReferencedContainer = "container:Packages/PokyhKit">
             </BuildableReference>
          </TestableReference>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "D1D3071169BAB49614F70E83"
+               BuildableName = "POKYHUITests.xctest"
+               BlueprintName = "POKYHUITests"
+               ReferencedContainer = "container:POKYH.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
       </Testables>
       <CommandLineArguments>
       </CommandLineArguments>

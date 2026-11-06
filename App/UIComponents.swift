@@ -185,7 +185,7 @@ struct EmptyStateView: View {
 /// Why a POKYH feature (Todos, Erinnerungen, Klasse) isn't available, with the concrete reason
 /// from `AppState.backendStatus` rather than one generic line: each has a different fix.
 struct BackendUnavailableView: View {
-    @EnvironmentObject var app: AppState
+    @Environment(AppState.self) var app
     @Environment(\.strings) private var s
     let feature: String
 
@@ -279,12 +279,53 @@ extension EnvironmentValues {
     @Entry var searchInToolbar = false
 }
 
+/// The profile picture top right on screens pushed from a tab root, so it never goes away.
+struct ProfileButtonToolbar: ViewModifier {
+    @Environment(AppState.self) var app
+    @Environment(\.strings) private var s
+    @State private var showProfile = false
+
+    func body(content: Content) -> some View {
+        content
+            .toolbar {
+                // A screen's own items come after this one in the same placement; primaryAction stays last.
+                ToolbarItem(placement: .primaryAction) {
+                    Button { showProfile = true } label: {
+                        if let session = app.session {
+                            AvatarView(url: session.imageUrl, name: session.personName ?? session.username, size: 36, colorSeed: session.username)
+                        } else {
+                            Image(systemName: "person.crop.circle")
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(s.nav.profile)
+                }
+                .sharedBackgroundVisibility(.hidden)
+            }
+            .sheet(isPresented: $showProfile) {
+                NavigationStack { ProfileView() }
+            }
+    }
+}
+
+extension View {
+    func profileButton() -> some View { modifier(ProfileButtonToolbar()) }
+
+    /// navigationDestination, with the profile picture on the screen it pushes.
+    func pushed<Item: Hashable, Destination: View>(
+        item: Binding<Item?>, @ViewBuilder destination: @escaping (Item) -> Destination
+    ) -> some View {
+        navigationDestination(item: item) { destination($0).profileButton() }
+    }
+}
+
 /// Top right on every tab root: messages and the profile picture, like Android's TabRootActions.
 /// Separate toolbar items so they get native spacing.
 struct ProfileToolbar: ViewModifier {
-    @EnvironmentObject var app: AppState
+    @Environment(AppState.self) var app
     @Environment(\.strings) private var s
     @Environment(\.searchInToolbar) private var searchInToolbar
+    @Environment(SearchModel.self) private var search: SearchModel?
     @State private var showProfile = false
     @State private var showMessages = false
     @State private var showSearch = false
@@ -307,20 +348,16 @@ struct ProfileToolbar: ViewModifier {
                 }
                 if hasUntis {
                     ToolbarItem(placement: .topBarTrailing) {
+                        // The bar's own badge: drawn outside the glass, so nothing clips or tints it.
                         Button { showMessages = true } label: {
                             Image(systemName: "envelope")
-                                .overlay(alignment: .topTrailing) {
-                                    UnreadBadge(unread)
-                                        .fixedSize()
-                                        .offset(x: 11, y: -9)
-                                        .allowsHitTesting(false)
-                                }
                         }
+                        .badge(unread)
                         .accessibilityLabel(unread > 0 ? s.nav.messagesUnread(unread) : s.nav.messages)
                     }
                     ToolbarSpacer(.fixed, placement: .topBarTrailing)
                 }
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .primaryAction) {
                     Button { showProfile = true } label: {
                         if let s = app.session {
                             AvatarView(url: s.imageUrl, name: s.personName ?? s.username, size: 36, colorSeed: s.username)
@@ -337,7 +374,8 @@ struct ProfileToolbar: ViewModifier {
             .sheet(isPresented: $showProfile) {
                 NavigationStack { ProfileView() }
             }
-            .sheet(isPresented: $showSearch) {
+            // Opened again it starts empty; the index stays.
+            .sheet(isPresented: $showSearch, onDismiss: { search?.query = "" }) {
                 NavigationStack {
                     SearchView(focusOnAppear: true) { tab in
                         showSearch = false
@@ -445,5 +483,36 @@ struct AvatarView: View {
 
     private func show(_ image: UIImage) {
         withAnimation(.easeOut(duration: 0.25)) { loaded = image }
+    }
+}
+
+// ── Search in a list ────────────────────────────────────────────────────────
+
+/// A field under the title. On iPad the default puts a search button right of the profile picture.
+struct ListSearch: ViewModifier {
+    @Binding var text: String
+    let prompt: String
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    func body(content: Content) -> some View {
+        content.searchable(text: $text,
+                           placement: sizeClass == .regular ? .navigationBarDrawer(displayMode: .always) : .automatic,
+                           prompt: prompt)
+    }
+}
+
+extension View {
+    func listSearch(_ text: Binding<String>, prompt: String) -> some View {
+        modifier(ListSearch(text: text, prompt: prompt))
+    }
+}
+
+enum SearchMatch {
+    /// Every word of the query somewhere in the fields, ignoring case and accents.
+    static func matches(_ query: String, _ fields: String...) -> Bool {
+        let words = query.split(whereSeparator: \.isWhitespace)
+        guard !words.isEmpty else { return true }
+        let haystack = fields.joined(separator: " ")
+        return words.allSatisfy { haystack.range(of: $0, options: [.caseInsensitive, .diacriticInsensitive]) != nil }
     }
 }

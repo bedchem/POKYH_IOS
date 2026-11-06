@@ -24,7 +24,7 @@ extension StateStrings {
         failedTitle: "Verbindungsfehler",
         unavailableTitle: "Nicht verfügbar",
         notStudent: { "\($0) ist nur mit einem Schülerkonto verfügbar." },
-        noClass: { "Für \($0) wird deine WebUntis-Klasse benötigt — sie konnte für dein Konto nicht ermittelt werden." },
+        noClass: { "Für \($0) wird deine WebUntis-Klasse benötigt. Sie konnte für dein Konto nicht ermittelt werden." },
         failed: { f, r in "\(f) konnte nicht geladen werden:\n\(r)" },
         offline: { "Du bist offline, und \($0) wurde auf diesem Gerät noch nicht gespeichert. Sobald du wieder Internet hast, wird es geladen." },
         needsAccount: { "\($0) benötigt ein POKYH-Konto." },

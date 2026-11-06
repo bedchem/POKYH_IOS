@@ -34,7 +34,15 @@ final class WatchPairing {
 final class WatchLink: NSObject {
     let pairing = WatchPairing()
     private let store: AccountStore
-    private let session: WCSession? = WCSession.isSupported() ? .default : nil
+    private let session: WCSession? = WatchLink.supported ? .default : nil
+
+    /// The UI tests' made-up accounts stay away from a paired watch.
+    private static var supported: Bool {
+        #if DEBUG
+        if StubServer.isActive { return false }
+        #endif
+        return WCSession.isSupported()
+    }
     /// Tapped "connect" before the session was up; send once it is.
     private var resendWhenActive = false
     /// What the watch last got (or will get once the send below goes out).
@@ -226,7 +234,8 @@ extension WatchLink: WCSessionDelegate {
     nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any], replyHandler: @escaping ([String: Any]) -> Void) {
         let reply = ReplyHandler(replyHandler)
         if AccountHandoff.isRequest(message) {
-            Task { @MainActor in reply.call(self.currentHandoff().payload) }
+            // Locked phone: no answer at all. "Nothing stored" would sign the watch out.
+            Task { @MainActor in reply.call((try? self.store.handoff())?.payload ?? [:]) }
         } else if WatchRequest.isSnapshotRequest(message) {
             // What we have right away; anything newer follows as applicationContext.
             Task { @MainActor in
@@ -290,13 +299,17 @@ enum WatchSync {
         case noAccount
     }
 
-    private static let accounts = AccountStore(store: KeychainStore(service: AppConfig.current.appBundleID))
+    /// The phone's copy of what the watch signs in with. No Face ID in front of it (the watch asks
+    /// in the background), so at least only while the phone is unlocked.
+    private static let accounts = AccountStore(store: KeychainStore(service: AppConfig.current.appBundleID, access: .whenUnlocked))
     private static let link = WatchLink(store: accounts)
 
     /// Paired? App installed? Last sent? For the settings.
     static var pairing: WatchPairing { link.pairing }
 
     static func start() {
+        // A copy saved by an older build was readable after the first unlock; this moves it.
+        try? accounts.reseal()
         link.activate()
     }
 
@@ -304,6 +317,19 @@ enum WatchSync {
         let account = StoredAccount(username: username, displayName: displayName, school: school(of: username), secret: password)
         try? accounts.save(account)
         link.signedIn(account)
+    }
+
+    /// WebUntis took a new password. The watch signs in with it by itself, so it gets it too,
+    /// if it's the account the watch has.
+    /// What the account last signed in with, if it's the one stored for the watch. Needs no Face ID.
+    static func storedSecret(of username: String) -> String? {
+        accounts.load().flatMap { AccountRoster.same($0.username, username) ? $0.secret : nil }
+    }
+
+    static func passwordChanged(username: String, to password: String) {
+        if let account = try? accounts.replacePassword(password, of: username) {
+            link.signedIn(account)
+        }
     }
 
     /// The account's own school first: the last one picked may be another account's, and the
@@ -363,8 +389,26 @@ enum WatchSync {
         guard let username = link.accountUsername else { return }
         let menu = WatchSnapshotBuilder.menu(dishes)
         link.updateSnapshot(for: username) { snapshot in
+            // The ratings come in a separate call, don't lose them until they do.
+            let known = Dictionary(snapshot.dishes.map { ($0.id, $0) }) { first, _ in first }
             snapshot.mensaDay = menu.day
-            snapshot.dishes = menu.dishes
+            snapshot.dishes = menu.dishes.map { dish in
+                var dish = dish
+                dish.stars = known[dish.id]?.stars
+                dish.ratings = known[dish.id]?.ratings
+                return dish
+            }
+        }
+    }
+
+    static func mensaRatings(_ ratings: [String: DishRatingsData]) {
+        guard let username = link.accountUsername else { return }
+        link.updateSnapshot(for: username) { snapshot in
+            for index in snapshot.dishes.indices {
+                guard let data = ratings[snapshot.dishes[index].id] else { continue }
+                snapshot.dishes[index].stars = data.count > 0 ? data.average : nil
+                snapshot.dishes[index].ratings = data.count
+            }
         }
     }
 
@@ -376,7 +420,7 @@ enum WatchSync {
     /// Everything at once, when the watch asks. The clients keep what the screens just loaded
     /// for a few minutes, so this rarely costs a request.
     static func load(_ session: UserSession) async {
-        async let menu: () = loadMenu()
+        async let menu: () = loadMenu(session)
         async let tasks: () = loadTodos(session)
         if session.hasUntis, !session.bearerToken.isEmpty {
             async let week: () = loadWeek(session)
@@ -386,8 +430,13 @@ enum WatchSync {
         _ = await (menu, tasks)
     }
 
-    private static func loadMenu() async {
-        if let dishes = try? await BackendClient.shared.dishes() { mensa(dishes) }
+    private static func loadMenu(_ session: UserSession) async {
+        guard let dishes = try? await BackendClient.shared.dishes() else { return }
+        mensa(dishes)
+        let served = WatchSnapshotBuilder.menu(dishes).dishes.map(\.id)
+        guard let token = session.apiToken, !served.isEmpty,
+              let ratings = try? await BackendClient.shared.dishRatingsBatch(ids: served, token: token) else { return }
+        mensaRatings(ratings)
     }
 
     private static func loadTodos(_ session: UserSession) async {
@@ -415,6 +464,8 @@ enum WatchSnapshotBuilder {
     /// Keeps the context small; nobody scrolls further on a wrist.
     private static let maxTodos = 30
     private static let maxRecentGrades = 5
+    private static let maxGradesPerSubject = 12
+    private static let maxGradeText = 60
 
     static func lessons(_ entries: [TimetableEntry], on day: Int) -> [WatchSnapshot.Lesson] {
         entries.filter { $0.date == day }.compactMap { entry in
@@ -442,16 +493,23 @@ enum WatchSnapshotBuilder {
     static func grades(_ subjects: [SubjectGrades]) -> (overall: Double?, count: Int, subjects: [WatchSnapshot.SubjectAverage], recent: [WatchSnapshot.Grade]) {
         let values = subjects.flatMap { $0.grades.map(\.markDisplayValue) }.filter { $0 > 0 }
         let averages = subjects.compactMap { subject -> WatchSnapshot.SubjectAverage? in
-            let marks = subject.grades.map(\.markDisplayValue).filter { $0 > 0 }
-            guard !marks.isEmpty else { return nil }
-            return WatchSnapshot.SubjectAverage(name: subject.subjectName, average: GradeMath.averageOf(marks), count: marks.count)
+            let marked = subject.grades.filter { $0.markDisplayValue > 0 }
+            guard !marked.isEmpty else { return nil }
+            let newest = marked.sorted { $0.id > $1.id }.prefix(maxGradesPerSubject).map { grade($0, in: subject.subjectName) }
+            return WatchSnapshot.SubjectAverage(name: subject.subjectName, average: GradeMath.averageOf(marked.map(\.markDisplayValue)),
+                                                count: marked.count, grades: newest)
         }
         let recent = subjects
             .flatMap { subject in subject.grades.filter { $0.markDisplayValue > 0 }.map { (subject.subjectName, $0) } }
             .sorted { $0.1.id > $1.1.id }
             .prefix(maxRecentGrades)
-            .map { WatchSnapshot.Grade(id: $0.1.id, subject: $0.0, value: $0.1.markDisplayValue, date: UntisTime.date($0.1.date, 0), text: $0.1.text) }
+            .map { grade($0.1, in: $0.0) }
         return (values.isEmpty ? nil : GradeMath.averageOf(values), values.count, averages, Array(recent))
+    }
+
+    private static func grade(_ entry: GradeEntry, in subject: String) -> WatchSnapshot.Grade {
+        WatchSnapshot.Grade(id: entry.id, subject: subject, value: entry.markDisplayValue,
+                            date: UntisTime.date(entry.date, 0), text: String(entry.text.prefix(maxGradeText)))
     }
 
     /// Same date rule as Home: today, or the next day the menu has.

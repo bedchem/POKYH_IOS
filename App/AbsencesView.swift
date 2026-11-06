@@ -182,7 +182,7 @@ private enum AbsenceCalc {
 
 /// "3h" rounded, "3h 20m" exact.
 private func formatAbsence(_ m: Int, exact: Bool) -> String {
-    if !exact { return "\(Int((Double(m) / 60).rounded()))h" }
+    if !exact { return "\(Int(saturating: (Double(m) / 60).rounded()))h" }
     let h = m / 60, min = m % 60
     return min == 0 ? "\(h)h" : "\(h)h \(min)m"
 }
@@ -200,7 +200,7 @@ struct AbsencesView: View {
     /// Opened from Home's "Abwesenheit melden": the report sheet once reporting is allowed.
     var openReport = false
 
-    @EnvironmentObject var app: AppState
+    @Environment(AppState.self) var app
     @Environment(\.strings) private var s
     @State private var absences: [AbsenceEntry] = []
     @State private var calendar = LessonCalendar()
@@ -253,7 +253,6 @@ struct AbsencesView: View {
             }
         }
         .navigationTitle(s.absences.title)
-        .navigationSubtitle(s.common.schoolYear(year))
         .navigationBarTitleDisplayMode(.large)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -298,7 +297,7 @@ struct AbsencesView: View {
                 if result.viaMessage { await loadExcuses() } else { await load() }
             }
         }
-        .navigationDestination(item: $openMessage) { id in
+        .pushed(item: $openMessage) { id in
             MessageDetailScreen(preview: MessagePreview(id: id, subject: "", contentPreview: "", senderName: "", senderId: 0,
                                                         sentDate: "", isRead: true, hasAttachments: false), folder: .sent)
         }
@@ -344,8 +343,6 @@ struct AbsencesView: View {
                                 .font(.system(size: 34))
                                 .foregroundStyle(Palette.textTertiary)
                             Text(s.absences.emptyTitle).textStyle(.headline).foregroundStyle(Palette.textPrimary)
-                            Text(s.absences.emptySubtitle).textStyle(.footnote).foregroundStyle(Palette.textSecondary)
-                                .multilineTextAlignment(.center)
                         }
                         .frame(maxWidth: .infinity)
                         .padding(Spacing.card)
@@ -397,11 +394,8 @@ struct AbsencesView: View {
                     let tone = Decorative.butter
                     Button { Task { await fetchLetter() } } label: {
                         HStack(spacing: Spacing.md) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(s.absences.letter).textStyle(.headline).foregroundStyle(tone.ink)
-                                Text(s.absences.letterHint).textStyle(.footnote).foregroundStyle(tone.ink.opacity(0.8))
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                            Text(s.absences.letter).textStyle(.headline).foregroundStyle(tone.ink)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                             if letterLoading {
                                 ProgressView().tint(tone.ink)
                             } else {
@@ -581,11 +575,15 @@ struct AbsencesView: View {
 
     private func load() async {
         guard let session = app.session else { return }
+        // The stored year shows at once, offline too; the fresh one replaces it.
+        if absences.isEmpty, let stored = await UntisClient.shared.storedAbsences(year: year, session) {
+            absences = stored
+            recompute()
+        }
         if absences.isEmpty { loading = true }
         error = nil
         do {
-            absences = try await UntisClient.shared.absences(
-                startDate: SchoolDates.yearStart(year), endDate: SchoolDates.yearEnd(year), session)
+            absences = try await UntisClient.shared.schoolYearAbsences(year: year, session)
             calendar = LessonCalendar()
             recompute()
             loading = false
@@ -921,55 +919,44 @@ private struct AbsenceCalculatorView: View {
         }()
 
         ScrollView {
-            VStack(alignment: .leading, spacing: Spacing.lg) {
-                Text(s.absences.calcLead).textStyle(.callout).foregroundStyle(Palette.textSecondary)
-                resultCard(stats, limit: limit, tooMany: tooMany).fadeIn()
-                VStack(alignment: .leading, spacing: Spacing.lg) {
-                    numberField(s.absences.calcAbsent, $absentInput, invalid: (!absentInput.isEmpty && absentHours == nil) || tooMany)
+            VStack(alignment: .leading, spacing: Spacing.section) {
+                resultCard(stats, limit: limit, tooMany: tooMany)
+                VStack(spacing: 0) {
                     if total != nil && yearTotal != nil {
                         PokyhSegmentedControl([false, true], selection: Binding(get: { wholeYear }, set: { whole in
                             wholeYear = whole
                             weeklyMode = false
                             totalInput = shown(whole ? yearTotal : total)
                         })) { $0 ? s.absences.spanYear : s.absences.spanSoFar }
+                        .padding(.bottom, Spacing.md)
                     }
-                    EyebrowLabel(s.absences.calcTotalMode, color: Palette.textSecondary)
-                    PokyhSegmentedControl([true, false], selection: $weeklyMode) {
-                        $0 ? s.absences.calcModeWeekly : s.absences.calcModeTotal
-                    }
+                    inputRow(s.absences.calcAbsent, $absentInput, unit: "h",
+                             invalid: (!absentInput.isEmpty && absentHours == nil) || tooMany)
+                    RowSeparator(inset: 0)
                     if weeklyMode {
-                        HStack(alignment: .top, spacing: Spacing.md) {
-                            numberField(s.absences.calcWeekly, $weeklyInput, invalid: !weeklyInput.isEmpty && weekly == nil)
-                            numberField(s.absences.calcWeeks, $weeksInput, invalid: !weeksInput.isEmpty && weeks == nil)
-                        }
-                        if let yearHours, yearHours > 0 {
-                            Text(s.absences.calcYear(number(yearHours, 1))).textStyle(.footnote).foregroundStyle(Palette.textTertiary)
-                        }
+                        inputRow(s.absences.calcWeekly, $weeklyInput, unit: "h", invalid: !weeklyInput.isEmpty && weekly == nil)
+                        RowSeparator(inset: 0)
+                        inputRow(s.absences.calcWeeks, $weeksInput, unit: nil, invalid: !weeksInput.isEmpty && weeks == nil)
                     } else {
-                        numberField(s.absences.calcTotal, $totalInput, invalid: !totalInput.isEmpty && parse(totalInput) == nil)
+                        inputRow(s.absences.calcTotal, $totalInput, unit: "h", invalid: !totalInput.isEmpty && parse(totalInput) == nil)
                     }
-                    numberField(s.absences.calcLimit, $limitInput, invalid: limit == nil || (limit ?? 0) > 100, suffix: "%")
+                    RowSeparator(inset: 0)
+                    inputRow(s.absences.calcLimit, $limitInput, unit: "%", invalid: limit == nil || (limit ?? 0) > 100)
                 }
-                .padding(Spacing.card)
+                .padding(.horizontal, Spacing.card)
+                .padding(.vertical, Spacing.sm)
                 .cardSurface(radius: Radius.xl, fill: Palette.card)
-                .fadeIn(delay: 0.04)
 
-                if prefilled {
-                    Text(s.absences.calcFromYear).textStyle(.footnote).foregroundStyle(Palette.textTertiary)
+                // How the year's hours are given: per week times weeks, or as one number.
+                PokyhSegmentedControl([true, false], selection: $weeklyMode.animation(.snappy(duration: 0.25))) {
+                    $0 ? s.absences.calcModeWeekly : s.absences.calcModeTotal
                 }
-                VStack(alignment: .leading, spacing: Spacing.sm) {
-                    Text(s.absences.calcRuleTitle).textStyle(.headline).foregroundStyle(Palette.textPrimary)
-                    Text(s.absences.calcRule).textStyle(.footnote).foregroundStyle(Palette.textSecondary)
-                }
-                .padding(Spacing.card)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .cardSurface(radius: Radius.xl, fill: Palette.card)
-                .fadeIn(delay: 0.08)
-                Text(s.absences.calcPrivacy).textStyle(.caption).foregroundStyle(Palette.textTertiary)
             }
             .padding(.horizontal, Spacing.screenH)
             .padding(.top, Spacing.xs)
             .padding(.bottom, Spacing.xxxl)
+            .frame(maxWidth: WidthClass.formMaxWidth)
+            .frame(maxWidth: .infinity)
         }
         .scrollDismissesKeyboard(.interactively)
         .navigationTitle(s.absences.calc)
@@ -985,79 +972,85 @@ private struct AbsenceCalculatorView: View {
         }
     }
 
+    /// One ring that fills up to the limit, the share in its middle, and the one figure that
+    /// matters underneath: how many hours are still allowed.
     private func resultCard(_ stats: (pct: Double, left: Int)?, limit: Double?, tooMany: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            if let stats {
-                HStack(alignment: .lastTextBaseline, spacing: Spacing.md) {
-                    Text("\(number(stats.pct, 1)) %").textStyle(.statLarge).foregroundStyle(Palette.textPrimary)
-                        .contentTransition(.numericText())
-                    Text(s.absences.calcResult).textStyle(.headline).foregroundStyle(Palette.textSecondary)
-                }
-                // The bar runs to twice the limit, so the limit's marker sits in the middle.
-                let span = max((limit ?? 25) * 2, stats.pct, 1)
-                let tone: Color = {
-                    guard let limit else { return Palette.textTertiary }
-                    if stats.left < 0 { return Brand.danger }
-                    if stats.pct >= limit * 0.6 { return Brand.warning }
-                    return Decorative.sage.ink
-                }()
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(Palette.cardAlt).frame(height: 12)
-                        Capsule().fill(tone).frame(width: geo.size.width * min(1, max(0, stats.pct / span)), height: 12)
-                        if let limit {
-                            Capsule().fill(Palette.textPrimary)
-                                .frame(width: 2, height: 20)
-                                .offset(x: geo.size.width * min(1, max(0, limit / span)) - 1)
-                        }
-                    }
-                    .frame(height: 20)
-                    .animation(.easeOut(duration: 0.5), value: stats.pct)
-                }
-                .frame(height: 20)
-                .padding(.top, Spacing.lg)
-                Text(s.absences.calcPresent(number(100 - stats.pct, 1)))
-                    .textStyle(.footnote).foregroundStyle(Palette.textSecondary)
-                    .padding(.top, Spacing.md)
-                Text(stats.left > 0 ? s.absences.calcLeft(number(Double(stats.left), 0))
-                     : stats.left == 0 ? s.absences.calcAtLimit
-                     : s.absences.calcOver(number(Double(-stats.left), 0)))
-                    .textStyle(.headline).foregroundStyle(Palette.textPrimary)
-                    .padding(.top, Spacing.sm)
-            } else {
-                Text(tooMany ? s.absences.calcInvalid : s.absences.calcEmpty).textStyle(.body).foregroundStyle(Palette.textTertiary)
+        let tone: Color = {
+            guard let stats, let limit else { return Palette.textTertiary }
+            if stats.left < 0 { return Brand.danger }
+            if stats.pct >= limit * 0.6 { return Brand.warning }
+            return Brand.success
+        }()
+        let fill = stats.map { stats in limit.map { $0 > 0 ? min(1, stats.pct / $0) : 1 } ?? 0 } ?? 0
+        return VStack(spacing: Spacing.lg) {
+            ZStack {
+                Circle().stroke(Palette.cardAlt, lineWidth: 14)
+                Circle()
+                    .trim(from: 0, to: fill)
+                    .stroke(tone, style: StrokeStyle(lineWidth: 14, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                    .animation(.snappy(duration: 0.35), value: fill)
+                Text(stats.map { "\(number($0.pct, 1)) %" } ?? "–")
+                    .textStyle(.statLarge)
+                    .foregroundStyle(stats == nil ? Palette.textTertiary : Palette.textPrimary)
+                    .contentTransition(.numericText())
+                    .animation(.snappy(duration: 0.25), value: stats?.pct)
+                    .minimumScaleFactor(0.6)
+                    .lineLimit(1)
+                    .padding(Spacing.xl)
             }
+            .frame(width: 176, height: 176)
+            .accessibilityElement(children: .combine)
+
+            Group {
+                if let stats {
+                    Text(stats.left > 0 ? s.absences.calcLeft(number(Double(stats.left), 0))
+                         : stats.left == 0 ? s.absences.calcAtLimit
+                         : s.absences.calcOver(number(Double(-stats.left), 0)))
+                        .foregroundStyle(stats.left < 0 ? Brand.danger : Palette.textPrimary)
+                } else {
+                    Text(tooMany ? s.absences.calcInvalid : s.absences.calcEmpty)
+                        .foregroundStyle(Palette.textTertiary)
+                }
+            }
+            .textStyle(.headline)
+            .multilineTextAlignment(.center)
         }
-        .padding(Spacing.card)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, Spacing.xl)
+        .padding(.horizontal, Spacing.card)
+        .frame(maxWidth: .infinity)
         .cardSurface(radius: Radius.xl, fill: Palette.card)
     }
 
-    private func numberField(_ label: String, _ text: Binding<String>, invalid: Bool, suffix: String? = nil) -> some View {
-        VStack(alignment: .leading, spacing: Spacing.sm) {
-            EyebrowLabel(label, color: Palette.textSecondary)
-            HStack(spacing: Spacing.sm) {
-                TextField("", text: Binding(get: { text.wrappedValue }, set: { text.wrappedValue = String($0.prefix(7)) }))
-                    .keyboardType(.decimalPad)
-                    .textStyle(.body)
-                    .foregroundStyle(Palette.textPrimary)
-                    .tint(Brand.accent)
-                if let suffix { Text(suffix).textStyle(.body).foregroundStyle(Palette.textTertiary) }
-            }
-            .padding(.horizontal, Spacing.lg)
-            .frame(minHeight: 52)
-            .background(Palette.cardAlt, in: .pokyh(Radius.md))
-            .overlay(alignment: .bottom) {
-                if invalid { Capsule().fill(Brand.danger).frame(height: 2).padding(.horizontal, Spacing.sm) }
+    /// A row as in the system's settings: the name, the number right-aligned with its unit.
+    private func inputRow(_ label: String, _ text: Binding<String>, unit: String?, invalid: Bool) -> some View {
+        HStack(spacing: Spacing.sm) {
+            Text(label)
+                .textStyle(.body)
+                .foregroundStyle(Palette.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            Spacer(minLength: Spacing.md)
+            TextField("0", text: Binding(get: { text.wrappedValue }, set: { text.wrappedValue = String($0.prefix(7)) }))
+                .keyboardType(.decimalPad)
+                .multilineTextAlignment(.trailing)
+                .textStyle(TextStyle.body.weight(.semibold).tabularDigits)
+                .foregroundStyle(invalid ? Brand.danger : Palette.textPrimary)
+                .tint(Brand.accent)
+                .frame(maxWidth: 110)
+                .accessibilityLabel(label)
+            if let unit {
+                Text(unit).textStyle(.body).foregroundStyle(Palette.textTertiary)
             }
         }
-        .frame(maxWidth: .infinity)
+        .frame(minHeight: 52)
     }
 
     private static func stats(absent: Double, total: Double, limit: Double) -> (pct: Double, left: Int)? {
         guard total > 0, absent >= 0, absent <= total, (0...100).contains(limit) else { return nil }
         let left = total * limit / 100 - absent
-        return (absent / total * 100, left >= 0 ? Int((left + 1e-9).rounded(.down)) : -Int((-left - 1e-9).rounded(.up)))
+        // Typed in by hand: 99999999999999999999 is a perfectly good Double and no Int.
+        return (absent / total * 100, left >= 0 ? Int(saturating: (left + 1e-9).rounded(.down)) : -Int(saturating: (-left - 1e-9).rounded(.up)))
     }
 
     private func parse(_ input: String) -> Double? {
@@ -1119,7 +1112,7 @@ private enum AbsenceClock {
 private struct ReportAbsenceSheet: View {
     let onDone: () async -> Void
 
-    @EnvironmentObject var app: AppState
+    @Environment(AppState.self) var app
     @Environment(\.strings) private var s
     @Environment(\.dismiss) private var dismiss
     @State private var meta: AbsenceMeta?
@@ -1310,7 +1303,7 @@ private struct ExcuseAbsenceSheet: View {
     let summary: String
     let onDone: (ExcuseResult) async -> Void
 
-    @EnvironmentObject var app: AppState
+    @Environment(AppState.self) var app
     @Environment(\.strings) private var s
     @Environment(\.dismiss) private var dismiss
     @State private var meta: AbsenceMeta?
@@ -1613,7 +1606,7 @@ private struct LessonPicker: View {
     let initial: Date
     let onTake: (_ day: Date, _ from: Int, _ to: Int) -> Void
 
-    @EnvironmentObject var app: AppState
+    @Environment(AppState.self) var app
     @Environment(\.strings) private var s
     @Environment(\.dismiss) private var dismiss
     @State private var day: Date

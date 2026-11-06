@@ -19,6 +19,21 @@ enum DateFmt {
         return f
     }
 
+    /// One formatter per pattern and language, made once: rows used to build a new one per call.
+    nonisolated static func formatter(_ pattern: String, locale: Locale = Locale(identifier: "en_US_POSIX")) -> DateFormatter {
+        let key = pattern + "|" + locale.identifier
+        return lock.withLock {
+            if let made = made[key] { return made }
+            let f = DateFormatter()
+            f.locale = locale
+            f.dateFormat = pattern
+            made[key] = f
+            return f
+        }
+    }
+    nonisolated(unsafe) private static var made: [String: DateFormatter] = [:]
+    nonisolated private static let lock = NSLock()
+
     /// Tages-ID (yyyyMMdd als Int) eines Datums.
     static func num(_ date: Date) -> Int { Int(compact.string(from: date)) ?? 0 }
     /// ISO-String (yyyy-MM-dd) eines Datums.

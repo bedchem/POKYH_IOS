@@ -11,17 +11,20 @@ import PokyhDesign
 @main
 struct POKYHApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @StateObject private var app = AppState()
+    @State private var app = AppState()
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
+        #if DEBUG
+        StubServer.prepare()
+        #endif
         // Plain files from older builds go before anything reads or writes the sealed ones.
         SecureStorage.prepare()
 
-        // Größerer Bild-/Daten-Cache für flüssige Mensa-Bilder (Performance). Only public dish
-        // photos go through it; pictures of people use the sealed ImageCache.
-        let cache = URLCache(memoryCapacity: 32 * 1024 * 1024,
-                             diskCapacity: 256 * 1024 * 1024)
+        // Disk copies of the public dish photos; the decoded ones live in RemotePhotos, so memory
+        // here only holds the raw bytes for a moment. Pictures of people use the sealed ImageCache.
+        let cache = URLCache(memoryCapacity: 8 * 1024 * 1024,
+                             diskCapacity: 128 * 1024 * 1024)
         URLCache.shared = cache
 
         // Hintergrund-Aktualisierung registrieren (muss früh beim Start passieren).
@@ -39,9 +42,9 @@ struct POKYHApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .environmentObject(app)
+                .environment(app)
                 // German, Italian or English: the phone's language unless one was picked in the app.
-                .environment(\.strings, Strings.of(LanguageChoice.current(in: .standard)))
+                .environment(\.strings, Strings.of(app.language))
                 .onOpenURL { offerWebSignIn($0) }
                 .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
                     if let url = activity.webpageURL { offerWebSignIn(url) }
@@ -95,7 +98,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 /// Opens what a tapped notification is about once the app is unlocked: the tab for grades and the
 /// timetable, a sheet over whatever is open for the rest.
 private struct PushRouteHost: ViewModifier {
-    @ObservedObject var app: AppState
+    let app: AppState
     @ObservedObject private var router = PushRouter.shared
     @State private var shown: PushRoute?
 
@@ -112,8 +115,8 @@ private struct PushRouteHost: ViewModifier {
             }
             .sheet(item: $shown) { route in
                 NavigationStack { PushDestination(route: route) }
-                    .environmentObject(app)
-                    .environment(\.strings, Strings.of(LanguageChoice.current(in: .standard)))
+                    .environment(app)
+                    .environment(\.strings, Strings.of(app.language))
             }
             // Nothing stays up over the lock screen or into another account.
             .onChange(of: app.phase) { _, phase in
@@ -135,9 +138,9 @@ private struct PushRouteHost: ViewModifier {
         case .messages:
             if session.hasUntis { shown = route }
         case .todos:
-            if session.apiToken != nil { shown = route }
+            if session.hasBackend { shown = route }
         case .reminders:
-            if session.apiToken != nil, !session.isParent { shown = route }
+            if session.hasBackend, !session.isParent { shown = route }
         }
     }
 }
@@ -167,7 +170,7 @@ private struct PushDestination: View {
 /// A reminder's own page while it still exists, the list when it's gone.
 private struct ReminderLanding: View {
     let id: String?
-    @EnvironmentObject private var app: AppState
+    @Environment(AppState.self) private var app
     @State private var found: (reminder: ApiReminder, classId: String)?
     @State private var looked = false
 
