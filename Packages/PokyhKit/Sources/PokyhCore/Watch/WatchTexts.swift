@@ -6,13 +6,13 @@ import Foundation
 public struct WatchTexts: Sendable {
     public let updated: @Sendable (String) -> String
     public let updatedYesterday: @Sendable (String) -> String
-    public let fromPhone: String
-    public let fromWatch: String
     public let noDataTitle: String
     public let noDataText: String
+    public let phoneAway: String
     public let queued: String
     public let instead: @Sendable (String) -> String
     public let free: String
+    public let weekend: String
 
     public static func of(_ lang: Lang) -> WatchTexts {
         switch lang {
@@ -23,39 +23,39 @@ public struct WatchTexts: Sendable {
     }
 
     static let de = WatchTexts(
-        updated: { "Stand \($0)" },
-        updatedYesterday: { "Stand gestern, \($0)" },
-        fromPhone: "vom iPhone",
-        fromWatch: "direkt geladen",
+        updated: { "Stand von \($0)" },
+        updatedYesterday: { "Stand von gestern, \($0)" },
         noDataTitle: "Noch nichts da",
-        noDataText: "Öffne POKYH auf dem iPhone, dann erscheint hier dein Tag.",
+        noDataText: "Öffne POKYH auf dem iPhone.",
+        phoneAway: "iPhone nicht erreichbar",
         queued: "Wartet aufs iPhone",
         instead: { "statt \($0)" },
-        free: "Frei"
+        free: "Frei",
+        weekend: "Wochenende"
     )
 
     static let it = WatchTexts(
         updated: { "Aggiornato \($0)" },
         updatedYesterday: { "Aggiornato ieri, \($0)" },
-        fromPhone: "dall’iPhone",
-        fromWatch: "caricato qui",
         noDataTitle: "Ancora niente",
-        noDataText: "Apri POKYH sull’iPhone e qui comparirà la tua giornata.",
+        noDataText: "Apri POKYH sull’iPhone.",
+        phoneAway: "iPhone non raggiungibile",
         queued: "In attesa dell’iPhone",
         instead: { "invece di \($0)" },
-        free: "Libero"
+        free: "Libero",
+        weekend: "Fine settimana"
     )
 
     static let en = WatchTexts(
         updated: { "Updated \($0)" },
         updatedYesterday: { "Updated yesterday, \($0)" },
-        fromPhone: "from iPhone",
-        fromWatch: "loaded here",
         noDataTitle: "Nothing yet",
-        noDataText: "Open POKYH on your iPhone and your day shows up here.",
+        noDataText: "Open POKYH on your iPhone.",
+        phoneAway: "iPhone out of reach",
         queued: "Waiting for iPhone",
         instead: { "instead of \($0)" },
-        free: "Free"
+        free: "Free",
+        weekend: "Weekend"
     )
 }
 
@@ -79,7 +79,16 @@ public enum WatchFormat {
         String(format: "%.2f", value).replacingOccurrences(of: ".", with: String(decimal))
     }
 
-    /// "Stand 10:42", "Stand gestern, 18:03", "Stand 28.10.".
+    /// A countdown: 23:41, 1:02:09. Rounded up, so it says 0:00 only at the bell.
+    public static func countdown(_ seconds: TimeInterval) -> String {
+        let total = max(0, Int(seconds.rounded(.up)))
+        let hours = total / 3600, minutes = total % 3600 / 60, rest = total % 60
+        return hours > 0
+            ? String(format: "%d:%02d:%02d", hours, minutes, rest)
+            : String(format: "%d:%02d", minutes, rest)
+    }
+
+    /// "Stand von 10:42", "Stand von gestern, 18:03", "Stand von 28.10.".
     public static func stamp(_ date: Date, now: Date = .now, texts: WatchTexts, common: CommonStrings, calendar: Calendar = .current) -> String {
         if calendar.isDate(date, inSameDayAs: now) { return texts.updated(clock(date, calendar: calendar)) }
         if let yesterday = calendar.date(byAdding: .day, value: -1, to: now), calendar.isDate(date, inSameDayAs: yesterday) {

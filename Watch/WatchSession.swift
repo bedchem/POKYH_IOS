@@ -21,8 +21,12 @@ final class WatchSession: NSObject {
     /// The last snapshot with the not yet confirmed ticks on top: what the pages show.
     private(set) var snapshot: WatchSnapshot?
     private(set) var queue = TodoQueue()
-    /// Loading the lessons by itself right now.
-    private(set) var loading = false
+    /// Whether the phone can be asked right now.
+    private(set) var phoneReachable = false
+    /// Asking the phone or loading by itself, and at launch until the link to the phone is up.
+    private var waitingFor = 0
+    private var linkComingUp: Bool
+    var loading: Bool { linkComingUp || waitingFor > 0 }
 
     /// How long the phone gets to answer with something newer before the watch loads by itself.
     private static let phoneGrace: Duration = .seconds(8)
@@ -40,12 +44,14 @@ final class WatchSession: NSObject {
     @ObservationIgnored private var sending: Set<String> = []
     @ObservationIgnored private var queueHeldUntil = Date.distantPast
     @ObservationIgnored private var lastOwnLoad = Date.distantPast
+    @ObservationIgnored private var loadingByItself = false
 
     init(accounts: AccountStore, store: WatchStore) {
         self.accounts = accounts
         self.store = store
         let account = accounts.load()
         self.account = account
+        linkComingUp = account != nil
         super.init()
         if let account, let saved = store.snapshot(), AccountRoster.same(saved.username, account.username) {
             received = saved
@@ -59,25 +65,28 @@ final class WatchSession: NSObject {
 
     // MARK: What the pages call
 
-    /// The app came on screen: send what's waiting, then get something newer.
+    /// The app came on screen.
     func refresh() {
+        Task { await reload() }
+    }
+
+    /// Sends what's waiting, then gets something newer. Returns when there's an answer, so a
+    /// pull to refresh spins exactly that long.
+    func reload() async {
         guard account != nil, let session, session.activationState == .activated else { return }
         flushQueue()
-        guard session.isReachable else {
-            Task { await loadByItself() }
-            return
-        }
-        askPhone(WatchRequest.snapshot) { [weak self] reply in
-            guard let self else { return }
+        waitingFor += 1
+        linkComingUp = false
+        defer { waitingFor -= 1 }
+        if session.isReachable, let reply = await ask(WatchRequest.snapshot) {
             take(reply)
             // The phone answers with what it has; a locked one has nothing newer coming.
             Task {
                 try? await Task.sleep(for: Self.phoneGrace)
                 await self.loadByItself()
             }
-        } failed: { [weak self] in
-            guard let self else { return }
-            Task { await self.loadByItself() }
+        } else {
+            await loadByItself()
         }
     }
 
@@ -179,7 +188,11 @@ final class WatchSession: NSObject {
 
     /// No account yet: ask the phone, in case the watch app came after the sign-in.
     private func sessionIsUp() {
-        guard let session, session.activationState == .activated else { return }
+        guard let session, session.activationState == .activated else {
+            linkComingUp = false
+            return
+        }
+        phoneReachable = session.isReachable
         receive(session.receivedApplicationContext)
         if account == nil, session.isReachable {
             askPhone(AccountHandoff.request) { [weak self] reply in
@@ -230,6 +243,13 @@ final class WatchSession: NSObject {
         if let received { snapshot = received.applying(queue) }
     }
 
+    private func ask(_ message: [String: Any]) async -> [String: Any]? {
+        let reply: SendablePayload? = await withCheckedContinuation { continuation in
+            askPhone(message) { continuation.resume(returning: SendablePayload($0)) } failed: { continuation.resume(returning: nil) }
+        }
+        return reply?.value
+    }
+
     /// Replies come in on a background queue. `nonisolated` keeps these closures from assuming
     /// the main actor, which would trap at runtime.
     nonisolated private func askPhone(_ message: [String: Any],
@@ -248,11 +268,15 @@ final class WatchSession: NSObject {
     /// Only when the phone couldn't help: today's lessons straight from WebUntis, with the
     /// account the phone handed over. Grades, Mensa and to-dos stay as the phone last sent them.
     private func loadByItself() async {
-        guard let account, !loading, received?.isStale() ?? true,
+        guard let account, !loadingByItself, received?.isStale() ?? true,
               Date().timeIntervalSince(lastOwnLoad) > Self.ownLoadInterval else { return }
-        loading = true
+        loadingByItself = true
+        waitingFor += 1
         lastOwnLoad = Date()
-        defer { loading = false }
+        defer {
+            loadingByItself = false
+            waitingFor -= 1
+        }
         let day = Calendar.current.startOfDay(for: Date())
         // No connection, or the school said no: the page keeps saying how old its data is.
         guard let result = try? await untis.lessons(for: account, studentId: received?.studentId),

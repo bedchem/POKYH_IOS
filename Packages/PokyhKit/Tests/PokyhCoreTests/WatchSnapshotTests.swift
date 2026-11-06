@@ -62,6 +62,99 @@ struct WatchSnapshotTests {
         #expect(!WatchSnapshot.empty(for: "anna", at: at(12), calendar: calendar).dayIsOver(at: at(12), calendar: calendar))
     }
 
+    @Test func theDayMovesThroughItsMoments() {
+        let mat = day.lessons[0], eng = day.lessons[2]
+        #expect(day.moment(at: at(7), calendar: calendar) == .waiting(next: mat, since: nil))
+        #expect(day.moment(at: at(8, 10), calendar: calendar) == .running(mat))
+        // DEU is cancelled, so the wait for ENG runs from when MAT ended.
+        #expect(day.moment(at: at(9), calendar: calendar) == .waiting(next: eng, since: at(8, 50)))
+        #expect(day.moment(at: at(11), calendar: calendar) == .over)
+        #expect(day.moment(at: at(8, day: 31), calendar: calendar) == .unknown)
+
+        var cancelled = day
+        cancelled.lessons = [lesson("DEU", (8, 50), (9, 40), status: .cancelled)]
+        #expect(cancelled.moment(at: at(8), calendar: calendar) == .free)
+        cancelled.lessons = []
+        #expect(cancelled.moment(at: at(8), calendar: calendar) == .free)
+    }
+
+    @Test func theCountdownRunsOverTheLessonTheBreakOrTheLastHour() {
+        let running = day.moment(at: at(8, 25), calendar: calendar)
+        #expect(running.span(at: at(8, 25)) == at(8)...at(8, 50))
+        #expect(running.remaining(at: at(8, 25)) == 0.5)
+
+        let pause = day.moment(at: at(9, 15), calendar: calendar)
+        #expect(pause.span(at: at(9, 15)) == at(8, 50)...at(9, 40))
+        #expect(pause.remaining(at: at(9, 15)) == 0.5)
+
+        // More than an hour before school there's nothing to count yet.
+        let early = day.moment(at: at(6), calendar: calendar)
+        #expect(early.span(at: at(6)) == nil)
+        #expect(early.remaining(at: at(6)) == nil)
+        #expect(day.moment(at: at(7, 30), calendar: calendar).remaining(at: at(7, 30)) == 0.5)
+
+        #expect(day.moment(at: at(11), calendar: calendar).span(at: at(11)) == nil)
+    }
+
+    @Test func aCancelledSlotIsTheNewsUnderTheBigLesson() {
+        // MAT runs and DEU after it falls away: that's what you need to know.
+        #expect(day.follower(at: at(8, 10), calendar: calendar)?.subject == "DEU")
+        // Sitting in the cancelled slot, waiting for ENG, it's still the news.
+        #expect(day.follower(at: at(9), calendar: calendar)?.subject == "DEU")
+        // ENG is the last lesson.
+        #expect(day.follower(at: at(10), calendar: calendar) == nil)
+        #expect(day.follower(at: at(11), calendar: calendar) == nil)
+
+        var plain = day
+        plain.lessons = [lesson("MAT", (8, 0), (8, 50)), lesson("ENG", (9, 40), (10, 30))]
+        #expect(plain.follower(at: at(8, 10), calendar: calendar)?.subject == "ENG")
+    }
+
+    @Test func theStackWantsItJustBeforeABell() {
+        #expect(day.relevance(at: at(8, 10), calendar: calendar) == 0.2)
+        // The last minutes of MAT, with a cancelled lesson next.
+        #expect(day.relevance(at: at(8, 45), calendar: calendar) == 1)
+        // ENG is regular.
+        #expect(day.relevance(at: at(9), calendar: calendar) == 0.3)
+        #expect(day.relevance(at: at(9, 35), calendar: calendar) == 0.8)
+        #expect(day.relevance(at: at(7), calendar: calendar) == 0.3)
+        #expect(day.relevance(at: at(11), calendar: calendar) == 0)
+        #expect(day.relevance(at: at(8, day: 31), calendar: calendar) == 0)
+    }
+
+    @Test func subjectsLowestFirstAndGradesNewestFirst() {
+        let old = WatchSnapshot.Grade(id: 1, subject: "MAT", value: 7, date: at(8))
+        let new = WatchSnapshot.Grade(id: 2, subject: "MAT", value: 8, date: at(9))
+        let other = WatchSnapshot.Grade(id: 3, subject: "ENG", value: 5, date: at(10))
+        var snapshot = day
+        snapshot.subjects = [
+            WatchSnapshot.SubjectAverage(name: "MAT", average: 7.5, count: 2, grades: [old, new]),
+            WatchSnapshot.SubjectAverage(name: "ENG", average: 5, count: 1),
+            WatchSnapshot.SubjectAverage(name: "BIO", average: 7.5, count: 1),
+        ]
+        snapshot.recentGrades = [other, new]
+        #expect(snapshot.subjectsByAverage.map(\.name) == ["ENG", "BIO", "MAT"])
+        #expect(snapshot.grades(of: snapshot.subjects[0]).map(\.id) == [2, 1])
+        // An older phone sends no single grades: what the recent ones know is all there is.
+        #expect(snapshot.grades(of: snapshot.subjects[1]).map(\.id) == [3])
+        #expect(snapshot.grades(of: snapshot.subjects[2]).isEmpty)
+    }
+
+    @Test func overdueMeansOpenAndPastItsDate() {
+        #expect(WatchSnapshot.Todo(id: "a", title: "x", due: at(8)).isOverdue(at: at(9)))
+        #expect(!WatchSnapshot.Todo(id: "a", title: "x", due: at(10)).isOverdue(at: at(9)))
+        #expect(!WatchSnapshot.Todo(id: "a", title: "x", due: at(8), done: true).isOverdue(at: at(9)))
+        #expect(!WatchSnapshot.Todo(id: "a", title: "x").isOverdue(at: at(9)))
+    }
+
+    @Test func anOldSnapshotStillDecodes() throws {
+        // Written before ratings and single grades existed.
+        let json = #"{"username":"anna","updatedAt":0,"lessonsUpdatedAt":0,"source":"phone","day":0,"lessons":[],"gradeCount":1,"subjects":[{"name":"MAT","average":7,"count":1}],"recentGrades":[],"dishes":[{"id":"d","name":"Pasta","category":"","tags":[]}],"todos":[]}"#
+        let snapshot = try #require(WatchSnapshot.decoded(from: Data(json.utf8)))
+        #expect(snapshot.subjects.first?.grades == nil)
+        #expect(snapshot.dishes.first?.stars == nil)
+    }
+
     @Test func yesterdaysSnapshotHasNoLessonsToday() {
         let tomorrow = at(8, day: 31)
         #expect(day.todaysLessons(at: tomorrow, calendar: calendar).isEmpty)
@@ -76,7 +169,10 @@ struct WatchSnapshotTests {
 
     @Test func complicationsChangeAtEveryEdge() {
         let dates = day.timelineDates(from: at(8, 10), calendar: calendar)
-        #expect(dates == [at(8, 10), at(8, 50), at(9, 40), at(10, 30), at(0, day: 31)])
+        // The cancelled lesson moves nothing; the run-up to each remaining bell does.
+        #expect(dates == [at(8, 10), at(8, 40), at(8, 50), at(9, 30), at(9, 40), at(10, 20), at(10, 30), at(0, day: 31)])
+        // From before school: the hour ahead counts too.
+        #expect(day.timelineDates(from: at(6), calendar: calendar).prefix(3) == [at(6), at(7), at(7, 50)])
     }
 
     @Test func aDayItHasNoLessonsForIsNotAFreeDay() {
@@ -137,6 +233,20 @@ struct WatchSnapshotTests {
         #expect(fresh.studentId == 42)
     }
 
+    @Test func tooManyGradesCostTheSingleGradesNotTheSnapshot() throws {
+        let grades = (0..<40).map {
+            WatchSnapshot.Grade(id: $0, subject: "MAT", value: 8, date: at(8), text: String(repeating: "x", count: 60))
+        }
+        let subjects = (0..<30).map { WatchSnapshot.SubjectAverage(name: "S\($0)", average: 8, count: 40, grades: grades) }
+        let big = WatchSnapshot(username: "anna", day: at(8), subjects: subjects, recentGrades: Array(grades.prefix(5)))
+
+        #expect(try big.encoded().count > WatchSnapshot.payloadLimit)
+        let arrived = try #require(WatchSnapshot(payload: big.payload))
+        #expect(arrived.subjects.count == 30)
+        #expect(arrived.subjects.allSatisfy { $0.grades == nil && $0.count == 40 })
+        #expect(arrived.recentGrades.count == 5)
+    }
+
     @Test func goesThroughWatchConnectivityPayloads() {
         let payload = day.payload
         #expect(WatchSnapshot(payload: payload) == day)
@@ -163,6 +273,15 @@ struct WatchFormatTests {
     let texts = WatchTexts.of(.de)
     let common = Strings.of(.de).common
 
+    @Test func countdownsRoundUpToTheBell() {
+        #expect(WatchFormat.countdown(0) == "0:00")
+        #expect(WatchFormat.countdown(0.2) == "0:01")
+        #expect(WatchFormat.countdown(59.5) == "1:00")
+        #expect(WatchFormat.countdown(23 * 60 + 41) == "23:41")
+        #expect(WatchFormat.countdown(3729) == "1:02:09")
+        #expect(WatchFormat.countdown(-5) == "0:00")
+    }
+
     @Test func clockIsTwentyFourHours() {
         #expect(WatchFormat.clock(at(8, 5), calendar: calendar) == "08:05")
         #expect(WatchFormat.clock(at(14), calendar: calendar) == "14:00")
@@ -176,15 +295,16 @@ struct WatchFormatTests {
     }
 
     @Test func stampsSayHowOld() {
-        #expect(WatchFormat.stamp(at(10, 42), now: at(11), texts: texts, common: common, calendar: calendar) == "Stand 10:42")
-        #expect(WatchFormat.stamp(at(18, 3, day: 29), now: at(11), texts: texts, common: common, calendar: calendar) == "Stand gestern, 18:03")
-        #expect(WatchFormat.stamp(at(9, day: 20), now: at(11), texts: texts, common: common, calendar: calendar).hasPrefix("Stand 20"))
+        #expect(WatchFormat.stamp(at(10, 42), now: at(11), texts: texts, common: common, calendar: calendar) == "Stand von 10:42")
+        #expect(WatchFormat.stamp(at(18, 3, day: 29), now: at(11), texts: texts, common: common, calendar: calendar) == "Stand von gestern, 18:03")
+        #expect(WatchFormat.stamp(at(9, day: 20), now: at(11), texts: texts, common: common, calendar: calendar).hasPrefix("Stand von 20"))
     }
 
     @Test func everyLanguageHasTheTexts() {
         for lang in Lang.allCases {
             let t = WatchTexts.of(lang)
             #expect(!t.queued.isEmpty && !t.noDataTitle.isEmpty && !t.free.isEmpty)
+            #expect(!t.phoneAway.isEmpty && !t.weekend.isEmpty)
             #expect(t.updated("10:42").contains("10:42"))
         }
         #expect(WatchTexts.of(.it).free != WatchTexts.of(.en).free)

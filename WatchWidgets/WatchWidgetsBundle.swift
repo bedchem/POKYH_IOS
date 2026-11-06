@@ -16,7 +16,6 @@ struct NextLessonComplication: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: "NextLessonComplication", provider: NextLessonProvider()) { entry in
             NextLessonView(entry: entry)
-                .containerBackground(.clear, for: .widget)
         }
         .configurationDisplayName(strings.home.sectionNowNext)
         .description(strings.home.sectionNowNextInfo)
@@ -25,31 +24,24 @@ struct NextLessonComplication: Widget {
 }
 
 struct NextLessonEntry: TimelineEntry {
-    enum Content {
-        /// Nothing about today yet, or not signed in.
-        case unknown
-        /// Today has no lessons.
-        case free
-        case dayOver
-        case lesson(WatchSnapshot.Lesson, running: Bool)
-    }
-
     let date: Date
-    let content: Content
+    let moment: WatchSnapshot.Moment
+    /// What's after the lesson, set only once the bell is close: then that's the question.
+    let afterwards: WatchSnapshot.Lesson?
     let lang: Lang
+    let relevance: TimelineEntryRelevance?
 
-    init(date: Date, snapshot: WatchSnapshot?) {
+    init(date: Date, snapshot: WatchSnapshot?, until end: Date? = nil) {
         self.date = date
         lang = snapshot?.lang ?? LanguageChoice.current(in: .standard)
-        guard let snapshot, snapshot.knowsToday(at: date) else {
-            content = .unknown
-            return
-        }
-        if let lesson = snapshot.upcoming(at: date) {
-            content = .lesson(lesson, running: snapshot.current(at: date) != nil)
+        moment = snapshot?.moment(at: date) ?? .unknown
+        if case .running(let lesson) = moment, lesson.end.timeIntervalSince(date) <= WatchSnapshot.runUp {
+            afterwards = snapshot?.follower(at: date)
         } else {
-            content = snapshot.dayIsOver(at: date) ? .dayOver : .free
+            afterwards = nil
         }
+        let score = snapshot?.relevance(at: date) ?? 0
+        relevance = TimelineEntryRelevance(score: Float(score), duration: end?.timeIntervalSince(date) ?? 0)
     }
 
     /// For the watch face gallery: what it will look like, nobody's real timetable.
@@ -57,7 +49,7 @@ struct NextLessonEntry: TimelineEntry {
         let lang = LanguageChoice.current(in: .standard)
         let lesson = WatchSnapshot.Lesson(
             id: "sample", subject: Strings.of(lang).home.lesson, teacher: "", room: "1",
-            start: date.addingTimeInterval(15 * 60), end: date.addingTimeInterval(65 * 60)
+            start: date.addingTimeInterval(-20 * 60), end: date.addingTimeInterval(30 * 60)
         )
         return NextLessonEntry(date: date, lesson: lesson, lang: lang)
     }
@@ -65,11 +57,14 @@ struct NextLessonEntry: TimelineEntry {
     private init(date: Date, lesson: WatchSnapshot.Lesson, lang: Lang) {
         self.date = date
         self.lang = lang
-        content = .lesson(lesson, running: false)
+        moment = .running(lesson)
+        afterwards = nil
+        relevance = nil
     }
 }
 
-/// One entry per lesson edge, so the face moves on through the day without the app running.
+/// One entry per bell and run-up, so the face moves on through the day without the app running.
+/// Bars and countdowns tick by themselves between them.
 struct NextLessonProvider: TimelineProvider {
     private var store: WatchStore { .shared(createsKey: false) }
 
@@ -83,17 +78,48 @@ struct NextLessonProvider: TimelineProvider {
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<NextLessonEntry>) -> Void) {
         let snapshot = store.snapshot()
-        let now = Date.now
-        let dates = snapshot?.timelineDates(from: now) ?? [now]
-        let entries = dates.map { NextLessonEntry(date: $0, snapshot: snapshot) }
+        let dates = snapshot?.timelineDates(from: .now) ?? [.now]
+        let entries = dates.indices.map { index in
+            NextLessonEntry(date: dates[index], snapshot: snapshot, until: dates.indices.contains(index + 1) ? dates[index + 1] : nil)
+        }
         // The last entry is midnight; the next day needs a look at what has arrived by then.
         completion(Timeline(entries: entries, policy: snapshot == nil ? .never : .atEnd))
+    }
+}
+
+extension WatchSnapshot.Lesson {
+    fileprivate var tone: Tone {
+        switch status {
+        case .cancelled: .cancelled
+        case .exam: .exam
+        case .substitution, .roomChange: .substitution
+        case .additional: .event
+        case .regular: .subject(subject)
+        }
     }
 }
 
 struct NextLessonView: View {
     let entry: NextLessonEntry
     @Environment(\.widgetFamily) private var family
+
+    var body: some View {
+        NextLessonFace(entry: entry, family: family)
+            // The Smart Stack shows this behind the widget; watch faces leave it out.
+            .containerBackground(for: .widget) {
+                if let lesson = entry.moment.lesson {
+                    LinearGradient(colors: [lesson.tone.bar.opacity(0.5), lesson.tone.fill.opacity(0.5)], startPoint: .top, endPoint: .bottom)
+                } else {
+                    Color.clear
+                }
+            }
+    }
+}
+
+struct NextLessonFace: View {
+    let entry: NextLessonEntry
+    let family: WidgetFamily
+    @Environment(\.widgetRenderingMode) private var mode
 
     private var s: Strings { .of(entry.lang) }
     private var texts: WatchTexts { .of(entry.lang) }
@@ -107,48 +133,97 @@ struct NextLessonView: View {
         }
     }
 
-    /// Fits the smallest faces: the room if it has one, else nothing.
+    // A color only where the face shows color; the accented faces tint by themselves.
+    private func tint(_ lesson: WatchSnapshot.Lesson) -> Color? {
+        mode == .fullColor ? lesson.tone.bar : nil
+    }
+
+    private func short(_ lesson: WatchSnapshot.Lesson) -> String {
+        lesson.subject.isEmpty ? s.home.lesson : lesson.subject
+    }
+
+    private func title(_ lesson: WatchSnapshot.Lesson) -> String {
+        lesson.title.isEmpty ? s.home.lesson : lesson.title
+    }
+
+    /// Fits the smallest faces: the room if it has one, else the teacher.
     private func place(_ lesson: WatchSnapshot.Lesson) -> String {
         lesson.room.isEmpty ? lesson.teacher : lesson.room
     }
 
+    /// The second line: what's different, or simply where.
     private func detail(_ lesson: WatchSnapshot.Lesson) -> String {
-        [lesson.room.isEmpty ? "" : s.home.room(lesson.room), lesson.teacher]
-            .filter { !$0.isEmpty }
-            .joined(separator: " · ")
+        switch lesson.status {
+        case .cancelled: s.home.cancelled
+        case .exam: [s.home.exam, lesson.room].filter { !$0.isEmpty }.joined(separator: " · ")
+        case .substitution:
+            [lesson.originalTeacher.map { "\(lesson.teacher) \(texts.instead($0))" } ?? lesson.teacher, lesson.room]
+                .filter { !$0.isEmpty }.joined(separator: " · ")
+        case .roomChange:
+            lesson.originalRoom.map { "\(s.home.room(lesson.room)) \(texts.instead($0))" } ?? s.home.room(lesson.room)
+        case .additional, .regular:
+            lesson.room.isEmpty ? lesson.teacher : s.home.room(lesson.room)
+        }
     }
 
-    private func clock(_ lesson: WatchSnapshot.Lesson, running: Bool) -> String {
-        WatchFormat.clock(running ? lesson.end : lesson.start)
+    private func clock(_ lesson: WatchSnapshot.Lesson) -> String {
+        WatchFormat.clock(lesson.start)
     }
+
+    private var isRunning: Bool {
+        if case .running = entry.moment { return true }
+        return false
+    }
+
+    /// The countdown and the bar run over this; it never passes an entry's own moment.
+    private var span: ClosedRange<Date>? {
+        entry.moment.span(at: entry.date)
+    }
+
+    // MARK: Rectangular
 
     @ViewBuilder private var rectangular: some View {
-        switch entry.content {
-        case .lesson(let lesson, let running):
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: Spacing.xs) {
-                    Text(running ? s.home.now : s.home.upNext)
-                        .foregroundStyle(.secondary)
-                    Spacer(minLength: 0)
-                    // A running lesson's start is past; when it ends is what you look for.
-                    Text(clock(lesson, running: running))
-                        .monospacedDigit()
+        if let lesson = entry.moment.lesson {
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(alignment: .firstTextBaseline, spacing: Spacing.xs) {
+                    Text(title(lesson))
+                        .font(.system(size: 16, weight: .semibold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
                         .widgetAccentable()
+                    Spacer(minLength: 0)
+                    if let span {
+                        Text(timerInterval: span, countsDown: true, showsHours: false)
+                            .font(.system(size: 14, weight: .semibold, design: .rounded))
+                            .monospacedDigit()
+                            .multilineTextAlignment(.trailing)
+                            .frame(width: 46, alignment: .trailing)
+                    } else {
+                        Text(clock(lesson))
+                            .font(.system(size: 14, weight: .semibold, design: .rounded))
+                            .monospacedDigit()
+                    }
                 }
-                .font(.system(size: 13, weight: .medium))
-                Text(lesson.title)
-                    .font(.system(size: 16, weight: .semibold))
-                    .lineLimit(1)
-                    .widgetAccentable()
-                Text(detail(lesson))
+                secondLine(lesson)
                     .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
                     .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                if let span {
+                    ProgressView(timerInterval: span, countsDown: true) {
+                        EmptyView()
+                    } currentValueLabel: {
+                        EmptyView()
+                    }
+                    .progressViewStyle(.linear)
+                    .labelsHidden()
+                    .tint(tint(lesson))
+                    .widgetAccentable()
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-        default:
+        } else {
             VStack(alignment: .leading, spacing: 0) {
-                Text("POKYH")
+                Text(verbatim: "POKYH")
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(.secondary)
                     .widgetAccentable()
@@ -161,50 +236,75 @@ struct NextLessonView: View {
         }
     }
 
-    /// The rectangular family has room to say why there's nothing.
+    /// Near the bell it answers "where next?"; before that "where am I supposed to be?".
+    @ViewBuilder private func secondLine(_ lesson: WatchSnapshot.Lesson) -> some View {
+        if let next = entry.afterwards {
+            let what = next.isCancelled ? s.home.cancelled : place(next)
+            Text("\(clock(next)) \(title(next)) · \(what)")
+                .fontWeight(next.status == .regular ? .regular : .semibold)
+                .strikethrough(next.isCancelled)
+        } else if lesson.status != .regular {
+            Text(detail(lesson))
+                .fontWeight(.semibold)
+                .foregroundStyle(mode == .fullColor ? lesson.tone.ink : .primary)
+        } else if isRunning || span == nil {
+            Text(detail(lesson))
+                .foregroundStyle(.secondary)
+        } else {
+            // The top line counts down, so when it starts goes here.
+            Text(clock(lesson) + (place(lesson).isEmpty ? "" : " · \(place(lesson))"))
+                .foregroundStyle(.secondary)
+        }
+    }
+
     private var idleTitle: String {
-        switch entry.content {
-        case .free: s.home.noLessonsToday
-        case .dayOver: s.home.dayOver
+        switch entry.moment {
+        case .free: Calendar.current.isDateInWeekend(entry.date) ? texts.weekend : s.home.noLessonsToday
+        case .over: s.home.dayOver
         default: s.watch.waitingForPhone
         }
     }
 
+    // MARK: Circular
+
     @ViewBuilder private var circular: some View {
-        switch entry.content {
-        case .lesson(let lesson, true):
-            ProgressView(timerInterval: lesson.start...lesson.end, countsDown: false) {
-                EmptyView()
-            } currentValueLabel: {
-                VStack(spacing: -1) {
-                    Text(lesson.subject)
-                        .font(.system(size: 13, weight: .semibold))
-                        .minimumScaleFactor(0.6)
-                    Text(place(lesson))
-                        .font(.system(size: 10))
-                        .minimumScaleFactor(0.6)
-                }
-                .lineLimit(1)
-            }
-            .progressViewStyle(.circular)
-            .widgetAccentable()
-        case .lesson(let lesson, false):
+        if let lesson = entry.moment.lesson {
             ZStack {
-                AccessoryWidgetBackground()
+                if let span {
+                    // Counting down the lesson, or the break before the next one.
+                    ProgressView(timerInterval: span, countsDown: true) {
+                        EmptyView()
+                    } currentValueLabel: {
+                        EmptyView()
+                    }
+                    .progressViewStyle(.circular)
+                    .labelsHidden()
+                    .tint(tint(lesson))
+                    .widgetAccentable()
+                } else {
+                    AccessoryWidgetBackground()
+                }
                 VStack(spacing: -1) {
-                    Text(lesson.subject)
-                        .font(.system(size: 14, weight: .semibold))
-                        .minimumScaleFactor(0.6)
-                        .widgetAccentable()
-                    Text(WatchFormat.clock(lesson.start))
-                        .font(.system(size: 11, weight: .medium))
-                        .monospacedDigit()
-                        .minimumScaleFactor(0.6)
+                    Text(short(lesson))
+                        .font(.system(size: 13, weight: .semibold))
+                        .minimumScaleFactor(0.5)
+                    if let span {
+                        Text(timerInterval: span, countsDown: true, showsHours: false)
+                            .font(.system(size: 11, weight: .medium, design: .rounded))
+                            .monospacedDigit()
+                            .multilineTextAlignment(.center)
+                            .minimumScaleFactor(0.6)
+                    } else {
+                        Text(clock(lesson))
+                            .font(.system(size: 11, weight: .medium, design: .rounded))
+                            .monospacedDigit()
+                            .minimumScaleFactor(0.6)
+                    }
                 }
                 .lineLimit(1)
-                .padding(Spacing.xxs)
+                .padding(.horizontal, Spacing.sm)
             }
-        default:
+        } else {
             ZStack {
                 AccessoryWidgetBackground()
                 Image(systemName: idleSymbol)
@@ -215,22 +315,33 @@ struct NextLessonView: View {
     }
 
     private var idleSymbol: String {
-        switch entry.content {
-        case .free, .dayOver: "checkmark"
+        switch entry.moment {
+        case .free, .over: "checkmark"
         default: "graduationcap.fill"
         }
     }
 
+    // MARK: Corner
+
     @ViewBuilder private var corner: some View {
-        switch entry.content {
-        case .lesson(let lesson, let running):
-            Text(place(lesson).isEmpty ? lesson.subject : place(lesson))
+        if let lesson = entry.moment.lesson {
+            Text(place(lesson).isEmpty ? short(lesson) : place(lesson))
                 .font(.system(size: 18, weight: .semibold))
+                .minimumScaleFactor(0.5)
                 .widgetAccentable()
                 .widgetLabel {
-                    Text("\(clock(lesson, running: running)) \(lesson.subject)")
+                    if isRunning, let span {
+                        ProgressView(timerInterval: span, countsDown: true) {
+                            EmptyView()
+                        } currentValueLabel: {
+                            EmptyView()
+                        }
+                        .tint(tint(lesson))
+                    } else {
+                        Text("\(clock(lesson)) \(short(lesson))")
+                    }
                 }
-        default:
+        } else {
             Image(systemName: idleSymbol)
                 .font(.system(size: 20, weight: .semibold))
                 .widgetAccentable()
@@ -238,20 +349,25 @@ struct NextLessonView: View {
         }
     }
 
+    // MARK: Inline
+
     @ViewBuilder private var inline: some View {
-        switch entry.content {
-        case .lesson(let lesson, _):
-            let room = place(lesson)
-            Text("\(WatchFormat.clock(lesson.start)) \(lesson.subject)\(room.isEmpty ? "" : " · \(room)")")
-        default:
+        if let lesson = entry.moment.lesson {
+            let room = place(lesson).isEmpty ? "" : " · \(place(lesson))"
+            if isRunning, let span {
+                Text("\(short(lesson))\(room) · \(Text(timerInterval: span, countsDown: true, showsHours: false))")
+            } else {
+                Text("\(clock(lesson)) \(short(lesson))\(room)")
+            }
+        } else {
             Text(idleText)
         }
     }
 
     /// The small families say it in one word.
     private var idleText: String {
-        switch entry.content {
-        case .free, .dayOver: texts.free
+        switch entry.moment {
+        case .free, .over: texts.free
         default: "POKYH"
         }
     }

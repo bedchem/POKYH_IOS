@@ -106,7 +106,7 @@ public struct UntisDay: Sendable {
 
     /// The app key way in: the one-time code of the moment, as the phone does it.
     func signIn(user: String, key: String, school: School, at date: Date = .now) async throws -> SignedIn {
-        let auth: [String: Any] = ["clientTime": Int(date.timeIntervalSince1970 * 1000), "user": user, "otp": AppKey.totp(key, at: date)]
+        let auth: [String: Any] = ["clientTime": Int64(date.timeIntervalSince1970 * 1000), "user": user, "otp": AppKey.totp(key, at: date)]
         let body: [String: Any] = ["id": "pokyh-watch", "method": "getUserData2017", "jsonrpc": "2.0", "params": [["auth": auth]]]
         let url = Self.base(school) + UntisRoutes.jsonRpcIntern + "?m=getUserData2017&school=" + Self.query(school) + "&v=i2.2"
         let (json, response) = try await post(url, body: body)
@@ -214,7 +214,7 @@ extension UntisDay {
                 )
                 let id = entry.ids?.first.map(String.init) ?? "\(start.timeIntervalSince1970)"
                 lessons.append(WatchSnapshot.Lesson(
-                    id: "\(id)-\(Int(start.timeIntervalSince1970))",
+                    id: "\(id)-\(Int64(start.timeIntervalSince1970))",
                     subject: activeSubject?.shortName ?? removedSubject?.shortName ?? "",
                     subjectLong: activeSubject?.longName ?? removedSubject?.longName ?? "",
                     teacher: activeTeachers.joined(separator: ", "),
