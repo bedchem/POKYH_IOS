@@ -57,19 +57,21 @@ struct GradesView: View {
         // Four tiles in a row once they fit, as squares; otherwise two by two.
         let across = width >= 900 ? 4 : 2
         let compact = across == 4 || WidthClass(width: width) == .compact
-        return ScrollView {
-            VStack(alignment: .leading, spacing: Spacing.section) {
-                EyebrowLabel(eyebrow(dash))
-                    .fadeIn()
-                StatCardGrid(dashboard: dash, compact: compact,
-                             tileSide: (width - 2 * Spacing.screenH - CGFloat(across - 1) * Spacing.md) / CGFloat(across),
-                             across: across)
-                subjectsSection
-                    .fadeIn(delay: 0.16)
+        return ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: Spacing.section) {
+                    EyebrowLabel(eyebrow(dash))
+                        .fadeIn()
+                    StatCardGrid(dashboard: dash, compact: compact,
+                                 tileSide: (width - 2 * Spacing.screenH - CGFloat(across - 1) * Spacing.md) / CGFloat(across),
+                                 across: across)
+                    subjectsSection(proxy)
+                        .fadeIn(delay: 0.16)
+                }
+                .padding(.horizontal, Spacing.screenH)
+                .padding(.top, Spacing.xs)
+                .padding(.bottom, Spacing.xxxl)
             }
-            .padding(.horizontal, Spacing.screenH)
-            .padding(.top, Spacing.xs)
-            .padding(.bottom, Spacing.xxxl)
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
     }
@@ -104,7 +106,10 @@ struct GradesView: View {
 
     private func ungraded(_ avg: Double) -> Int { avg <= 0 ? 1 : 0 }
 
-    private var subjectsSection: some View {
+    /// No bounce: a drawer that overshoots shows the clipped edge.
+    private static let drawer = Animation.spring(duration: 0.38, bounce: 0)
+
+    private func subjectsSection(_ proxy: ScrollViewProxy) -> some View {
         let rows = sortedSubjects
         let allExpanded = !rows.isEmpty && expanded.count == rows.count
         return VStack(alignment: .leading, spacing: Spacing.headerContent) {
@@ -112,7 +117,7 @@ struct GradesView: View {
                 HStack(spacing: Spacing.xs) {
                     sortMenu
                     TextLinkButton(allExpanded ? s.grades.collapseAll : s.grades.expandAll) {
-                        withAnimation(.snappy(duration: 0.32)) {
+                        withAnimation(Self.drawer) {
                             expanded = allExpanded ? [] : Set(rows.map(\.subject.lessonId))
                         }
                     }
@@ -138,14 +143,19 @@ struct GradesView: View {
                             isExpanded: expanded.contains(row.subject.lessonId),
                             subjects: subjects
                         ) {
-                            withAnimation(.snappy(duration: 0.32)) {
-                                if expanded.contains(row.subject.lessonId) {
-                                    expanded.remove(row.subject.lessonId)
+                            let id = row.subject.lessonId
+                            withAnimation(Self.drawer) {
+                                if expanded.contains(id) {
+                                    expanded.remove(id)
                                 } else {
-                                    expanded.insert(row.subject.lessonId)
+                                    expanded.insert(id)
+                                    // The last subjects open below the tab bar: as far as needed
+                                    // to see their grades, not further.
+                                    proxy.scrollTo(id)
                                 }
                             }
                         }
+                        .id(row.subject.lessonId)
                     }
                 }
                 .clipShape(.pokyh(Radius.xl))
@@ -255,14 +265,16 @@ struct SubjectRow: View {
             }
             .buttonStyle(.rowPress)
 
-            // The row grows and the grades fade in where they'll stay; sliding them in made them
-            // pass over the rows below. Closing fades them out faster than the row shrinks.
+            // A drawer: the grades are uncovered from the top as the row grows and covered again
+            // as it shrinks, in one movement. Fading them in on top of the growing row showed an
+            // empty card first; sliding them made them pass over the rows below.
             if isExpanded {
-                panel(tone)
-                    .transition(.asymmetric(insertion: .opacity.animation(.easeOut(duration: 0.22).delay(0.06)),
-                                            removal: .opacity.animation(.easeIn(duration: 0.1))))
+                panel(tone).transition(.reveal)
             }
         }
+        // The row moves as one piece while a drawer above it opens. Left to SwiftUI, every
+        // part animated its own frame, and the subject's name ran ahead of its chip.
+        .geometryGroup()
         .clipped()
     }
 
@@ -309,6 +321,28 @@ struct SubjectRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         // The subject's own pastel, so the open panel belongs to the chip above it.
         .background(tone.fill.opacity(scheme == .dark ? 0.55 : 0.85))
+    }
+}
+
+/// Uncovers a view from its top edge down, and covers it again the same way when it goes.
+private struct RevealFromTop: ViewModifier, Animatable {
+    var progress: Double
+
+    var animatableData: Double {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    func body(content: Content) -> some View {
+        content.mask(alignment: .top) {
+            Rectangle().scaleEffect(x: 1, y: progress, anchor: .top)
+        }
+    }
+}
+
+extension AnyTransition {
+    static var reveal: AnyTransition {
+        .modifier(active: RevealFromTop(progress: 0), identity: RevealFromTop(progress: 1))
     }
 }
 
@@ -702,6 +736,9 @@ private struct Sparkline: View {
                         }
                 }
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(s.grades.trendTitle)
+            .accessibilityValue(points.map { "\($0.label) Ø \(GradesLook.num($0.avg, s))" }.joined(separator: ", "))
         }
     }
 }

@@ -20,6 +20,7 @@ struct POKYHApp: App {
         #endif
         // Plain files from older builds go before anything reads or writes the sealed ones.
         SecureStorage.prepare()
+        GradeDraftLeftovers.remove()
 
         // Disk copies of the public dish photos; the decoded ones live in RemotePhotos, so memory
         // here only holds the raw bytes for a moment. Pictures of people use the sealed ImageCache.

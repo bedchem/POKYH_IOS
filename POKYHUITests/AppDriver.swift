@@ -46,9 +46,9 @@ class AppTestCase: XCTestCase {
 
     /// `account`: signed in by itself at launch, the sign-in screens are tested on their own.
     func launch(mode: String = "good", account: String? = "anna", reset: Bool = true, theme: String? = nil,
-                env: [String: String] = [:], arguments: [String] = []) {
+                env: [String: String] = [:], arguments: [String] = [], language: String = "de") {
         setMode("")
-        app.launchArguments = ["-POKYHStubServer", "-AppleLanguages", "(de)", "-AppleLocale", "de_IT"] + arguments
+        app.launchArguments = ["-POKYHStubServer", "-AppleLanguages", "(\(language))", "-AppleLocale", "\(language)_IT"] + arguments
         if reset { app.launchArguments.append("-POKYHStubReset") }
         if let theme { app.launchArguments += ["-pokyh_theme", theme] }
         var environment = env

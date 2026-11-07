@@ -144,6 +144,9 @@ public struct ListCard<Item: Identifiable, Row: View>: View {
                         if index > 0 { RowSeparator() }
                         row(item)
                     }
+                    // Moves as one piece when a row above comes or goes; otherwise each text and
+                    // shape animates its own frame and the parts of a row drift apart.
+                    .geometryGroup()
                     .transition(.opacity.combined(with: .scale(scale: 0.97)))
                 }
             }

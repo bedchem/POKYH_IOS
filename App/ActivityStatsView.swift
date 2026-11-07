@@ -15,6 +15,8 @@ final class ActivityModel {
     }
 
     private(set) var load = Load.loading
+    /// Laid out once per answer, not on every redraw of the profile.
+    private(set) var grid: ActivityGridLayout?
     let token: String?
     /// One per signed-in account, kept between visits: the profile opens with the last answer at
     /// once and refreshes underneath.
@@ -44,7 +46,9 @@ final class ActivityModel {
         if activity == nil { load = .loading }
         do {
             let fresh = try await BackendClient.shared.accountActivity(token: token)
-            guard !Task.isCancelled else { return }
+            // The same answer again would only redraw the page while the sheet is still sliding in.
+            guard !Task.isCancelled, fresh != activity else { return }
+            grid = ActivityGridLayout(days: fresh.days)
             load = .loaded(fresh)
         } catch {
             guard !Task.isCancelled, activity == nil else { return }
@@ -100,8 +104,8 @@ struct ActivitySection: View {
                 FigureRow(first: .init(s.profile.currentStreak, activity.map { s.common.days($0.totals.currentStreak) }),
                           second: .init(s.profile.longestStreak, activity.map { s.common.days($0.totals.longestStreak) }))
                 PokyhCard {
-                    if let activity {
-                        ActivityGridView(layout: ActivityGridLayout(days: activity.days))
+                    if let grid = model.grid {
+                        ActivityGridView(layout: grid)
                         GridLegend().padding(.top, Spacing.lg)
                     } else {
                         SkeletonBlock(height: 170, radius: Radius.sm)
@@ -332,61 +336,89 @@ private struct ActivityGridView: View {
         return names.indices.contains(month - 1) ? names[month - 1] : ""
     }
 
+    /// One drawing for the whole window: a year as hundreds of buttons, each with its own popover,
+    /// was what made the profile slow to slide in.
     private var weeks: some View {
-        HStack(alignment: .top, spacing: gap) {
-            ForEach(Array(layout.weeks.enumerated()), id: \.offset) { column, week in
-                VStack(spacing: gap) {
-                    ForEach(Array(week.enumerated()), id: \.offset) { row, entry in
-                        if let entry {
-                            DayCell(cell: entry, size: cell, radius: radius, picked: binding(column * 7 + row))
-                        } else {
-                            Color.clear.frame(width: cell, height: cell)
-                        }
+        let columns = CGFloat(layout.weeks.count)
+        let size = CGSize(width: pitch * columns - gap + inset * 2, height: pitch * 7 - gap + inset * 2)
+        return Canvas { context, _ in
+            let ring = Palette.textPrimary.opacity(0.35)
+            for (column, week) in layout.weeks.enumerated() {
+                for (row, entry) in week.enumerated() {
+                    guard let entry else { continue }
+                    let rect = frame(column: column, row: row)
+                    context.fill(Path(roundedRect: rect, cornerRadius: radius, style: .continuous),
+                                 with: .color(ActivityShade.color(entry.level)))
+                    if entry.isLast {
+                        let around = Path(roundedRect: rect.insetBy(dx: -2.25, dy: -2.25), cornerRadius: radius + 2.25, style: .continuous)
+                        context.stroke(around, with: .color(ring), lineWidth: 1.5)
                     }
                 }
             }
         }
-    }
-
-    private func binding(_ slot: Int) -> Binding<Bool> {
-        Binding(get: { picked == slot }, set: { picked = $0 ? slot : nil })
-    }
-}
-
-private struct DayCell: View {
-    let cell: ActivityGridLayout.Cell
-    let size: CGFloat
-    let radius: CGFloat
-    @Binding var picked: Bool
-    @Environment(\.strings) private var s
-
-    private var text: String { ActivityGridLayout.describe(cell, s) }
-
-    var body: some View {
-        Button { picked.toggle() } label: {
-            RoundedRectangle(cornerRadius: radius, style: .continuous)
-                .fill(ActivityShade.color(cell.level))
-                .frame(width: size, height: size)
-                .overlay {
-                    if cell.isLast {
-                        RoundedRectangle(cornerRadius: radius + 3, style: .continuous)
-                            .strokeBorder(Palette.textPrimary.opacity(0.35), lineWidth: 1.5)
-                            .padding(-3)
+        .frame(width: size.width, height: size.height)
+        // The ring of the last day reaches past the squares; the stack keeps its own margin.
+        .padding(-inset)
+        .contentShape(.rect)
+        .onTapGesture { point in
+            let slot = self.slot(at: point)
+            picked = slot == picked ? nil : slot
+        }
+        .overlay(alignment: .topLeading) {
+            if let picked, let entry = entry(picked) {
+                let rect = frame(column: picked / 7, row: picked % 7)
+                Color.clear
+                    .frame(width: rect.width, height: rect.height)
+                    .padding(.leading, rect.minX - inset)
+                    .padding(.top, rect.minY - inset)
+                    .popover(isPresented: Binding(get: { self.picked != nil }, set: { if !$0 { self.picked = nil } }),
+                             attachmentAnchor: .rect(.bounds), arrowEdge: .bottom) {
+                        Text(ActivityGridLayout.describe(entry, s))
+                            .textStyle(ActivityType.gridLabel)
+                            .foregroundStyle(Palette.textPrimary)
+                            .padding(.horizontal, Spacing.md)
+                            .padding(.vertical, Spacing.sm)
+                            .presentationCompactAdaptation(.popover)
                     }
-                }
-                .contentShape(.rect)
+            }
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel(text)
-        .popover(isPresented: $picked, attachmentAnchor: .rect(.bounds), arrowEdge: .bottom) {
-            Text(text)
-                .textStyle(ActivityType.gridLabel)
-                .foregroundStyle(Palette.textPrimary)
-                .padding(.horizontal, Spacing.md)
-                .padding(.vertical, Spacing.sm)
-                .presentationCompactAdaptation(.popover)
+        .accessibilityElement()
+        .accessibilityLabel(s.profile.activity)
+        .accessibilityValue(entry(picked ?? lastSlot).map { ActivityGridLayout.describe($0, s) } ?? "")
+        .accessibilityAdjustableAction { direction in
+            let slots = filledSlots
+            guard let current = picked ?? lastSlot, let here = slots.firstIndex(of: current) else { return }
+            let next = direction == .increment ? here + 1 : here - 1
+            if slots.indices.contains(next) { picked = slots[next] }
         }
     }
+
+    /// Where a square sits in the drawing, the margin for the ring included.
+    private func frame(column: Int, row: Int) -> CGRect {
+        CGRect(x: inset + CGFloat(column) * pitch, y: inset + CGFloat(row) * pitch, width: cell, height: cell)
+    }
+
+    private func slot(at point: CGPoint) -> Int? {
+        let column = Int(((point.x - inset) / pitch).rounded(.down))
+        let row = Int(((point.y - inset) / pitch).rounded(.down))
+        guard (0..<7).contains(row), layout.weeks.indices.contains(column) else { return nil }
+        let slot = column * 7 + row
+        return entry(slot) == nil ? nil : slot
+    }
+
+    private func entry(_ slot: Int?) -> ActivityGridLayout.Cell? {
+        guard let slot, slot >= 0, layout.weeks.indices.contains(slot / 7) else { return nil }
+        let week = layout.weeks[slot / 7]
+        return week.indices.contains(slot % 7) ? week[slot % 7] : nil
+    }
+
+    private var filledSlots: [Int] {
+        layout.weeks.enumerated().flatMap { column, week in
+            week.indices.compactMap { row in week[row] == nil ? nil : column * 7 + row }
+        }
+    }
+
+    private var lastSlot: Int? { filledSlots.last }
 }
 
 // ── The statistics ───────────────────────────────────────────────────────────

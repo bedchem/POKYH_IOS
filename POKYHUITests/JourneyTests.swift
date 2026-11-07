@@ -49,7 +49,10 @@ final class JourneyTests: AppTestCase {
         confirmCode()
         pause(1.5)
         assertAlive("after a wrong code")
-        typeInto(app.textFields.firstMatch, String(repeating: XCUIKeyboardKey.delete.rawValue, count: 8) + "123456")
+        // The code field again, not the first field on screen: that's the user name behind the
+        // card, and tapping it moved the card away from under the next tap.
+        typeInto(code, String(repeating: XCUIKeyboardKey.delete.rawValue, count: 8) + "123456")
+        pause(0.5)
         confirmCode()
         waitForTabs()
     }

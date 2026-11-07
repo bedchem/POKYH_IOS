@@ -255,11 +255,16 @@ final class BellStore: ObservableObject {
         let settled = BellFeed.settleSeen(seen, feed: built, loaded: input.loaded, now: now)
         if settled != seen { save(settled, republish: false) }
         let keys = BellFeed.freshKeys(built, seen: seen)
-        feed = built
-        fresh = keys
-        newCount = synced ? keys.count : 0
-        loading = input.loaded.isEmpty && session.map { $0.hasUntis || $0.apiToken != nil } ?? false
-        self.now = now
+        // Every assignment redraws whoever watches the store, the open panel included, so only
+        // what really moved is set.
+        if feed != built { feed = built }
+        if fresh != keys { fresh = keys }
+        let count = synced ? keys.count : 0
+        if newCount != count { newCount = count }
+        let waiting = input.loaded.isEmpty && session.map { $0.hasUntis || $0.apiToken != nil } ?? false
+        if loading != waiting { loading = waiting }
+        // The minute is all the rows show of the clock.
+        if now / 60_000 != self.now / 60_000 { self.now = now }
     }
 
     private func save(_ next: BellFeed.SeenState, republish: Bool = true) {
@@ -342,7 +347,6 @@ struct BellToolbarButton: View {
     var body: some View {
         Button {
             open = true
-            store.refresh(app)
         } label: {
             Image(systemName: "bell")
                 .symbolEffect(.wiggle, options: .nonRepeating, value: ring)
@@ -350,7 +354,7 @@ struct BellToolbarButton: View {
         .badge(store.newCount)
         .accessibilityLabel(store.newCount > 0 ? s.bell.labelNew(store.newCount) : s.bell.title)
         .popover(isPresented: $open) {
-            BellPanel(store: store) { target in
+            BellPanel(store: store, onOpened: { store.refresh(app) }) { target in
                 picked = target
                 open = false
             }
@@ -388,11 +392,20 @@ struct BellToolbarButton: View {
 /// everything as seen; what was new keeps its dot while it stays open.
 private struct BellPanel: View {
     @ObservedObject var store: BellStore
+    let onOpened: () -> Void
     let onPick: (BellFeed.Target) -> Void
 
     @Environment(\.strings) private var s
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var shown: Set<String> = []
+    /// What was new when it opened keeps its dot until it closes.
+    @State private var shown: Set<String>
+
+    init(store: BellStore, onOpened: @escaping () -> Void, onPick: @escaping (BellFeed.Target) -> Void) {
+        self.store = store
+        self.onOpened = onOpened
+        self.onPick = onPick
+        _shown = State(initialValue: store.fresh)
+    }
 
     private func isFresh(_ item: BellFeed.Item) -> Bool {
         shown.contains(item.key) || store.fresh.contains(item.key)
@@ -453,9 +466,13 @@ private struct BellPanel: View {
             // The gap between what's due and what happened is smaller than a row.
             .environment(\.defaultMinListRowHeight, 0)
         }
-        .onAppear {
-            shown = store.fresh
+        // Reading and marking wait until the sheet is up: done on the tap, every answer redrew
+        // the panel while it was still sliding in.
+        .task {
+            try? await Task.sleep(for: .milliseconds(450))
+            guard !Task.isCancelled else { return }
             store.seeAll()
+            onOpened()
         }
     }
 

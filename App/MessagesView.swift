@@ -21,7 +21,7 @@ struct MessagesView: View {
     @State private var shownFolders: Set<MessageFolder> = []
     @State private var markingAll = false
     @State private var selected: Int?
-    @State private var width: CGFloat = 0
+    @State private var widthClass = WidthClass.compact
     @State private var compose: ComposeMode?
     @State private var composeOpened = false
     @State private var selecting = false
@@ -39,7 +39,7 @@ struct MessagesView: View {
     }
     /// The full skeleton only when the folder was never loaded.
     private var firstLoad: Bool { cache[folder] == nil && loadingFolders.contains(folder) }
-    private var split: Bool { WidthClass(width: width) == .expanded }
+    private var split: Bool { widthClass == .expanded }
     private var unread: [MessagePreview] { folder == .inbox ? all.filter { !$0.isRead } : [] }
 
     var body: some View {
@@ -54,7 +54,8 @@ struct MessagesView: View {
                 listColumn.modifier(ReadableContent())
             }
         }
-        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+        // Only the class: the raw width moves on every frame of a sheet sliding in.
+        .onGeometryChange(for: WidthClass.self) { WidthClass(width: $0.size.width) } action: { widthClass = $0 }
         .background(Palette.bg.ignoresSafeArea())
         .navigationTitle(selecting ? s.messages.selectedCount(picked.count) : s.nav.messages)
         .navigationBarTitleDisplayMode(selecting ? .inline : .large)
@@ -149,49 +150,55 @@ struct MessagesView: View {
 
     // ── List ────────────────────────────────────────────────────────────────
 
+    /// The folders scroll away with the list, like any other part of the page; pinned above it
+    /// they stuck out under the collapsing title and the search.
     private var listColumn: some View {
-        VStack(spacing: 0) {
-            PokyhSegmentedControl(MessageFolder.allCases, selection: $folder) { $0.label }
-                .padding(.horizontal, Spacing.screenH)
-                .padding(.top, Spacing.xs)
-                .padding(.bottom, Spacing.md)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                PokyhSegmentedControl(MessageFolder.allCases, selection: $folder) { $0.label(s.messages) }
+                    .padding(.top, Spacing.xs)
+                    .padding(.bottom, Spacing.lg)
 
-            ZStack(alignment: .top) {
                 if firstLoad {
-                    LoadingView()
+                    // The skeleton brings its own margins.
+                    LoadingView().padding(.horizontal, -Spacing.screenH).padding(.top, -Spacing.md)
                 } else if let error, all.isEmpty {
                     ErrorStateView(message: error) { Task { await load(folder) } }
+                        .frame(minHeight: 360)
                 } else if messages.isEmpty && !query.isEmpty {
                     EmptyStateView(systemImage: "magnifyingglass", title: s.messages.noMatches)
+                        .frame(minHeight: 360)
                 } else if messages.isEmpty {
                     EmptyStateView(systemImage: "tray", title: s.messages.emptyTitle, subtitle: s.messages.emptyFolder)
+                        .frame(minHeight: 360)
                 } else {
                     list
-                }
-                if loadingFolders.contains(folder) && !firstLoad {
-                    ProgressView().controlSize(.small).tint(Brand.accent).padding(Spacing.sm)
-                }
-            }
-            .frame(maxHeight: .infinity)
-        }
-    }
-
-    private var list: some View {
-        let grouped = Dictionary(grouping: messages) { MessageFormat.group($0.sentDate) }
-        let keys = grouped.keys.sorted()
-        return ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach(keys, id: \.self) { key in
-                    EyebrowLabel(groupTitle(key))
-                        .padding(.top, key == keys.first ? 0 : Spacing.lg)
-                        .padding(.bottom, Spacing.sm)
-                    ListCard(grouped[key] ?? []) { msg in row(msg) }
                 }
             }
             .padding(.horizontal, Spacing.screenH)
             .padding(.bottom, Spacing.xxxl)
         }
         .refreshable { await load(folder) }
+    }
+
+    private var list: some View {
+        let grouped = Dictionary(grouping: messages) { MessageFormat.group($0.sentDate) }
+        let keys = grouped.keys.sorted()
+        return LazyVStack(alignment: .leading, spacing: 0) {
+            ForEach(keys, id: \.self) { key in
+                EyebrowLabel(groupTitle(key))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, key == keys.first ? 0 : Spacing.lg)
+                    .padding(.bottom, Spacing.sm)
+                ListCard(grouped[key] ?? []) { msg in row(msg) }
+            }
+        }
+        // A folder already on screen refreshes quietly, on the line of its first heading.
+        .overlay(alignment: .topTrailing) {
+            if loadingFolders.contains(folder) {
+                ProgressView().controlSize(.small).tint(Brand.accent).offset(y: -3)
+            }
+        }
         // The first answer for a folder just appears; animating it slid rows over each other.
         .animation(shownFolders.contains(folder) ? .easeInOut(duration: Motion.fast) : nil, value: messages.map(\.id))
     }
@@ -301,9 +308,14 @@ struct MessagesView: View {
         loadingFolders.insert(f)
         error = nil
         defer { loadingFolders.remove(f) }
+        // Opened again, the last copy shows at once instead of the skeleton.
+        if cache[f] == nil, let stored = await UntisClient.shared.storedMessages(folder: f, session) {
+            cache[f] = stored
+            DispatchQueue.main.async { shownFolders.insert(f) }
+        }
         do {
             let list = try await UntisClient.shared.messages(folder: f, session)
-            cache[f] = list
+            if cache[f] != list { cache[f] = list }
             if f == .inbox { app.noteInbox(list) }
             // From the next change on, rows move in and out with an animation.
             DispatchQueue.main.async { shownFolders.insert(f) }
@@ -504,10 +516,8 @@ struct MessageDetailBody: View {
     @State private var revoked = false
 
     @State private var attachmentsLoading = false
-    @State private var downloading: String?
-    @State private var downloaded: [String: URL] = [:]
-    @State private var downloadError: String?
-    @State private var previewURL: URL?
+    @State private var viewing: ViewedFile?
+    @State private var loads = AttachmentLoads()
     @State private var success = 0
 
     var body: some View {
@@ -545,10 +555,10 @@ struct MessageDetailBody: View {
         .padding(.bottom, Spacing.xxxl)
         .task { await load() }
         .onDisappear {
-            // Not while QuickLook still shows one of them.
-            guard previewURL == nil else { return }
-            AttachmentFiles.discard(Array(downloaded.values))
-            downloaded = [:]
+            // Not while the viewer still shows one of them.
+            guard viewing == nil else { return }
+            loads.discard()
+            loads = AttachmentLoads()
         }
         .alert(s.messages.externalLink, isPresented: Binding(get: { leaving != nil }, set: { if !$0 { leaving = nil } }), presenting: leaving) { url in
             Button(s.messages.openLink) { openURL(url) }
@@ -572,7 +582,9 @@ struct MessageDetailBody: View {
         .sheet(isPresented: $showReadStatus) {
             ReadStatusSheet(messageId: preview.id)
         }
-        .quickLookPreview($previewURL)
+        .sheet(item: $viewing) { file in
+            FileViewerSheet(name: file.attachment.name) { await self.file(for: file.attachment) }
+        }
         .sensoryFeedback(.success, trigger: success)
     }
 
@@ -688,10 +700,6 @@ struct MessageDetailBody: View {
                 } else {
                     ListCard(d.attachments) { att in attachmentRow(att) }
                 }
-                if let downloadError {
-                    Text(downloadError).textStyle(.footnote).foregroundStyle(Brand.danger)
-                        .padding(.top, Spacing.sm)
-                }
             }
         } else if preview.hasAttachments {
             // Said to have files, but none came back.
@@ -710,69 +718,52 @@ struct MessageDetailBody: View {
         }
     }
 
+    /// Opens in the app, like Mail: no saving first. Sharing is in the viewer.
     private func attachmentRow(_ att: MessageAttachment) -> some View {
-        let key = Self.key(att)
-        let file = downloaded[key]
-        return HStack(spacing: Spacing.iconText) {
-            Button { Task { await open(att) } } label: {
-                HStack(spacing: Spacing.iconText) {
-                    FileGlyph(name: att.name)
-                    VStack(alignment: .leading, spacing: Spacing.xxs) {
-                        Text(att.name).textStyle(.body).foregroundStyle(Palette.textPrimary).lineLimit(2)
-                        if att.size > 0 {
-                            Text(FileSize.label(att.size)).textStyle(.footnote).foregroundStyle(Palette.textSecondary)
-                        }
-                    }
-                    Spacer(minLength: 0)
-                    if downloading == key {
-                        ProgressView().controlSize(.small).tint(Brand.accent)
-                    } else if file == nil {
-                        Image(systemName: "arrow.down")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(Palette.accentText)
-                            .frame(width: 32, height: 32)
-                            .accentSurface(radius: Radius.md)
-                            .accessibilityLabel(s.messages.download)
+        Button { viewing = ViewedFile(attachment: att) } label: {
+            HStack(spacing: Spacing.iconText) {
+                FileGlyph(name: att.name)
+                VStack(alignment: .leading, spacing: Spacing.xxs) {
+                    Text(att.name).textStyle(.body).foregroundStyle(Palette.textPrimary).lineLimit(2)
+                    if att.size > 0 {
+                        Text(FileSize.label(att.size)).textStyle(.footnote).foregroundStyle(Palette.textSecondary)
                     }
                 }
-                .contentShape(.rect)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Palette.textTertiary)
             }
-            .buttonStyle(.plain)
-            .disabled(downloading != nil && downloading != key)
-            if let file {
-                ShareLink(item: file) {
-                    Image(systemName: "square.and.arrow.up")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(Palette.accentText)
-                        .frame(width: 32, height: 32)
-                        .accentSurface(radius: Radius.md)
-                }
-                .accessibilityLabel(s.messages.openExternally)
-            }
+            .padding(.horizontal, Spacing.card)
+            .padding(.vertical, Spacing.md)
+            .contentShape(.rect)
         }
-        .padding(.horizontal, Spacing.card)
-        .padding(.vertical, Spacing.md)
+        .buttonStyle(.rowPress)
     }
 
-    private static func key(_ a: MessageAttachment) -> String { "\(a.id):\(a.storageId):\(a.name)" }
+    private struct ViewedFile: Identifiable {
+        let attachment: MessageAttachment
+        var id: String { MessageDetailBody.key(attachment) }
+    }
 
-    private func open(_ att: MessageAttachment) async {
-        let key = Self.key(att)
-        if let url = downloaded[key] {
-            previewURL = url
-            return
+    fileprivate static func key(_ a: MessageAttachment) -> String { "\(a.id):\(a.storageId):\(a.name)" }
+
+    private func file(for att: MessageAttachment) async -> URL? {
+        guard let session = app.session else { return nil }
+        let id = preview.id
+        return await loads.file(Self.key(att)) {
+            guard let file = await UntisClient.shared.downloadAttachment(messageId: id, attachment: att, session) else { return nil }
+            return AttachmentFiles.write(file)
         }
-        guard let session = app.session, downloading == nil else { return }
-        downloading = key
-        downloadError = nil
-        defer { downloading = nil }
-        guard let file = await UntisClient.shared.downloadAttachment(messageId: preview.id, attachment: att, session),
-              let url = AttachmentFiles.write(file) else {
-            downloadError = s.messages.attachmentFailed
-            return
+    }
+
+    /// Small files are fetched while the message is read, so a tap shows them at once.
+    /// Not in Low Data Mode, and nothing big.
+    private func prefetch(_ attachments: [MessageAttachment]) {
+        guard !NetworkMonitor.shared.lowData else { return }
+        for att in attachments.prefix(4) where att.size > 0 && att.size <= 3_000_000 {
+            Task { _ = await file(for: att) }
         }
-        downloaded[key] = url
-        previewURL = url
     }
 
     private func reloadAttachments() async {
@@ -781,6 +772,7 @@ struct MessageDetailBody: View {
         let found = await UntisClient.shared.messageAttachments(id: preview.id, session)
         detail?.attachments = found
         attachmentsLoading = false
+        prefetch(found)
     }
 
     // ── Actions ─────────────────────────────────────────────────────────────
@@ -863,6 +855,7 @@ struct MessageDetailBody: View {
                 d.attachments = await UntisClient.shared.messageAttachments(id: preview.id, session)
             }
             detail = d
+            prefetch(d.attachments)
             // Read offline stays unread: the server never heard of it.
             if folder == .inbox && !preview.isRead && !session.sessionId.isEmpty {
                 await UntisClient.shared.markRead(id: preview.id, session)

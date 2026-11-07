@@ -256,16 +256,20 @@ final class AccountSettingsTests: AppTestCase {
         XCTAssertTrue(see("Aktuelle Serie"))
         attachScreen("activity on the profile")
 
-        // The last square is today, the one the grid opens at.
-        let day = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Anmeldung")).allElementsBoundByIndex.last
-        if let day {
-            tapBlindly(day)
+        // The grid is one drawing: VoiceOver hears the day that's picked, today until one is.
+        let grid = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@ AND elementType != %d",
+                                                                         "Aktivität", XCUIElement.ElementType.staticText.rawValue)).firstMatch
+        if grid.waitForExistence(timeout: 4) {
+            XCTAssertTrue((grid.value as? String ?? "").contains("·"), "the grid doesn't say which day")
+            grid.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
             pause(0.6)
+            let picked = grid.value as? String ?? ""
+            XCTAssertTrue(app.staticTexts[picked].exists, "no figures for the tapped day")
             attachScreen("a day's figures")
             app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.12)).tap()
             pause(0.4)
         } else {
-            XCTFail("No day to tap")
+            XCTFail("No activity grid")
         }
 
         openRow("Mehr Statistiken")

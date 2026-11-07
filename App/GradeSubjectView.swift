@@ -4,7 +4,8 @@ import PokyhCore
 import PokyhDesign
 
 // A subject zoomed in: average, ratio and target calculator up top, then the trend, the grade
-// list and the average calculator. Excluded and added grades are a local draft per subject.
+// list and the average calculator. Excluded and added grades are a draft that lasts only while
+// the subject is open; going back starts clean.
 
 struct GradeSubjectView: View {
     let lessonId: Int
@@ -60,8 +61,6 @@ struct GradeSubjectView: View {
         .navigationSubtitle(subtitle)
         .navigationBarTitleDisplayMode(.large)
         .appBackground()
-        .onAppear { draft = GradeDraftStore.get(lessonId) }
-        .onChange(of: draft) { _, new in GradeDraftStore.set(lessonId, new) }
     }
 
     private var content: some View {
@@ -559,6 +558,11 @@ struct TrendChart: View {
             // Every new grade shows at once: a morph per grade restarted with each tap, so a quick
             // run of grades only drew the curve at the end. Tapping a dot still animates.
             .transaction(value: points) { $0.animation = nil }
+            // Charts would read its own axis names; this says what the curve says.
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(s.grades.trend)
+            .accessibilityValue(points.map { "\($0.label) \(GradesLook.num($0.value, s))" }.joined(separator: ", ")
+                                + (run.last.map { " · \(s.grades.average) \(GradesLook.num($0, s))" } ?? ""))
 
             // The first, middle and last grade's dates.
             let dated = points.enumerated().compactMap { i, p in p.date.map { (i, $0) } }

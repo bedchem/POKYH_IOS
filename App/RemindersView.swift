@@ -31,24 +31,11 @@ struct RemindersView: View {
     }
 
     var body: some View {
-        Group {
-            if !hasBackend {
-                BackendUnavailableView(feature: s.tasks.remindersFeature)
-            } else if loading && reminders.isEmpty {
-                LoadingView()
-            } else if let error, reminders.isEmpty {
-                ErrorStateView(message: error) { Task { await load() } }
-            } else if myClass == nil {
-                emptyState(s.tasks.noClass, s.tasks.noClassText, symbol: "person.3")
-            } else if visibleReminders.isEmpty && pending.isEmpty && query.isEmpty {
-                emptyState(s.tasks.remindersEmpty, symbol: "bell")
-            } else if visibleReminders.isEmpty && pending.isEmpty {
-                ContentUnavailableView.search(text: query)
-            } else {
-                list
-            }
-        }
-        .listSearch($query, prompt: s.tasks.searchReminders)
+        // The list stays and the other states lie on top, so the bar keeps its scroll view (see
+        // TodosView).
+        list
+            .overlay { state }
+            .listSearch($query, prompt: s.tasks.searchReminders)
         .toolbar {
             if myClass != nil {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -61,7 +48,8 @@ struct RemindersView: View {
             if let c = myClass { ClassMembersSheet(klass: c) }
         }
         .navigationTitle(s.tasks.reminders)
-        .navigationSubtitle(upcomingCount > 0 ? s.tasks.upcoming(upcomingCount) : "")
+        // Kept while loading, like the to-dos'.
+        .navigationSubtitle(upcomingCount > 0 ? s.tasks.upcoming(upcomingCount) : (loading ? " " : ""))
         .appBackground()
         .overlay(alignment: .bottomTrailing) {
             if myClass != nil {
@@ -102,6 +90,22 @@ struct RemindersView: View {
         .refreshable {
             await app.reconnect()
             await load()
+        }
+    }
+
+    @ViewBuilder private var state: some View {
+        if !hasBackend {
+            BackendUnavailableView(feature: s.tasks.remindersFeature)
+        } else if loading && reminders.isEmpty {
+            LoadingView().frame(maxHeight: .infinity, alignment: .top)
+        } else if let error, reminders.isEmpty {
+            ErrorStateView(message: error) { Task { await load() } }
+        } else if myClass == nil {
+            emptyState(s.tasks.noClass, s.tasks.noClassText, symbol: "person.3")
+        } else if visibleReminders.isEmpty && pending.isEmpty && query.isEmpty {
+            emptyState(s.tasks.remindersEmpty, symbol: "bell")
+        } else if visibleReminders.isEmpty && pending.isEmpty {
+            ContentUnavailableView.search(text: query)
         }
     }
 

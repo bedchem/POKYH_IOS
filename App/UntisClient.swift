@@ -1001,6 +1001,12 @@ final class UntisClient {
         }
     }
 
+    /// The folder as last read, to show while it's asked again.
+    func storedMessages(folder: MessageFolder, _ s: UserSession) async -> [MessagePreview]? {
+        guard s.hasUntis else { return nil }
+        return await DiskCache.loaded([MessagePreview].self, key: diskKey("messages", s, folder.rawValue), owner: s.username)
+    }
+
     private func fetchMessages(folder: MessageFolder, _ s: UserSession) async throws -> [MessagePreview] {
         let path: String
         switch folder {

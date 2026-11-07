@@ -20,6 +20,7 @@
 		20A228C9558517D6747F9534 /* TwoFactorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F232ECE8FC0A7460D40A2BB0 /* TwoFactorView.swift */; };
 		25725C8AA9AB15CE2BE2DAF9 /* RecapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E8D7FC1D0476BB283A428C4 /* RecapView.swift */; };
 		258CBAA8373B26121122C63B /* Security.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47E46E0EBFC11695851E623E /* Security.swift */; };
+		27D2389B6D4B61B1CEB9B93E /* FileViewer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18AFF0E3EF945CB32199948F /* FileViewer.swift */; };
 		29CDC4F876664803042F3DE9 /* Cache.swift in Sources */ = {isa = PBXBuildFile; fileRef = B75B7C4739D3CB4C069C2F57 /* Cache.swift */; };
 		2A94E022D5B1A29F0EDA35D9 /* PrivacyNotice.swift in Sources */ = {isa = PBXBuildFile; fileRef = AACB0CBF7C256350071B89D6 /* PrivacyNotice.swift */; };
 		2C9F54AFA84C5A9997164AC5 /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D66E7931474A73F3994014F /* LoginView.swift */; };
@@ -80,6 +81,7 @@
 		B994199EEEE23B33366D1958 /* PokyhCore in Frameworks */ = {isa = PBXBuildFile; productRef = 836E82BBFADB5CDC5C0F8047 /* PokyhCore */; };
 		BCB8D006687F2AE3711F7CDA /* POKYHWidgetBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 442EBF6595C5618B8EF573F4 /* POKYHWidgetBundle.swift */; };
 		C291D53FB5E6BFFC7BB04B88 /* Background.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BEF6AB952F1BDB634C2CB4D /* Background.swift */; };
+		C2A1CA3E8DD9AE0739F66FAA /* LanguageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C050CBDA14AC8FC4135CC62 /* LanguageTests.swift */; };
 		C3942C6FB342737B2A152D80 /* DateHelpers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 333291FD93CD3E4D4C508225 /* DateHelpers.swift */; };
 		C696BDDE379A8F476ED18FFB /* MensaView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C1B6D6920742BC3CA3DCCAD /* MensaView.swift */; };
 		C6C1916B94F96781A209E2F9 /* JourneyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D75EF47AFF198931951F72A9 /* JourneyTests.swift */; };
@@ -186,6 +188,7 @@
 		1692F46262DB6CFCE72C4611 /* ScreenDumpTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenDumpTests.swift; sourceTree = "<group>"; };
 		169F3799FC8B9DEF62295D61 /* SearchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchTests.swift; sourceTree = "<group>"; };
 		1777648FEB04305143836A6C /* TodosView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodosView.swift; sourceTree = "<group>"; };
+		18AFF0E3EF945CB32199948F /* FileViewer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileViewer.swift; sourceTree = "<group>"; };
 		1A226AAF915F7AE7286325E3 /* POKYH-NoPush.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "POKYH-NoPush.entitlements"; sourceTree = "<group>"; };
 		1D673189980C353C0F98F905 /* LockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LockView.swift; sourceTree = "<group>"; };
 		1DEBBB75442FE0E3759FD9F6 /* GradeMath.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GradeMath.swift; sourceTree = "<group>"; };
@@ -198,6 +201,7 @@
 		29D484021DCE9932C454BFE5 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
 		2AC3FEA6CA42E9537A8F3DC3 /* UsageReporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageReporter.swift; sourceTree = "<group>"; };
 		2BEF6AB952F1BDB634C2CB4D /* Background.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Background.swift; sourceTree = "<group>"; };
+		2C050CBDA14AC8FC4135CC62 /* LanguageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LanguageTests.swift; sourceTree = "<group>"; };
 		2C1B6D6920742BC3CA3DCCAD /* MensaView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MensaView.swift; sourceTree = "<group>"; };
 		32797CDE11EDE3BC8C9EA7DF /* POKYHWidgets.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = POKYHWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		333291FD93CD3E4D4C508225 /* DateHelpers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DateHelpers.swift; sourceTree = "<group>"; };
@@ -333,6 +337,7 @@
 				124B092C031D919A685C6309 /* AppDriver.swift */,
 				98B052B2302543EF670D2EC4 /* BadDataTests.swift */,
 				D75EF47AFF198931951F72A9 /* JourneyTests.swift */,
+				2C050CBDA14AC8FC4135CC62 /* LanguageTests.swift */,
 				F4C71350835BEEB122E81A3F /* OfflineTests.swift */,
 				398055BED080E28407F7C17C /* ProfilePictureTests.swift */,
 				1692F46262DB6CFCE72C4611 /* ScreenDumpTests.swift */,
@@ -493,6 +498,7 @@
 				333291FD93CD3E4D4C508225 /* DateHelpers.swift */,
 				7C0ECD00689984F158DAE37A /* DevicesView.swift */,
 				4104B5589EF5AE43F4AA0AC2 /* DiskCache.swift */,
+				18AFF0E3EF945CB32199948F /* FileViewer.swift */,
 				1DEBBB75442FE0E3759FD9F6 /* GradeMath.swift */,
 				943C5EF47E582F856AE51F47 /* GradeSubjectView.swift */,
 				87CAD3F19B7A1553B4371E56 /* GradesView.swift */,
@@ -776,6 +782,7 @@
 				75C0F65A956AB7E702720BAB /* AppDriver.swift in Sources */,
 				5BA10BBAAF908171E725CBB3 /* BadDataTests.swift in Sources */,
 				C6C1916B94F96781A209E2F9 /* JourneyTests.swift in Sources */,
+				C2A1CA3E8DD9AE0739F66FAA /* LanguageTests.swift in Sources */,
 				D6DA4088A7662800AE4EE704 /* OfflineTests.swift in Sources */,
 				9F8C23D66DFDE371988FD4F7 /* ProfilePictureTests.swift in Sources */,
 				6927B76A7329E5C71D963FD9 /* ScreenDumpTests.swift in Sources */,
@@ -837,6 +844,7 @@
 				C3942C6FB342737B2A152D80 /* DateHelpers.swift in Sources */,
 				F628E4B5DAC0BB7E01206D7B /* DevicesView.swift in Sources */,
 				0D364601D444CB93AA678E4E /* DiskCache.swift in Sources */,
+				27D2389B6D4B61B1CEB9B93E /* FileViewer.swift in Sources */,
 				EC355BB31091C13900D60EE1 /* GradeMath.swift in Sources */,
 				DBE6BF85059EBA18D4E62A59 /* GradeSubjectView.swift in Sources */,
 				53090F114DDAA279A7CE0225 /* GradesView.swift in Sources */,

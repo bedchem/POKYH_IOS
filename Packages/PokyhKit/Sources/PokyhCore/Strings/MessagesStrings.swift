@@ -2,6 +2,9 @@
 
 public struct MessagesStrings: Sendable {
     public let markAllRead: String
+    public let inbox: String
+    public let sent: String
+    public let drafts: String
     public let compose: String
     public let emptyTitle: String
     public let emptyFolder: String
@@ -91,6 +94,9 @@ public struct MessagesStrings: Sendable {
 extension MessagesStrings {
     static let de = MessagesStrings(
         markAllRead: "Alle als gelesen",
+        inbox: "Posteingang",
+        sent: "Gesendet",
+        drafts: "Entwürfe",
         compose: "Mitteilung verfassen",
         emptyTitle: "Keine Nachrichten",
         emptyFolder: "Dieser Ordner ist leer.",
@@ -180,6 +186,9 @@ extension MessagesStrings {
 extension MessagesStrings {
     static let it = MessagesStrings(
         markAllRead: "Segna tutti come letti",
+        inbox: "In arrivo",
+        sent: "Inviati",
+        drafts: "Bozze",
         compose: "Scrivi un messaggio",
         emptyTitle: "Nessun messaggio",
         emptyFolder: "Questa cartella è vuota.",
@@ -269,6 +278,9 @@ extension MessagesStrings {
 extension MessagesStrings {
     static let en = MessagesStrings(
         markAllRead: "Mark all as read",
+        inbox: "Inbox",
+        sent: "Sent",
+        drafts: "Drafts",
         compose: "Write a message",
         emptyTitle: "No messages",
         emptyFolder: "This folder is empty.",

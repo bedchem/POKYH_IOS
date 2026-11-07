@@ -495,16 +495,14 @@ struct AvatarView: View {
 
 // ── Search in a list ────────────────────────────────────────────────────────
 
-/// A field under the title. On iPad the default puts a search button right of the profile picture.
+/// Always under the title, on every device. Left to the system, the iPhone put it in the bottom
+/// bar, where it shrank to a button while scrolling and jumped back with the keyboard.
 struct ListSearch: ViewModifier {
     @Binding var text: String
     let prompt: String
-    @Environment(\.horizontalSizeClass) private var sizeClass
 
     func body(content: Content) -> some View {
-        content.searchable(text: $text,
-                           placement: sizeClass == .regular ? .navigationBarDrawer(displayMode: .always) : .automatic,
-                           prompt: prompt)
+        content.searchable(text: $text, placement: .navigationBarDrawer(displayMode: .always), prompt: prompt)
     }
 }
 

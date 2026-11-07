@@ -32,30 +32,16 @@ struct TodosView: View {
     private var done: [ApiTodo] { arranged.filter { $0.done } }
 
     var body: some View {
-        Group {
-            if !hasBackend {
-                BackendUnavailableView(feature: s.tasks.todos)
-            } else if loading && todos.isEmpty {
-                LoadingView()
-            } else if let error, todos.isEmpty {
-                ErrorStateView(message: error) { Task { await load() } }
-            } else if todos.isEmpty && pending.isEmpty {
-                StateView(s.tasks.todosEmpty) {
-                    IconTile("checklist", color: Brand.accent, size: 64)
-                } actions: {
-                    Button { showAdd = true } label: { ButtonLabel(s.tasks.addTask, symbol: "plus") }
-                        .buttonStyle(.secondary(compact: true))
-                }
-                .frame(maxHeight: .infinity)
-            } else if open.isEmpty && done.isEmpty && pending.isEmpty {
-                ContentUnavailableView.search(text: query)
-            } else {
-                list
-            }
-        }
-        .listSearch($query, prompt: s.tasks.searchTodos)
+        // The list stays, even empty, and every other state lies on top of it: swapping it for a
+        // spinner or "no results" took the scroll view away from the bar, and the title and the
+        // search field jumped with each swap.
+        list
+            .overlay { state }
+            .listSearch($query, prompt: s.tasks.searchTodos)
         .navigationTitle(s.tasks.todos)
-        .navigationSubtitle(todos.isEmpty ? "" : s.tasks.todosEyebrow(open.count, todos.count))
+        // The line is kept while loading: appearing afterwards it made the bar taller under a
+        // list already in place, and the large title opened collapsed.
+        .navigationSubtitle(todos.isEmpty ? (loading ? " " : "") : s.tasks.todosEyebrow(open.count, todos.count))
         .appBackground()
         .overlay(alignment: .bottomTrailing) {
             if hasBackend {
@@ -89,6 +75,26 @@ struct TodosView: View {
         .refreshable {
             await app.reconnect()
             await load()
+        }
+    }
+
+    @ViewBuilder private var state: some View {
+        if !hasBackend {
+            BackendUnavailableView(feature: s.tasks.todos)
+        } else if loading && todos.isEmpty {
+            LoadingView().frame(maxHeight: .infinity, alignment: .top)
+        } else if let error, todos.isEmpty {
+            ErrorStateView(message: error) { Task { await load() } }
+        } else if todos.isEmpty && pending.isEmpty {
+            StateView(s.tasks.todosEmpty) {
+                IconTile("checklist", color: Brand.accent, size: 64)
+            } actions: {
+                Button { showAdd = true } label: { ButtonLabel(s.tasks.addTask, symbol: "plus") }
+                    .buttonStyle(.secondary(compact: true))
+            }
+            .frame(maxHeight: .infinity)
+        } else if open.isEmpty && done.isEmpty && pending.isEmpty {
+            ContentUnavailableView.search(text: query)
         }
     }
 

@@ -11,6 +11,8 @@ final class NetworkMonitor {
     static let shared = NetworkMonitor()
 
     private(set) var isOnline = true
+    /// Low Data Mode is on: nothing is fetched ahead of a tap.
+    private(set) var lowData = false
     /// Set by AppState: the connection is back.
     @ObservationIgnored var onReconnect: (() -> Void)?
     @ObservationIgnored private let monitor = NWPathMonitor()
@@ -18,14 +20,16 @@ final class NetworkMonitor {
     private init() {
         monitor.pathUpdateHandler = { [weak self] path in
             let online = path.status == .satisfied
-            Task { @MainActor in self?.update(online) }
+            let constrained = path.isConstrained
+            Task { @MainActor in self?.update(online, constrained: constrained) }
         }
         monitor.start(queue: DispatchQueue(label: "pokyh.network"))
     }
 
-    private func update(_ online: Bool) {
+    private func update(_ online: Bool, constrained: Bool) {
         let cameBack = online && !isOnline
-        isOnline = online
+        if lowData != constrained { lowData = constrained }
+        if isOnline != online { isOnline = online }
         if cameBack { onReconnect?() }
     }
 }

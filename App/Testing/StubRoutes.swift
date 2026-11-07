@@ -128,7 +128,7 @@ nonisolated enum StubRoutes {
         case "/passwordReset/resetPassword.do":
             return StubAnswer(json: [String: Any]())
         case "/reports.do":
-            if query["msgId"] != nil { return StubAnswer(raw: Data("%PDF-1.4 stub".utf8), type: "application/pdf") }
+            if query["msgId"] != nil { return StubAnswer(raw: Data(Self.planPDF.utf8), type: "application/pdf") }
             return StubAnswer(json: ["data": ["finished": true, "messageId": "m1", "reportParams": "name=Excuse"] as [String: Any]])
         default:
             if path.hasPrefix("/api/rest/view/v1/messages") || path.hasPrefix("/api/rest/view/v2/messages") {
@@ -388,7 +388,7 @@ nonisolated enum StubRoutes {
         if path.hasSuffix("/attachmentstorageurl") {
             return StubAnswer(json: ["downloadUrl": "https://stub-school.invalid/WebUntis/reports.do?msgId=file", "additionalHeaders": [["key": "X-Stub", "value": "1"]]] as [String: Any])
         }
-        if path.contains("/attachments/") || path.hasSuffix("/content") { return StubAnswer(raw: Data("%PDF-1.4 stub".utf8), type: "application/pdf") }
+        if path.contains("/attachments/") || path.hasSuffix("/content") { return StubAnswer(raw: Data(Self.planPDF.utf8), type: "application/pdf") }
         if path.hasSuffix("/attachments") {
             return StubAnswer(json: ["attachments": [["id": 7, "storageId": "stor-1", "name": "Plan.pdf", "size": 2048] as [String: Any]]])
         }
@@ -524,6 +524,42 @@ nonisolated enum StubRoutes {
     /// The shape of the backend's services/accountActivity.ts. `POKYH_STUB_CONSENT=off`: the account
     /// said no to the personal statistics, so the time and pages aren't there.
     /// `POKYH_STUB_ACTIVITY_DAYS`: how many days back, a school year instead of 14 weeks.
+    /// A real one-page PDF, so the viewer has something to draw.
+    private static let planPDF = """
+%PDF-1.4
+1 0 obj
+<</Type/Catalog/Pages 2 0 R>>
+endobj
+2 0 obj
+<</Type/Pages/Kids[3 0 R]/Count 1>>
+endobj
+3 0 obj
+<</Type/Page/Parent 2 0 R/MediaBox[0 0 420 300]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>
+endobj
+4 0 obj
+<</Length 35>>
+stream
+BT /F1 28 Tf 60 150 Td (Plan) Tj ET
+endstream
+endobj
+5 0 obj
+<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000054 00000 n 
+0000000105 00000 n 
+0000000217 00000 n 
+0000000300 00000 n 
+trailer
+<</Size 6/Root 1 0 R>>
+startxref
+363
+%%EOF
+"""
+
     private static var activity: [String: Any] {
         let env = ProcessInfo.processInfo.environment
         let consent = env["POKYH_STUB_CONSENT"] != "off"

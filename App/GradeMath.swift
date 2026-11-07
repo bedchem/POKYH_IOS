@@ -60,34 +60,14 @@ enum GradeMath {
     }
 }
 
-/// Local what-if grades per subject, the web's drafts (in localStorage there,
-/// in UserDefaults here).
-struct GradeDraft: Codable, Equatable {
+/// What-if grades for one subject, the web's drafts. Kept in memory only.
+struct GradeDraft: Equatable {
     var removedTeacherGradeIds: [Int] = []
     var customGrades: [Double] = []
     var isEmpty: Bool { removedTeacherGradeIds.isEmpty && customGrades.isEmpty }
 }
 
-@MainActor
-enum GradeDraftStore {
-    private static let key = "pokyh_grade_drafts"
-
-    static func all() -> [Int: GradeDraft] {
-        guard let data = UserDefaults.standard.data(forKey: key),
-              let dict = try? JSONDecoder().decode([String: GradeDraft].self, from: data) else { return [:] }
-        var out: [Int: GradeDraft] = [:]
-        for (k, v) in dict { if let id = Int(k) { out[id] = v } }
-        return out
-    }
-
-    static func get(_ lessonId: Int) -> GradeDraft { all()[lessonId] ?? GradeDraft() }
-
-    static func set(_ lessonId: Int, _ draft: GradeDraft) {
-        var dict = all()
-        if draft.isEmpty { dict.removeValue(forKey: lessonId) } else { dict[lessonId] = draft }
-        let stringKeyed = Dictionary(uniqueKeysWithValues: dict.map { (String($0.key), $0.value) })
-        if let data = try? JSONEncoder().encode(stringKeyed) {
-            UserDefaults.standard.set(data, forKey: key)
-        }
-    }
+/// Older builds kept the drafts in the defaults. They only last while a subject is open now.
+enum GradeDraftLeftovers {
+    static func remove() { UserDefaults.standard.removeObject(forKey: "pokyh_grade_drafts") }
 }

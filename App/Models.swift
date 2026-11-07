@@ -274,11 +274,11 @@ struct ReadStatusRecipient: Equatable {
 enum MessageFolder: String, CaseIterable, Identifiable {
     case inbox, sent, drafts
     var id: String { rawValue }
-    var label: String {
+    func label(_ s: MessagesStrings) -> String {
         switch self {
-        case .inbox: return "Posteingang"
-        case .sent: return "Gesendet"
-        case .drafts: return "Entwürfe"
+        case .inbox: s.inbox
+        case .sent: s.sent
+        case .drafts: s.drafts
         }
     }
 }
