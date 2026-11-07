@@ -119,7 +119,7 @@ struct GradeSubjectView: View {
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
     }
 
-    // ── Schnitt · Notenverhältnis · Was brauche ich? ─────────────────────────
+    // ── Average · pass ratio · what it takes ─────────────────────────────────
 
     private func averageCard(_ avg: Double, _ values: [Double], _ teacherAvg: Double, _ trend: Int) -> some View {
         let tone = avg > 0 ? GradesLook.tone(avg) : Tone(fill: Palette.card, ink: Palette.textPrimary)

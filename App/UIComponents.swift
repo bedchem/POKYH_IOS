@@ -222,7 +222,14 @@ struct BackendUnavailableView: View {
     private var message: String {
         switch app.backendStatus {
         case .notStudent: return s.states.notStudent(feature)
-        case .noClass: return s.states.noClass(feature)
+        case .noClass:
+            // The backend's reason, where it gave one.
+            switch app.backendClassNote {
+            case "pending": return s.states.noClassPending(feature)
+            case "no_class_found", "candidate_rejected", "not_student": return s.states.noClassInUntis(feature)
+            case "shared_person": return s.states.noClassShared(feature)
+            default: return s.states.noClass(feature)
+            }
         case .failed(let m): return s.states.failed(feature, m)
         default: return s.states.needsAccount(feature)
         }

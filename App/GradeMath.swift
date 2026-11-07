@@ -1,8 +1,8 @@
 import Foundation
 import PokyhCore
 
-/// Noten-Mathematik — 1:1 portiert aus `lib/grades.ts` + der Fach-Detailseite.
-/// Skala 1–10 (Südtirol), positiv ab 6.
+/// Grade math, ported from the web's `lib/grades.ts` and its subject page.
+/// The scale is 1 to 10 (South Tyrol), a pass from 6.
 enum GradeMath {
     static func round2(_ v: Double) -> Double { (v * 100).rounded() / 100 }
 
@@ -10,7 +10,7 @@ enum GradeMath {
         values.isEmpty ? 0 : round2(values.reduce(0, +) / Double(values.count))
     }
 
-    /// "8,5" / "8.5" → 8.5, nur gültig im Bereich 1…10.
+    /// "8,5" or "8.5" as 8.5; only 1 to 10 counts.
     static func parseGradeInput(_ raw: String) -> Double? {
         let normalized = raw.replacingOccurrences(of: ",", with: ".").trimmingCharacters(in: .whitespaces)
         guard !normalized.isEmpty, let parsed = Double(normalized) else { return nil }
@@ -29,7 +29,7 @@ enum GradeMath {
     enum TargetStatus { case reached, reachable, impossible }
     struct TargetResult { var target: Double; var status: TargetStatus; var count: Int; var needed: Double }
 
-    /// Zielnote-Rechner: wie viele Noten welchen Werts werden gebraucht?
+    /// The target calculator: how many grades of which value it takes.
     static func target(_ targetInput: String, values: [Double]) -> TargetResult? {
         guard let target = parseGradeInput(targetInput), !values.isEmpty else { return nil }
         let sum = values.reduce(0, +)
@@ -60,8 +60,8 @@ enum GradeMath {
     }
 }
 
-/// Lokale „Was-wäre-wenn"-Noten je Fach (entspricht den Drafts im Frontend,
-/// dort in localStorage — hier in UserDefaults).
+/// Local what-if grades per subject, the web's drafts (in localStorage there,
+/// in UserDefaults here).
 struct GradeDraft: Codable, Equatable {
     var removedTeacherGradeIds: [Int] = []
     var customGrades: [Double] = []

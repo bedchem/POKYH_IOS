@@ -9,7 +9,7 @@ import BackgroundTasks
 enum BackgroundRefresh {
     static let identifier = Config.bgRefreshId
 
-    /// Beim App-Start registrieren (aus `POKYHApp.init`).
+    /// Registered at launch, from `POKYHApp.init`.
     static func register() {
         // On the main queue: without one the handler runs on a background queue, and everything it
         // touches here is the main actor's. Swift 5 mode wouldn't stop that at runtime.
@@ -19,7 +19,7 @@ enum BackgroundRefresh {
         }
     }
 
-    /// Nächsten Lauf einplanen (frühestens in ~15 Min — iOS entscheidet den Zeitpunkt).
+    /// Asks for the next run, in 15 minutes at the earliest; iOS picks the moment.
     static func schedule() {
         let request = BGAppRefreshTaskRequest(identifier: identifier)
         request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
@@ -71,7 +71,7 @@ enum BackgroundRefresh {
 }
 
 #else
-// macOS u. a.: kein BGTaskScheduler/BGAppRefreshTask → No-ops.
+// Where there's no BGTaskScheduler (macOS and the like) these do nothing.
 enum BackgroundRefresh {
     static var liveSession: (() -> UserSession?)?
     static func register() {}

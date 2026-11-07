@@ -1,25 +1,25 @@
 import Foundation
 import UIKit
 
-/// Nutzungsstatistik fürs Admin-Panel: wie lange POKYH im Vordergrund ist und auf welcher
-/// Plattform. In der Datenschutzerklärung unter „Nutzungsstatistik" beschrieben.
+/// Usage for the admin panel: how long POKYH is in the foreground and on which platform.
+/// The privacy policy describes it under "Nutzungsstatistik".
 ///
-/// - Nur angemeldet; ohne POKYH-Konto wird nichts gesendet.
-/// - Pro Besuch eine zufällige ID, nur im Speicher — keine Geräte-ID, nichts auf der Platte.
-/// - Sofort beim Öffnen bzw. bei der Anmeldung, dann alle 30 Sekunden im Vordergrund ein Ping
-///   mit den Vordergrund-Sekunden und den geöffneten Tabs seit dem letzten, und ein letzter
-///   beim Wechsel in den Hintergrund.
-/// - War die App länger als 30 Minuten im Hintergrund, beginnt ein neuer Besuch.
+/// - Signed in only; without a POKYH account nothing is sent.
+/// - A random id per visit, in memory only: no device id, nothing on disk.
+/// - A ping right when the app opens or someone signs in, then every 30 seconds in the
+///   foreground with the seconds and tabs since the last one, and a last one when the app
+///   goes to the background.
+/// - After more than 30 minutes in the background a new visit starts.
 @MainActor
 final class UsageReporter {
     static let shared = UsageReporter()
 
     private let pingInterval: TimeInterval = 30
     private let newVisitAfter: TimeInterval = 30 * 60
-    /// Wie oft im Vordergrund nach einer frischen Anmeldung geschaut wird (billig).
+    /// How often the foreground checks for a fresh sign-in (cheap).
     private let signInCheckInterval: TimeInterval = 1
 
-    /// Liefert das angemeldete Konto; ohne Konto wird nicht gemessen.
+    /// The signed-in account; without one nothing is measured.
     private weak var state: AppState?
 
     private var visitId: String?
@@ -47,8 +47,8 @@ final class UsageReporter {
         timer = Timer.scheduledTimer(withTimeInterval: pingInterval, repeats: true) { _ in
             Task { @MainActor in UsageReporter.shared.send(final: false) }
         }
-        // Eine Anmeldung (oder ein Kontowechsel) beginnt den Besuch sofort, nicht erst mit
-        // dem nächsten Ping — so erscheint sie gleich im Admin-Panel.
+        // A sign-in (or a switch of account) starts the visit at once, not with the next ping,
+        // so it shows up in the admin panel right away.
         signInTimer?.invalidate()
         signInTimer = Timer.scheduledTimer(withTimeInterval: signInCheckInterval, repeats: true) { _ in
             Task { @MainActor in UsageReporter.shared.startVisitIfSignedIn() }
@@ -86,7 +86,7 @@ final class UsageReporter {
 
     private var appVersion: String {
         let raw = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
-        // Das Backend nimmt nur [0-9A-Za-z.+_-] bis 32 Zeichen an.
+        // The backend takes [0-9A-Za-z.+_-], up to 32 characters.
         return String(raw.filter { $0.isASCII && ($0.isLetter || $0.isNumber || ".+_-".contains($0)) }.prefix(32))
     }
 
@@ -105,7 +105,7 @@ final class UsageReporter {
             return
         }
         if visitId == nil || visitUid != account.uid {
-            // Zeit unter einem anderen Konto (oder abgemeldet) gehört nicht zu diesem.
+            // Time under another account, or signed out, isn't this one's.
             if visitId != nil {
                 pendingSeconds = 0
                 pendingScreens = 0
@@ -121,8 +121,8 @@ final class UsageReporter {
         pendingScreens = 0
         let version = appVersion
 
-        // Der letzte Ping beim Wechsel in den Hintergrund bekommt etwas Laufzeit, damit
-        // iOS die App nicht anhält, bevor er raus ist.
+        // The last ping on the way to the background gets a little run time, so iOS doesn't
+        // suspend the app before it's out.
         let background = final ? BackgroundTask.begin() : nil
         Task {
             await BackendClient.shared.usagePing(
@@ -137,7 +137,7 @@ final class UsageReporter {
     }
 }
 
-/// Eine kurze Hintergrund-Laufzeit für einen letzten Request.
+/// A short stretch of background time for one last request.
 @MainActor
 private final class BackgroundTask {
     private var id: UIBackgroundTaskIdentifier = .invalid

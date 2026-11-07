@@ -80,7 +80,7 @@ struct GradesView: View {
         return s.grades.summary(stand, d.subjectCount, d.allCount)
     }
 
-    // ── Fächer ──────────────────────────────────────────────────────────────
+    // ── Subjects ────────────────────────────────────────────────────────────
 
     /// Ungraded subjects always go last; their average of 0 isn't a real "worst".
     private var sortedSubjects: [(subject: SubjectGrades, avg: Double)] {

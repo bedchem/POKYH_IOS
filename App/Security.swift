@@ -328,7 +328,7 @@ final class CredentialStore {
         set { UserDefaults.standard.set(newValue, forKey: lastActiveKey) }
     }
 
-    /// Standard-Konto: das erste gespeicherte, in den Einstellungen änderbar.
+    /// The default account: the first one saved, changeable in the settings.
     var defaultUsername: String? {
         get { UserDefaults.standard.string(forKey: defaultKey) ?? accounts.first?.username }
         set { UserDefaults.standard.set(newValue, forKey: defaultKey) }
@@ -363,10 +363,10 @@ final class CredentialStore {
 
     func hasPassword(_ username: String) -> Bool { Keychain.exists(username: username) }
 
-    /// Abmelden: nur das gespeicherte Passwort entfernen, Konto bleibt in der Liste.
+    /// Signing out removes only the saved password; the account stays in the list.
     func signOut(_ username: String) { Keychain.delete(username: username) }
 
-    /// Lokalen Spitznamen setzen/entfernen (leer → entfernen). Berührt keine Credentials.
+    /// Sets or clears a local nickname (empty clears it). Credentials stay untouched.
     func setNickname(_ nickname: String?, for username: String) {
         update(username) { account in
             let trimmed = nickname?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -374,13 +374,13 @@ final class CredentialStore {
         }
     }
 
-    /// Anzeigenamen (Klasse) eines Kontos aktualisieren — z. B. nach „Konto aktualisieren".
+    /// Updates an account's shown class, after reloading the account for one.
     func updateDisplayName(_ displayName: String, for username: String) {
         update(username) { $0.displayName = displayName }
     }
 
-    /// Profilbild-URL eines gespeicherten Kontos aktualisieren (auch beim stillen
-    /// Re-Login, damit die Konten-Liste das Bild zeigt). No-op, wenn unverändert.
+    /// Updates a saved account's picture URL, on a silent sign-in too, so the list of
+    /// accounts shows it. Nothing happens when it's unchanged.
     func updateImageUrl(_ imageUrl: String?, for username: String) {
         guard let imageUrl, !imageUrl.isEmpty,
               AccountRoster.find(username, in: accounts)?.imageUrl != imageUrl else { return }

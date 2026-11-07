@@ -3,10 +3,10 @@ import Foundation
 import WidgetKit
 #endif
 
-/// Brücke App → Widget/Live-Activity: schreibt einen kompakten Stundenplan-Auszug
-/// in den geteilten App-Group-Container und stößt ein Widget-Reload an.
+/// From the app to the widgets and the Live Activity: a small cut of the timetable in the
+/// shared app group folder, then a widget reload.
 enum WidgetBridge {
-    /// Übernimmt die ab „jetzt" relevanten Stunden (klein gehalten, Performance).
+    /// Only the lessons from now on, and few of them.
     static func publish(_ entries: [TimetableEntry], now: Date = Date()) {
         let lessons: [LessonSnapshot] = entries
             .compactMap { e -> LessonSnapshot? in
@@ -25,7 +25,7 @@ enum WidgetBridge {
         reload()
     }
 
-    /// Noten-Snapshot: gewichteter Gesamtschnitt + zuletzt eingetragene Noten.
+    /// The grades snapshot: the overall average and the latest grades.
     static func publishGrades(_ subjects: [SubjectGrades], now: Date = Date()) {
         let allValues = subjects.flatMap { $0.grades.map { $0.markDisplayValue } }.filter { $0 > 0 }
         let avg = allValues.isEmpty ? 0 : (allValues.reduce(0, +) / Double(allValues.count) * 100).rounded() / 100
@@ -42,7 +42,7 @@ enum WidgetBridge {
         reload()
     }
 
-    /// Nachrichten-Snapshot: Anzahl ungelesen + neueste Einträge.
+    /// The messages snapshot: how many are unread and the newest ones.
     static func publishMessages(_ inbox: [MessagePreview], now: Date = Date()) {
         let latest = inbox.sorted { $0.id > $1.id }.prefix(6)
             .map { MessageItem(id: $0.id, sender: $0.senderName, subject: $0.subject, isRead: $0.isRead) }

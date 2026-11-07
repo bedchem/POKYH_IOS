@@ -15,12 +15,12 @@ struct UserSession: Codable, Equatable {
     var firstName: String? = nil
     var personType: Int?
     var isParent: Bool
-    /// POKYH-Backend Tokens (für Todos / Erinnerungen / Klasse)
+    /// POKYH backend tokens (to-dos, reminders, class).
     var apiToken: String?
     var apiRefresh: String?
     var stableUid: String?
     var classId: String?
-    /// Profilbild-URL aus den WebUntis-App-Daten (`user.person.imageUrl`).
+    /// The picture's URL from WebUntis' app data (`user.person.imageUrl`).
     var imageUrl: String?
     /// The WebUntis school the account signs in at; nil for accounts from before the school search.
     var school: School? = nil
@@ -33,14 +33,13 @@ struct UserSession: Codable, Equatable {
     /// To-dos, reminders and class: live with a token, from the stored copy offline.
     var hasBackend: Bool { apiToken != nil || backendLinked == true }
 
-    /// Hat diese Sitzung ein verknüpftes WebUntis-Konto (Stundenplan/Noten)?
-    /// Reine POKYH-Backend-Konten (Login-Fallback) haben `studentId == 0`. Gilt auch
-    /// für die token-lose Offline-Sitzung (Stundenplan kommt dann aus dem Cache).
+    /// Whether a WebUntis account is behind this session (timetable, grades). POKYH-only
+    /// accounts have `studentId == 0`. True for the token-less offline session too, which
+    /// reads the timetable from disk.
     var hasUntis: Bool { studentId > 0 }
 
-    /// WebUntis-`personType` 5 = Schüler. Eltern werden ausgeschlossen.
-    /// Fällt `personType` weg, gilt ein eigener Klassenkontext (klasseId > 0,
-    /// kein Elternteil) als Schüler-Indiz.
+    /// WebUntis `personType` 5 is a student; guardians are left out. Without a `personType`,
+    /// a class of one's own (klasseId > 0, not a guardian) counts as a student.
     var isStudent: Bool {
         if isParent { return false }
         if let t = personType { return t == 5 }
@@ -58,7 +57,7 @@ struct SavedAccount: Codable, Equatable, Identifiable {
     var school: School? = nil      // nil: saved before the school search, so the default school
     var id: String { username }
 
-    /// Primär anzuzeigender Name: Spitzname falls vorhanden, sonst Benutzername.
+    /// The name to show: the nickname if there is one, else the username.
     var title: String {
         if let n = nickname?.trimmingCharacters(in: .whitespacesAndNewlines), !n.isEmpty { return n }
         return username
@@ -382,8 +381,12 @@ struct ApiUser: Codable, Equatable {
     var webuntisKlasseName: String?
     var classId: String?
     var isAdmin: Bool
-    /// Account-Rolle: "student" (Standard) oder "parent" (Elternkonto).
+    /// The account's role: "student" (the default) or "parent" (a guardian).
     var role: String?
+    /// Why the account has no class (the backend's ClassNote, e.g. "no_class_found"); nil with one.
+    var classNote: String? = nil
+    /// The class waits for its check at the next sign-in (new rules on the server).
+    var classCheckPending: Bool? = nil
 }
 
 // ── Fehler ─────────────────────────────────────────────────────────────────

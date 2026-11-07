@@ -3,15 +3,15 @@ import Foundation
 import ActivityKit
 #endif
 
-/// Steuert die Live Activity „laufende/nächste Stunde" (Sperrbildschirm + Dynamic
-/// Island). Startet, aktualisiert und beendet automatisch anhand des Stundenplans.
-/// Die UI selbst liefert die Widget-Extension (`ActivityConfiguration`).
+/// Runs the Live Activity for the running or next lesson (Lock Screen and Dynamic
+/// Island): starts, updates and ends it from the timetable. The widget extension draws it
+/// (`ActivityConfiguration`).
 enum LiveActivityManager {
     #if os(iOS)
     static func refresh(from entries: [TimetableEntry], className: String, now: Date = Date()) {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
 
-        // Heutige, nicht entfallene Stunden ab jetzt – chronologisch.
+        // Today's lessons from now on that take place, in order.
         let upcoming = entries
             .compactMap { e -> (start: Date, end: Date, entry: TimetableEntry)? in
                 guard !e.isCancelled,
@@ -43,7 +43,7 @@ enum LiveActivityManager {
                     content: content,
                     pushType: nil)
             } catch {
-                // Stillschweigend ignorieren (z. B. Activities vom Nutzer deaktiviert).
+                // Quietly ignored, e.g. when Live Activities are turned off.
             }
         }
     }

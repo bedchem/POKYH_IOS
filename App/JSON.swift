@@ -1,8 +1,8 @@
 import Foundation
 
-/// Leichtgewichtiger dynamischer JSON-Zugriff — spiegelt die defensive
-/// Navigation der TypeScript-Routen (Werte können fehlen / verschieden verschachtelt sein).
-/// `nonisolated` + `Sendable`: darf von jedem Kontext aus genutzt werden.
+/// Loose JSON access, as forgiving as the web's routes: a value may be missing or nested
+/// another way.
+/// `nonisolated` and `Sendable`, so any context can use it.
 @dynamicMemberLookup
 nonisolated struct JSON: @unchecked Sendable {
     let raw: Any?

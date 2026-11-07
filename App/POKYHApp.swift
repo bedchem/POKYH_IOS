@@ -27,7 +27,7 @@ struct POKYHApp: App {
                              diskCapacity: 128 * 1024 * 1024)
         URLCache.shared = cache
 
-        // Hintergrund-Aktualisierung registrieren (muss früh beim Start passieren).
+        // Background refresh has to be registered early in the launch.
         BackgroundRefresh.register()
         WatchSync.start()
     }
@@ -51,7 +51,7 @@ struct POKYHApp: App {
                 }
                 .modifier(PushRouteHost(app: app))
                 .onAppear {
-                    // Nutzungsstatistik (Vordergrundzeit) — liest nur das angemeldete Konto.
+                    // Usage figures (time in the foreground), for the signed-in account only.
                     UsageReporter.shared.attach(app)
                     UsageReporter.shared.appBecameActive()
                     PushRegistration.shared.attach(app)

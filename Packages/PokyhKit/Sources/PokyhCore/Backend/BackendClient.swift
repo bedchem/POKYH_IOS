@@ -36,10 +36,12 @@ public enum SchoolSearch: Sendable, Equatable {
 
 public enum UntisSignIn: Sendable, Equatable {
     case ok(AuthTokens)
-    /// No class known for the account yet, so the backend can't place it.
-    case noClass
     /// This device was signed out from somewhere else.
     case revoked(String)
+    /// The WebUntis session handed over has ended: sign in to WebUntis again, then retry once.
+    case untisSessionExpired
+    /// The backend could not reach WebUntis to check the session.
+    case untisUnavailable(String)
     case failed(String)
 }
 
@@ -90,23 +92,21 @@ public final class BackendClient: Sendable {
         try? await get("/webuntis/login-options", query: ["school": school.loginName, "server": school.server])
     }
 
-    /// After WebUntis accepted the credentials: a trusted server-to-server style sign-in with
-    /// the server key. `renewal` marks the app signing itself in again (launch, Face ID), which
-    /// doesn't count as a sign-in by the person.
+    /// After the WebUntis sign-in: the backend sign-in with the app's WebUntis session, which the
+    /// backend checks with WebUntis itself (whose it is, which class). `renewal` marks the app
+    /// signing itself in again (launch, Face ID), which doesn't count as a sign-in by the person.
     public func signInWithUntis(
         username: String,
-        klasseId: Int,
-        klasseName: String,
+        untisSessionId: String,
         role: String = "student",
         renewal: Bool = false,
         school: School,
         method: String? = nil
     ) async -> UntisSignIn {
-        guard klasseId > 0 else { return .noClass }
+        guard !untisSessionId.isEmpty else { return .untisSessionExpired }
         var body: [String: Any] = [
             "username": username,
-            "klasseId": klasseId,
-            "klasseName": klasseName,
+            "untisSessionId": untisSessionId,
             "role": role,
             "renewal": renewal,
             "school": school.loginName,
@@ -119,8 +119,12 @@ public final class BackendClient: Sendable {
             let tokens = try JSONDecoder().decode(AuthTokens.self, from: data)
             return .ok(tokens)
         } catch let error as BackendError {
-            if error.code == "session_revoked" { return .revoked(error.message) }
-            return .failed(error.message)
+            switch error.code {
+            case "session_revoked": return .revoked(error.message)
+            case "untis_session_invalid": return .untisSessionExpired
+            case "webuntis_unavailable": return .untisUnavailable(error.message)
+            default: return .failed(error.message)
+            }
         } catch {
             return .failed(errors.badAnswer)
         }

@@ -4,8 +4,8 @@ import PokyhDesign
 import UIKit
 #endif
 
-/// Design-System — exakt portiert aus `app/globals.css` der Web-App.
-/// Indigo-Akzent, eigene Hintergrund-/Karten-/Textfarben für Hell & Dunkel.
+/// The design system, ported from the web app's `app/globals.css`.
+/// Indigo accent, own background, card and text colours for light and dark.
 enum Palette {
     // Akzente (globals.css)
     static let accent = Color(hex: "#6366F1")      // indigo
@@ -37,9 +37,9 @@ enum Palette {
 
     private static func dyn(_ light: String, _ dark: String) -> Color {
         #if canImport(UIKit)
-        // Hex EINMAL vorab parsen (Performance: kein Scanner pro Trait-Auflösung →
-        // flüssiger Hell/Dunkel-Wechsel). Es werden nur Sendable-Doubles gecaptured,
-        // nie der @MainActor-`Color`-Initializer (sonst Crash auf Gerät).
+        // The hex is parsed once, not on every trait change, so light and dark switch smoothly.
+        // Only plain doubles are captured, never the main-actor `Color` initializer:
+        // that crashed on devices.
         let l = rgbaFromHex(light), d = rgbaFromHex(dark)
         return Color(uiColor: UIColor { traits in
             let c = traits.userInterfaceStyle == .dark ? d : l
@@ -76,9 +76,8 @@ enum Palette {
         return Color(hue: hue, saturation: 0.60, brightness: 0.55)
     }
 
-    /// Avatar-Farbe für ein **Benutzerprofil**: beim ersten Mal echt zufällig
-    /// gewürfelt, lokal persistiert (pro stabilem Identifier) und danach immer
-    /// gleich. Look identisch zu `sender` (gleiche Sättigung/Helligkeit).
+    /// A profile's avatar colour: picked at random the first time, kept per stable id and
+    /// the same from then on. Looks like `sender` (same saturation and brightness).
     static func color(for identifier: String) -> Color {
         Color(hue: AvatarColorStore.hue(for: identifier), saturation: 0.60, brightness: 0.55)
     }
@@ -89,17 +88,17 @@ enum Palette {
             Color(red: lerp(c1.0, c2.0, t) / 255, green: lerp(c1.1, c2.1, t) / 255, blue: lerp(c1.2, c2.2, t) / 255)
         }
         let greenLight = (134.0, 239.0, 172.0), greenDark = (21.0, 128.0, 61.0)
-        // negativ: normales Rot (#EF4444) knapp unter 6 → dunkleres Rot (#7F1D1D) bei 1
+        // below 6: red (#EF4444) just under 6, darker red (#7F1D1D) at 1
         let redNormal = (239.0, 68.0, 68.0), redDark = (127.0, 29.0, 29.0)
-        // ab 6: hellgrün (6) → dunkelgrün (10); unter 6: normalrot (knapp unter 6) → dunkelrot (1)
+        // 6 and up: light green (6) to dark green (10); below 6: red (just under 6) to dark red (1)
         if value >= 6.0 { return mix(greenLight, greenDark, (value - 6.0) / (10 - 6.0)) }
         return mix(redNormal, redDark, (6.0 - value) / (6.0 - 1))
     }
 }
 
-/// Persistiert die einmalig zufällig gewählte Farbe (Hue) je Profil-Identifier.
-/// Speicher: `UserDefaults` unter einem `pokyh_`-Schlüssel → wird von
-/// `clearAllData()` automatisch mit aufgeräumt (kein Hardcoding einzelner Keys).
+/// Keeps the randomly picked hue per profile id.
+/// Stored in `UserDefaults` under a `pokyh_` key, so `clearAllData()` takes it along
+/// without naming it.
 enum AvatarColorStore {
     private static let key = "pokyh_avatar_hues"
 
@@ -134,7 +133,7 @@ extension Color {
 
 #if canImport(UIKit)
 extension UIColor {
-    /// Threadsicher (nonisolated) — sicher im dynamischen Trait-Callback nutzbar.
+    /// Nonisolated, so the dynamic trait callback can use it from any thread.
     nonisolated convenience init(hexString: String) {
         let c = rgbaFromHex(hexString)
         self.init(red: c.r, green: c.g, blue: c.b, alpha: c.a)
@@ -314,7 +313,7 @@ struct ReadableContent: ViewModifier {
     }
 }
 
-// ── Formatierungs-Helfer (portiert aus lib/grades.ts) ──────────────────────
+// ── Formatting (ported from lib/grades.ts) ─────────────────────────────────
 
 enum Fmt {
     static func num(_ value: Double, digits: Int = 2) -> String {

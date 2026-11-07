@@ -9,8 +9,8 @@ private nonisolated final class NoRedirects: NSObject, URLSessionTaskDelegate {
     }
 }
 
-/// WebUntis-Client — repliziert die Server-Proxy-Routen des Frontends direkt nativ:
-/// JSON-RPC `authenticate`, Bearer-Token, Stundenplan/Noten/Abwesenheiten/Nachrichten.
+/// WebUntis, natively: what the web frontend's server routes do, done by the app itself.
+/// JSON-RPC `authenticate`, the bearer token, timetable, grades, absences, messages.
 final class UntisClient {
     static let shared = UntisClient()
 
@@ -246,12 +246,11 @@ final class UntisClient {
         )
         s.school = school
 
-        // 2.–4. Bearer-Token, Klassenname und Schüler-Liste PARALLEL holen.
-        // Keiner der drei braucht den Bearer-Token: das Token-Endpoint sowie
-        // getKlassen/getStudents (JSON-RPC) authentifizieren über den JSESSIONID-
-        // Cookie. Parallel statt sequenziell → ein Roundtrip statt drei (schneller).
-        // Wichtig: unveränderliche Kopie für die nebenläufigen Tasks (kein Data Race —
-        // `s` darf erst NACH dem Await mutiert werden).
+        // 2 to 4: the bearer token, the class name and the student list, side by side. None
+        // of them needs the bearer token; the token endpoint and getKlassen/getStudents
+        // (JSON-RPC) go by the JSESSIONID cookie, so it's one round trip instead of three.
+        // The tasks get a copy that doesn't change: `s` is only changed after the awaits,
+        // so nothing races.
         let snapshot = s
         async let tokenTask = fetchToken(snapshot)
         async let klassen = fetchKlassen(snapshot, klasseId: klasseId)
@@ -261,9 +260,8 @@ final class UntisClient {
         let studentList = (try? await students) ?? []
         s.klasseName = klasseName
 
-        // Effektiven Schüler/Eltern auflösen + Namen + klasseId.
-        // personType 5 = Schüler (WebUntis); so wird ein Schüler nie fälschlich als
-        // Elternteil behandelt, auch wenn `getStudents` leer ist.
+        // Student or guardian, name and klasseId. personType 5 is a student in WebUntis,
+        // so a student is never taken for a guardian, even when `getStudents` is empty.
         let isStudentType = (personType == 5)
         let isStudentSelf = studentList.contains { $0.id == studentId }
         let isParentCandidate = !isStudentType && !isStudentSelf
@@ -272,10 +270,10 @@ final class UntisClient {
             let me = studentList.first { $0.id == studentId }
             s.personName = me?.name
             s.firstName = me.map(\.fore).flatMap { $0.isEmpty ? nil : $0 }
-            // Eigene klasseId aus dem Schüler-Datensatz, falls `authenticate` 0 lieferte.
+            // The own klasseId from the student record when `authenticate` gave 0.
             if s.klasseId <= 0, let kid = me?.klasseId, kid > 0 { s.klasseId = kid }
         } else if let first = studentList.first {
-            // Eltern, die doch eine Schülerliste erhalten.
+            // Guardians that do get a student list.
             s.studentId = first.id
             if let kid = first.klasseId { s.klasseId = kid }
             s.personName = first.name
@@ -283,8 +281,8 @@ final class UntisClient {
             s.isParent = true
         }
 
-        // App-Daten HÖCHSTENS EINMAL laden (teuer: mehrere Endpunkte) — nur, wenn noch
-        // etwas fehlt: klasseId unbekannt oder echtes Elternkonto ohne Schülerliste.
+        // The app data at most once (it's several endpoints) and only when something's
+        // missing: no klasseId, or a guardian without a student list.
         let needsParentResolve = isParentCandidate && studentList.isEmpty
         if s.klasseId <= 0 || needsParentResolve, let appData = try? await fetchAppData(s) {
             if needsParentResolve {
@@ -298,11 +296,10 @@ final class UntisClient {
             s.imageUrl = extractImageUrl(appData, isParent: s.isParent)
         }
 
-        // Letzte Quelle: die Klasse steckt nur im Stundenplan (LBS Brixen:
-        // authenticate=0, getStudents gesperrt, app/data ohne Klasse). Klassen-Name aus
-        // dem Stundenplan ziehen → via getKlassen auf die numerische ID mappen. Gecacht.
-        // Gilt auch für Eltern: s.studentId ist dann das Kind, dessen Stundenplan die
-        // Klasse liefert — sonst bleiben Elternkonten ohne auflösbare klasseId.
+        // Last resort: some schools have the class only in the timetable (authenticate gives 0,
+        // getStudents is locked, app/data has no class). The class name comes from the
+        // timetable and getKlassen turns it into the id; it's cached. Guardians too: then
+        // s.studentId is the child, whose timetable has the class.
         if s.klasseId <= 0, (isStudentType || s.isParent), s.studentId > 0 {
             if let cached = Self.cachedKlasse(username: s.username) {
                 s.klasseId = cached.id
@@ -349,26 +346,25 @@ final class UntisClient {
         return ""
     }
 
-    // ── Klassen-Auflösung über den Stundenplan (Schüler) ───────────────────────
-    // Die Klasse steht je Stunde als Element mit `type == "CLASS"` (ohne numerische
-    // id). Name extrahieren → via getKlassen auf die ID mappen.
+    // ── The class from the timetable (students) ────────────────────────────────
+    // Each lesson names the class as an element with `type == "CLASS"` but no numeric
+    // id; getKlassen maps the name to one.
 
-    /// Kombiniert: Klassennamen aus dem Stundenplan holen und auf die numerische
-    /// klasseId mappen. Liefert (id, name) oder nil.
+    /// The class name from the timetable, mapped to the numeric klasseId: (id, name) or nil.
     private func resolveStudentClass(_ s: UserSession) async -> (id: Int, name: String)? {
         guard let cls = await classNameFromTimetable(s) else { return nil }
         guard let id = await klasseId(forName: cls, s), id > 0 else { return nil }
         return (id, cls.short)
     }
 
-    /// Sucht eine Woche MIT Unterricht und liefert (shortName, longName) der Klasse.
-    /// Wichtig: An Berufsschulen (Blockunterricht) sind ganze Wochen frei → daher über
-    /// das ganze Schuljahr verteilte Stichproben (zuerst die aktuelle Woche).
+    /// Finds a week with lessons and returns the class's (shortName, longName). Vocational
+    /// schools teach in blocks with whole weeks off, so it samples the whole school year,
+    /// the current week first.
     private func classNameFromTimetable(_ s: UserSession) async -> (short: String, long: String)? {
         let cal = Calendar.current
         let sy = SchoolDates.currentSchoolYear
         var days: [Date] = [Date()]
-        // Schulmonate (Sept–Dez im Startjahr, Jän–Juni im Folgejahr), jeweils Mitte.
+        // The middle of each school month: September to December, then January to June.
         for m in [9, 10, 11, 12] {
             if let d = DateFmt.iso.date(from: String(format: "%04d-%02d-15", sy, m)) { days.append(d) }
         }
@@ -385,7 +381,7 @@ final class UntisClient {
         return nil
     }
 
-    /// Klassen-Element (`type == "CLASS"`) aus den Stundenplan-Positionen ziehen.
+    /// The class element (`type == "CLASS"`) among a lesson's positions.
     static func extractClassName(_ json: JSON) -> (short: String, long: String)? {
         for day in json.days.array {
             for ge in day.gridEntries.array {
@@ -401,8 +397,8 @@ final class UntisClient {
         return nil
     }
 
-    /// `getKlassen` MIT Schuljahr-Kontext. Ohne `schoolyearId` wirft WebUntis zwischen
-    /// den Schuljahren „schoolyear is null". Daher das Schuljahr explizit mitgeben.
+    /// `getKlassen` with the school year. Without `schoolyearId` WebUntis answers
+    /// "schoolyear is null" between two years.
     func getKlassen(schoolyearId: Int?, _ s: UserSession) async throws -> JSON {
         guard let url = URL(string: "\(base(s))/jsonrpc.do?school=\(s.schoolRef.query)") else {
             throw AppError(message: Strings.current.errors.badAnswer)
@@ -420,14 +416,14 @@ final class UntisClient {
         return JSON.parse(data)
     }
 
-    /// Schuljahr-ID für ein Jahr (über getSchoolyears, robust auch wenn „current" null ist).
+    /// A year's school year id from getSchoolyears; works when "current" is null too.
     func resolvedSchoolyearId(_ s: UserSession) async -> Int? {
         let id = try? await schoolyearId(year: SchoolDates.currentSchoolYear, s)
         if let id, id > 0 { return id }
         return nil
     }
 
-    /// numerische klasseId per Namensabgleich über getKlassen (mit Schuljahr-Kontext).
+    /// The numeric klasseId by matching the name in getKlassen (with the school year).
     private func klasseId(forName cls: (short: String, long: String), _ s: UserSession) async -> Int? {
         let syId = await resolvedSchoolyearId(s)
         guard let j = try? await getKlassen(schoolyearId: syId, s) else { return nil }
@@ -459,7 +455,7 @@ final class UntisClient {
         UserDefaults.standard.set(["id": id, "name": name], forKey: klasseCacheKey(username))
     }
 
-    /// Liefert (id, klasseId?, name) der zugänglichen Schüler.
+    /// (id, klasseId?, name, first name) of the students this account can see.
     private func fetchStudents(_ s: UserSession) async throws -> [(id: Int, klasseId: Int?, name: String, fore: String)] {
         let result = try await rpc("getStudents", s, id: "pockyh-students")
         return result.array.compactMap { st in
@@ -467,28 +463,27 @@ final class UntisClient {
             let fore = st.foreName.string ?? st.firstName.string ?? ""
             let long = st.longName.string ?? st.lastName.string ?? ""
             let full = [fore, long].filter { !$0.isEmpty }.joined(separator: " ")
-            // klasseId direkt oder als eingebettetes `klasse`-Objekt.
+            // klasseId as it is, or inside a `klasse` object.
             let kid = st.klasseId.int ?? st.klasse.id.int
             return (id, kid, full.isEmpty ? (st.name.string ?? "") : full, fore)
         }
     }
 
-    // ── App-Daten (für Eltern-/Erziehungsberechtigtenkonten) ───────────────────
+    // ── App data (guardian accounts) ───────────────────────────────────────────
 
     private static let appDataPaths = [
         "/api/rest/view/v1/app/data", "/api/app/data",
         "/api/rest/view/v1/users/me/data", "/api/rest/view/v2/app/data",
     ]
 
-    /// On-Demand-Diagnose: zeigt, welche App-Daten WebUntis liefert und wo die
-    /// Klasse steckt (alle Felder, deren Schlüssel „klass" enthält). Keine Passwörter
-    /// /Tokens — nur Struktur + Klassen-bezogene Werte, damit die Auflösung exakt
-    /// angepasst werden kann.
+    /// A diagnosis on request: which app data WebUntis sends and where the class is (every
+    /// field whose key has "klass" in it). No passwords or tokens, only the structure and
+    /// the class values, so the lookup can be fixed for a school.
     func classDiagnostics(_ s: UserSession) async -> String {
         var out = "studentId=\(s.studentId)  personType=\(s.personType.map(String.init) ?? "nil")\n"
         out += "klasseId=\(s.klasseId)  klasseName=\(s.klasseName.isEmpty ? "–" : s.klasseName)\n\n"
 
-        // 1) getStudents (JSON-RPC) — liefert je Schüler oft die klasseId.
+        // 1) getStudents (JSON-RPC), which often has each student's klasseId.
         out += "── getStudents ──\n"
         if let j = try? await rpcFull("getStudents", s, id: "diag-students") {
             let arr = j.result.array
@@ -500,7 +495,7 @@ final class UntisClient {
             }
         } else { out += "keine Antwort\n" }
 
-        // 2) App-Daten: das `user`-Objekt (Klasse/Rolle steckt meist hier).
+        // 2) App data: the `user` object, which usually has the class and the role.
         out += "\n── app/data ──\n"
         for path in Self.appDataPaths {
             guard let (data, http) = try? await get("\(base(s))\(path)", s, timeout: 6) else { continue }
@@ -510,8 +505,8 @@ final class UntisClient {
             break
         }
 
-        // 3) Stundenplan — die Klasse steckt nur hier (mehrere Wochen probieren, da die
-        //    aktuelle Woche am Schuljahresende leer sein kann).
+        // 3) The timetable, sometimes the only place with the class (several weeks, since
+        //    the current one can be empty at the end of the year).
         out += "\n── timetable (erste Stunde mit Inhalt) ──\n"
         let sy = SchoolDates.currentSchoolYear
         let candidates: [Date] = [
@@ -534,7 +529,7 @@ final class UntisClient {
         }
         if !dumped { out += "keine Stunden in den geprüften Wochen gefunden" }
 
-        // 4) Klassen-Auflösung End-to-End testen: Name aus Stundenplan → getKlassen → ID.
+        // 4) The whole lookup: name from the timetable, getKlassen, id.
         out += "\n\n── Klassen-Auflösung ──\n"
         if let cls = await classNameFromTimetable(s) {
             out += "Name (Stundenplan): \(cls.short)  |  \(cls.long)\n"
@@ -563,7 +558,7 @@ final class UntisClient {
         return out
     }
 
-    /// Kompaktes, gekürztes JSON für die Diagnose-Anzeige.
+    /// Short, trimmed JSON for the diagnosis.
     private static func pretty(_ obj: Any, max: Int) -> String {
         guard JSONSerialization.isValidJSONObject(obj),
               let data = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys])
@@ -572,8 +567,8 @@ final class UntisClient {
     }
 
     private func fetchAppData(_ s: UserSession) async throws -> JSON? {
-        // Jeder Endpunkt unabhängig + zeitlich begrenzt → ein langsamer Endpunkt
-        // blockiert nicht den ganzen Login (verhinderte den mehrsekündigen Hang).
+        // Each endpoint on its own and with a time limit, so a slow one can't hold up the
+        // whole sign-in (it used to hang for seconds).
         for path in Self.appDataPaths {
             guard let (data, http) = try? await get("\(base(s))\(path)", s, timeout: 6) else { continue }
             if isHtmlOrAuthError(data, http) || http.statusCode != 200 { continue }
@@ -590,7 +585,7 @@ final class UntisClient {
         return found
     }
 
-    /// Kind-Schüler-ID aus den App-Daten (user.students[0].id) — wie im Frontend.
+    /// The child's student id from the app data (user.students[0].id), as on the web.
     private func extractChildStudentId(_ json: JSON, exclude: Int) -> Int? {
         var fromArrays: [Int] = []
         var heuristic: [Int] = []
@@ -620,9 +615,9 @@ final class UntisClient {
         return fromArrays.first ?? heuristic.first
     }
 
-    /// Klassen-ID aus den App-Daten (für Schüler, deren `authenticate`/`getStudents`
-    /// keine klasseId liefert). Priorität: Klasse des angemeldeten Schülers
-    /// (`personId`), dann `students[].klasseId`, dann beliebiges `klasse.id`/`klasseId`.
+    /// The class id from the app data, for students whose `authenticate` and `getStudents`
+    /// give none. First the signed-in student's class
+    /// (`personId`), then `students[].klasseId`, then any `klasse.id` or `klasseId`.
     private func extractKlasseId(_ json: JSON, personId: Int) -> Int? {
         var matched: [Int] = []        // Klasse genau des angemeldeten Schülers
         var fromStudents: [Int] = []   // aus students/children-Arrays
@@ -639,7 +634,7 @@ final class UntisClient {
             guard depth <= 8 else { return }
             if let arr = node as? [Any] { for v in arr { walk(v, depth: depth + 1) }; return }
             guard let o = node as? [String: Any] else { return }
-            // Datensatz des angemeldeten Schülers selbst?
+            // The signed-in student's own record?
             let oid = intVal(o["id"]) ?? intVal(o["personId"]) ?? intVal(o["studentId"])
             if let oid, oid == personId, let kid = klasseIdOf(o) { matched.append(kid) }
             for case let c as [String: Any] in (o["students"] as? [Any] ?? []) {
@@ -648,8 +643,8 @@ final class UntisClient {
             for case let c as [String: Any] in (o["children"] as? [Any] ?? []) {
                 if let kid = klasseIdOf(c) { fromStudents.append(kid) }
             }
-            // `klassen`-Array (z. B. masterData.klassen) — bei Schülern auf die eigene
-            // Klasse gefiltert; Objekte tragen die ID als `id`.
+            // A `klassen` array (masterData.klassen, say), narrowed to the own class for
+            // students; the objects carry it as `id`.
             for case let k as [String: Any] in (o["klassen"] as? [Any] ?? []) {
                 if let id = intVal(k["id"]), id > 0 { fromKlassenArr.append(id) }
             }
@@ -674,7 +669,7 @@ final class UntisClient {
         if let o = node as? [String: Any] { for v in o.values { collectStrings(v, depth: depth + 1, visit) } }
     }
 
-    // ── Caches (In-Memory, nach Schüler-ID gekeyt → kein Account-Leak) ─────────
+    // ── Caches (in memory, keyed by student, so accounts never mix) ────────────
     private let timetableCache = TTLCache<String, [TimetableEntry]>(ttl: 300)   // key: "studentId-yyyy-MM-dd"
     private let gradesCache = TTLCache<String, [SubjectGrades]>(ttl: 300)        // key: "studentId-year"
 
@@ -682,7 +677,7 @@ final class UntisClient {
 
     func clearCaches() { timetableCache.removeAll(); gradesCache.removeAll(); examsCache.removeAll() }
 
-    /// Kommende Prüfungen/Schularbeiten (ab heute, ~40 Tage), gecacht.
+    /// Upcoming exams (from today, about 40 days), cached.
     func upcomingExams(_ s: UserSession) async throws -> [TimetableEntry] {
         if let cached = examsCache.get(s.studentId) { return cached }
         let todayNum = DateFmt.num(Date())
@@ -703,10 +698,10 @@ final class UntisClient {
         return exams
     }
 
-    // ── Stundenplan ──────────────────────────────────────────────────────────
+    // ── Timetable ────────────────────────────────────────────────────────────
 
-    /// Synchroner Cache-Peek (kein Netzwerk) — erlaubt der UI, eine bereits
-    /// vorgeladene Woche sofort und ohne Spinner-Flash anzuzeigen.
+    /// A look into the cache, no network: a week loaded ahead shows at once, without a
+    /// spinner flashing.
     func cachedTimetable(date: String, _ s: UserSession) -> [TimetableEntry]? {
         let key = "\(s.schoolRef.loginName)-\(s.studentId)-\(date)"  // two schools can share a student id
         if let mem = timetableCache.get(key) { return mem }
@@ -718,9 +713,8 @@ final class UntisClient {
     func timetable(date: String, _ s: UserSession) async throws -> [TimetableEntry] {
         let key = "\(s.schoolRef.loginName)-\(s.studentId)-\(date)"  // two schools can share a student id
         if let cached = timetableCache.get(key) { return cached }
-        // Token-lose (Offline-)Sitzung: KEIN Netzwerk — eine Anfrage ohne Bearer
-        // liefert eine Auth-/HTML-Antwort und würde abmelden. Stattdessen direkt den
-        // zuvor geladenen, persistierten Stundenplan zeigen (die Fächer der Woche).
+        // An offline session has no token: a request without one gets a sign-in page back and
+        // would sign out. So it's the stored week instead.
         if s.bearerToken.isEmpty {
             return await DiskCache.loaded([TimetableEntry].self, key: "tt-\(key)", owner: s.username) ?? []
         }
@@ -737,7 +731,7 @@ final class UntisClient {
             DiskCache.save(entries, key: "tt-\(key)", owner: s.username)   // Offline-Fallback persistieren
             return entries
         } catch let netErr as URLError {
-            // Nur bei echten Netzwerkfehlern offline ausweichen (Auth-Fehler nicht).
+            // Only a real network failure falls back to the stored copy, never an auth error.
             if let offline = DiskCache.load([TimetableEntry].self, key: "tt-\(key)", owner: s.username) { return offline }
             throw netErr
         }
@@ -815,7 +809,7 @@ final class UntisClient {
     func grades(year: Int?, _ s: UserSession) async throws -> [SubjectGrades] {
         let cacheKey = "\(s.schoolRef.loginName)-\(s.studentId)-\(year ?? 0)"
         if let cached = gradesCache.get(cacheKey) { return cached }
-        // Token-lose (Offline-)Sitzung: direkt die persistierten Noten zeigen.
+        // An offline session shows the stored grades.
         if s.bearerToken.isEmpty {
             return DiskCache.load([SubjectGrades].self, key: "grades-\(cacheKey)", owner: s.username) ?? []
         }
@@ -855,7 +849,7 @@ final class UntisClient {
             DiskCache.save(result, key: "grades-\(cacheKey)", owner: s.username)   // Offline-Fallback
             return result
         } catch let netErr as URLError {
-            // Nur bei echten Netzwerkfehlern offline ausweichen (Auth-Fehler nicht).
+            // Only a real network failure falls back to the stored copy, never an auth error.
             if let offline = DiskCache.load([SubjectGrades].self, key: "grades-\(cacheKey)", owner: s.username) { return offline }
             throw netErr
         }
@@ -891,7 +885,7 @@ final class UntisClient {
         )
     }
 
-    /// Liefert Schuljahr-ID; -1 = Session abgelaufen, nil = nicht gefunden.
+    /// The school year id; -1 when the session ran out, nil when there's none.
     private func schoolyearId(year: Int?, _ s: UserSession) async throws -> Int? {
         func isAuthErr(_ j: JSON) -> Bool {
             let code = j.error.code.int
@@ -1198,7 +1192,7 @@ final class UntisClient {
         return HolidayList.read(j.result.raw, from: from)
     }
 
-    // ── Nachrichten: Zähler, Lesebestätigung, Löschen ────────────────────────
+    // ── Messages: count, read receipts, deleting ─────────────────────────────
 
     /// Unread messages in the inbox, for the badges.
     func unreadMessageCount(_ s: UserSession) async throws -> Int {
@@ -1279,7 +1273,7 @@ final class UntisClient {
         )
     }
 
-    // ── Nachrichten: Anhänge ─────────────────────────────────────────────────
+    // ── Messages: attachments ────────────────────────────────────────────────
 
     /// Asks again for a message's attachments when the detail came without them. Empty means none.
     func messageAttachments(id: Int, _ s: UserSession) async -> [MessageAttachment] {
@@ -1553,7 +1547,7 @@ final class UntisClient {
         return joined.isEmpty ? nil : joined
     }
 
-    // ── Abwesenheit melden und entschuldigen ─────────────────────────────────
+    // ── Reporting and excusing absences ──────────────────────────────────────
 
     /// Just the reasons, for when the report dialog's meta can't be read.
     func absenceReasons(_ s: UserSession) async throws -> [AbsenceReason] {

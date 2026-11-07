@@ -31,7 +31,7 @@ enum Brand {
 }
 #endif
 
-/// Note ohne überflüssige Nullen, deutsche Schreibweise (8 / 8,5) — App + Widget.
+/// A grade without trailing zeros, with a decimal comma (8, 8,5). App and widgets.
 enum GradeFormat {
     static func string(_ v: Double) -> String { MarkText.string(v) }
 }
@@ -48,7 +48,7 @@ extension View {
 }
 #endif
 
-/// Schlanke, einheitliche Kopfzeile: kleines Icon + Großbuchstaben-Label.
+/// The small header everywhere: an icon and a label in capitals.
 struct WidgetHeader: View {
     let icon: String
     let title: String
@@ -65,17 +65,17 @@ struct WidgetHeader: View {
 }
 #endif
 
-/// Geteilte Grundlage für App ⇄ Widget ⇄ Live Activity.
+/// What the app, the widgets and the Live Activity share.
 
 // ── App Group ────────────────────────────────────────────────────────────────
 
 enum AppGroup {
-    /// Muss mit der App-Group-Entitlement von App UND Widget übereinstimmen.
+    /// Has to match the app group entitlement of the app and the widgets.
     static let id = Bundle.main.object(forInfoDictionaryKey: "POKYHAppGroup") as? String ?? ""
 
-    /// Container der App-Group. Fällt auf den app-eigenen Application-Support-Ordner
-    /// zurück, falls die Entitlement (noch) nicht greift — so funktioniert der
-    /// Offline-Cache auch ohne Provisioning (z. B. im Simulator-Test).
+    /// The app group's folder. Falls back to the app's own Application Support while the
+    /// entitlement isn't in effect (yet), so the offline copies work without provisioning
+    /// too, in a simulator test for one.
     static var containerURL: URL {
         if let url = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: id) {
             return url
@@ -90,7 +90,7 @@ enum AppGroup {
 // ── WebUntis-Zeit → Date (geteilt) ────────────────────────────────────────────
 
 enum UntisTime {
-    /// `yyyymmdd` + `HHMM` (lokale Schulzeit) → `Date` in der Geräte-Zeitzone.
+    /// `yyyymmdd` and `HHMM` (the school's local time) as a `Date` in the device's time zone.
     static func date(_ yyyymmdd: Int, _ hhmm: Int) -> Date? {
         var c = DateComponents()
         c.year = yyyymmdd / 10000
@@ -102,9 +102,9 @@ enum UntisTime {
     }
 }
 
-// ── Snapshot-Modell (entkoppelt vom schweren TimetableEntry) ──────────────────
+// ── Snapshots (kept apart from the heavier TimetableEntry) ────────────────────
 
-/// Minimale, `Sendable` Stundeninfo für Widget/Live Activity.
+/// A lesson cut down to what the widgets and the Live Activity show.
 struct LessonSnapshot: Codable, Hashable, Sendable, Identifiable {
     var id: Int
     var subject: String
@@ -122,7 +122,7 @@ struct TimetableSnapshot: Codable, Sendable {
     var lessons: [LessonSnapshot]          // chronologisch sortiert
     static let empty = TimetableSnapshot(generatedAt: .distantPast, lessons: [])
 
-    /// Nächste relevante Stunde ab `date` (laufende oder kommende, nicht entfallene).
+    /// The lesson that matters from `date` on: running or next, not cancelled.
     func nextLesson(after date: Date = Date()) -> LessonSnapshot? {
         lessons.first { !$0.isCancelled && $0.end > date }
     }
@@ -215,7 +215,7 @@ nonisolated enum LocalVault {
     }
 }
 
-// ── Geteilter Store im App-Group-Container ────────────────────────────────────
+// ── The shared store in the app group ─────────────────────────────────────────
 
 /// What the widgets show, sealed with the vault key. Only the default account's data lands
 /// here; its file protection lets widgets read it while the phone is locked.
@@ -252,7 +252,7 @@ enum SharedStore {
     static func writeMessages(_ s: MessagesSnapshot) { write(s, to: "messages") }
     static func readMessages() -> MessagesSnapshot { read(MessagesSnapshot.self, from: "messages", fallback: .empty) }
 
-    /// Löscht alle geteilten Snapshots (Stundenplan/Noten/Nachrichten).
+    /// Drops every shared snapshot (timetable, grades, messages).
     static func purgeAll() {
         files.removeAll()
         dropLegacyFiles()
@@ -269,7 +269,7 @@ enum SharedStore {
 // ── Live Activity Attributes (in App + Widget genutzt) ────────────────────────
 
 #if os(iOS)
-/// Live-Activity-Definition: zeigt die laufende/nächste Stunde mit Countdown.
+/// The Live Activity: the running or next lesson with a countdown.
 nonisolated struct LessonActivityAttributes: ActivityAttributes {
     public struct ContentState: Codable, Hashable {
         var subject: String
@@ -279,7 +279,7 @@ nonisolated struct LessonActivityAttributes: ActivityAttributes {
         var end: Date
         var isBreak: Bool          // true = Pause bis zur nächsten Stunde
     }
-    /// Statisch: Klassenname (ändert sich während der Activity nicht).
+    /// Fixed for the activity's life: the class name.
     var className: String
 }
 #endif

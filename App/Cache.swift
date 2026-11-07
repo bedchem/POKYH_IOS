@@ -1,10 +1,10 @@
 import Foundation
 
-/// Generischer In-Memory-Cache mit Ablaufzeit (TTL) — eine zentrale, saubere
-/// Lösung statt verstreuter Dictionaries in jedem Client.
+/// An in-memory cache whose entries expire, shared by the clients instead of a
+/// dictionary in each.
 ///
-/// Bewusst MainActor-isoliert (Default), da alle Clients vom MainActor aus
-/// zugreifen → keine Sperren nötig, kein Data-Race.
+/// Main-actor isolated on purpose: every client uses it from there, so it needs no
+/// locks and can't race.
 final class TTLCache<Key: Hashable, Value> {
     private struct Entry { let value: Value; let time: Date }
     private var store: [Key: Entry] = [:]
@@ -12,14 +12,14 @@ final class TTLCache<Key: Hashable, Value> {
 
     init(ttl: TimeInterval) { self.ttl = ttl }
 
-    /// Gültiger Wert oder nil (wenn fehlend/abgelaufen). Abgelaufene werden entfernt.
+    /// The value while it's fresh, else nil; an expired one is dropped.
     func get(_ key: Key) -> Value? {
         guard let e = store[key] else { return nil }
         if Date().timeIntervalSince(e.time) >= ttl { store[key] = nil; return nil }
         return e.value
     }
 
-    /// Auch abgelaufene Werte (z. B. als Fallback bei Netzwerkfehler).
+    /// Expired ones too, as a fallback when the network fails.
     func stale(_ key: Key) -> Value? { store[key]?.value }
 
     func set(_ key: Key, _ value: Value) { store[key] = Entry(value: value, time: Date()) }

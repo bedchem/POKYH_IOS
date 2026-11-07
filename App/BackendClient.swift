@@ -46,29 +46,30 @@ final class BackendClient {
 
     // ── Auth ─────────────────────────────────────────────────────────────────
 
-    /// Ergebnis des Server-zu-Server-Logins (mit Diagnose für die UI).
+    /// What the server-to-server sign-in answered, with what the UI needs to explain it.
     enum UntisLoginResult {
         case ok(token: String, refresh: String)
-        case noClass               // klasseId ≤ 0 → Backend verlangt > 0
         case failed(String)        // HTTP-/Netzwerkfehler (Meldung)
         /// This device was signed out somewhere else; only on a renewal. Sign in again by hand.
         case revoked(String)
+        /// The WebUntis session handed over has ended: sign in to WebUntis again, then once more here.
+        case untisSessionExpired
+        /// The backend could not reach WebUntis to check the session: keep the POKYH session going
+        /// with the refresh token for now.
+        case untisUnavailable(String)
     }
 
-    /// Server-zu-Server-Login nach erfolgreichem WebUntis-Login (kein Passwort nötig).
-    /// Das Backend legt bei gültiger klasseId automatisch ein Konto an. Bei
-    /// `role: "parent"` wird ein Elternkonto erstellt (eigene Todos, sieht nur den
-    /// Klassennamen, keine Erinnerungen, unsichtbares Mitglied). Für Eltern ist die
-    /// klasseId die des Kindes (in UntisClient aufgelöst).
+    /// Sign-in at the backend after the WebUntis sign-in, with the app's WebUntis session
+    /// (`untisSessionId`, its JSESSIONID): the backend asks WebUntis itself whose it is and which
+    /// class the account belongs to; nothing the app works out counts. The app key proves nothing
+    /// on its own. `role: "parent"` only ever makes a new account a parent's.
     /// `renewal`: the app signing itself in again (launch, Face ID), not a sign-in by the person.
     /// `school`: where WebUntis checked the account; the build's own school is left out, as on Android.
     /// `method`: "office" for an app key sign-in.
-    func loginWithUntis(username: String, klasseId: Int, klasseName: String, role: String = "student",
+    func loginWithUntis(username: String, untisSessionId: String, role: String = "student",
                         renewal: Bool = false, school: School? = nil, method: String? = nil) async -> UntisLoginResult {
-        // Das Backend verlangt klasseId > 0 — die klasseId wird in UntisClient aus
-        // mehreren Quellen aufgelöst.
-        guard klasseId > 0 else { return .noClass }
         let t = Strings.current.errors
+        guard !untisSessionId.isEmpty else { return .untisSessionExpired }
         guard let url = URL(string: "\(base)\(Config.Routes.authLogin)") else { return .failed(t.badAnswer) }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
@@ -76,7 +77,7 @@ final class BackendClient {
         req.setValue(Config.serverKey, forHTTPHeaderField: "X-Server-Key")
         stamp(&req)
         var body: [String: Any] = [
-            "username": username, "klasseId": klasseId, "klasseName": klasseName, "role": role, "renewal": renewal,
+            "username": username, "untisSessionId": untisSessionId, "role": role, "renewal": renewal,
         ]
         if let method { body["method"] = method }
         if let school, !school.isFallback {
@@ -89,8 +90,12 @@ final class BackendClient {
               let http = resp as? HTTPURLResponse else { return .failed(t.noConnection) }
         let j = JSON.parse(data)
         guard http.statusCode == 200 else {
-            if j.code.string == "session_revoked" { return .revoked(j.error.string ?? t.loginFailed) }
-            return .failed(j.error.string ?? "HTTP \(http.statusCode)")
+            switch j.code.string {
+            case "session_revoked": return .revoked(j.error.string ?? t.loginFailed)
+            case "untis_session_invalid": return .untisSessionExpired
+            case "webuntis_unavailable": return .untisUnavailable(j.error.string ?? t.noConnection)
+            default: return .failed(j.error.string ?? "HTTP \(http.statusCode)")
+            }
         }
         guard let token = j.token.string, let refresh = j.refreshToken.string else {
             return .failed(t.badAnswer)
@@ -226,9 +231,9 @@ final class BackendClient {
 
     // ── Nutzungsstatistik ────────────────────────────────────────────────────
 
-    /// Ein Heartbeat für die Nutzungsstatistik im Admin-Panel (siehe `UsageReporter`):
-    /// Vordergrund-Sekunden und geöffnete Tabs seit dem letzten Ping. Best effort —
-    /// ein Fehler wird verschluckt, er darf die App nie stören.
+    /// A heartbeat for the admin panel's usage figures (see `UsageReporter`): foreground
+    /// seconds and tabs since the last ping. Best effort: a failure is swallowed, it must
+    /// never get in the app's way.
     func usagePing(sessionId: String, activeSeconds: Int, screens: Int, appVersion: String, token: String) async {
         _ = try? await request("/usage/ping", method: "POST", token: token, body: [
             "sessionId": sessionId,
@@ -256,7 +261,7 @@ final class BackendClient {
         _ = try await request(Config.Routes.pushApns, method: "DELETE", token: token, body: ["token": deviceToken])
     }
 
-    // ── Datenschutzerklärung (siehe PrivacyNotice.swift) ─────────────────────
+    // ── Privacy notice (see PrivacyNotice.swift) ─────────────────────────────
 
     struct PrivacyNotice { let version: String }
 
@@ -268,7 +273,7 @@ final class BackendClient {
         var usageStatsAt: String? = nil
     }
 
-    /// Die aktuelle Version von der Website, die den Text hält. `nil` ohne Netz.
+    /// The current version from the website that holds the text. `nil` without a network.
     func currentPrivacyNotice() async -> PrivacyNotice? {
         guard let url = URL(string: Config.privacyNoticeURL),
               let answer = try? await session.data(from: url),
@@ -278,7 +283,7 @@ final class BackendClient {
         return PrivacyNotice(version: version)
     }
 
-    /// Welche Fassung dieses Konto bestätigt hat. `nil` ohne Antwort (dann nichts zeigen).
+    /// Which version this account accepted. `nil` without an answer (then nothing shows).
     func privacyStatus(token: String) async -> PrivacyStatus? {
         guard let data = try? await request(Config.Routes.privacyStatus, token: token) else { return nil }
         let j = JSON.parse(data)
@@ -300,7 +305,7 @@ final class BackendClient {
         try await request(Config.Routes.dataExport, token: token)
     }
 
-    // ── Geräte & Anmeldungen ─────────────────────────────────────────────────
+    // ── Devices and sign-ins ─────────────────────────────────────────────────
 
     /// A device signed in to the account. `current` is this one.
     struct DeviceSession: Identifiable, Equatable {
@@ -505,7 +510,7 @@ final class BackendClient {
         stamp(&req)
         let (data, resp) = try await session.data(for: req)
         guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
-            // Bei Fehler ältere Daten liefern, falls vorhanden (robust).
+            // On a failure the older copy, if there is one.
             if let stale = dishCache.stale(dishKey) { return stale }
             let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
             throw AppError(message: Strings.current.errors.mensa(code))

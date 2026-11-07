@@ -1,12 +1,12 @@
 import SwiftUI
 import UIKit
 
-/// Erzeugt einen RFC-5545 VCALENDAR (.ics) aus Stundenplan-/Prüfungseinträgen.
-/// Reines Text-Rendering — keine externen Abhängigkeiten.
+/// An RFC 5545 calendar (.ics) from timetable or exam entries.
+/// Plain text, nothing else needed.
 enum ICSExport {
 
-    /// Baut den .ics-Text. WebUntis-Zeiten sind lokale Schulzeiten; sie werden als
-    /// absolute Zeitpunkte in UTC (`…Z`) geschrieben (vom Kalender lokal angezeigt).
+    /// The .ics text. WebUntis times are the school's local times; they're written as
+    /// moments in UTC (`…Z`), which the calendar shows in local time.
     static func makeCalendar(_ entries: [TimetableEntry], calendarName: String) -> String {
         var lines: [String] = [
             "BEGIN:VCALENDAR",
@@ -45,7 +45,7 @@ enum ICSExport {
         return lines.joined(separator: "\r\n")
     }
 
-    /// Schreibt den Kalender in eine temporäre `.ics`-Datei (für den Share-Dialog).
+    /// Writes the calendar to a temporary `.ics` file for the share sheet.
     static func writeTempFile(_ ics: String, name: String) -> URL? {
         let safe = name.components(separatedBy: CharacterSet.alphanumerics.inverted)
             .joined(separator: "_")
@@ -65,7 +65,7 @@ enum ICSExport {
     }()
     private static func dt(_ d: Date) -> String { utcFormatter.string(from: d) }
 
-    /// RFC-5545-Escaping für Text-Werte.
+    /// RFC 5545 escaping for text values.
     private static func escape(_ s: String) -> String {
         s.replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: ";", with: "\\;")
@@ -74,16 +74,16 @@ enum ICSExport {
     }
 }
 
-// ── Teilbares Item + Share-Sheet ──────────────────────────────────────────────
+// ── Shareable item and share sheet ────────────────────────────────────────────
 
-/// Identifizierbarer Wrapper für `.sheet(item:)`.
+/// An identifiable wrapper for `.sheet(item:)`.
 struct ShareItem: Identifiable {
     let id = UUID()
     let url: URL
 }
 
-/// Schlanke Brücke zu `UIActivityViewController` (zuverlässiger als ein
-/// dauerhaft gerendertes `ShareLink` für dynamisch erzeugte Dateien).
+/// A thin bridge to `UIActivityViewController`: more reliable than a `ShareLink` kept on
+/// screen for files made on the spot.
 struct ShareSheet: UIViewControllerRepresentable {
     let items: [Any]
     func makeUIViewController(context: Context) -> UIActivityViewController {

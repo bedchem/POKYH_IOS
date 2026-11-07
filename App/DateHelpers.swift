@@ -1,13 +1,11 @@
 import Foundation
 
-/// Wiederverwendbare DateFormatter. Das Erzeugen eines DateFormatters ist teuer
-/// (~Millisekunden) — in Render-Hot-Paths (z. B. `dayNum` im Stundenplan) wurde
-/// pro Aufruf einer neu alloziert. Geteilte Instanzen sind ab iOS 7 thread-safe
-/// für die Formatierung, daher hier zentral gebündelt.
+/// Shared date formatters. Making one costs about a millisecond, and the timetable
+/// (`dayNum`) used to make one per call. Formatting with a shared one is thread-safe.
 enum DateFmt {
-    /// `yyyy-MM-dd` (POSIX) — WebUntis-API & Wochenberechnung.
+    /// `yyyy-MM-dd` (POSIX): the WebUntis API and week math.
     static let iso = make("yyyy-MM-dd")
-    /// `yyyyMMdd` (POSIX) — interne Tages-IDs (Int).
+    /// `yyyyMMdd` (POSIX): day ids as Int.
     static let compact = make("yyyyMMdd")
 
     private static func make(_ format: String) -> DateFormatter {
@@ -34,16 +32,16 @@ enum DateFmt {
     nonisolated(unsafe) private static var made: [String: DateFormatter] = [:]
     nonisolated private static let lock = NSLock()
 
-    /// Tages-ID (yyyyMMdd als Int) eines Datums.
+    /// A date's day id (yyyyMMdd as Int).
     static func num(_ date: Date) -> Int { Int(compact.string(from: date)) ?? 0 }
-    /// ISO-String (yyyy-MM-dd) eines Datums.
+    /// A date as yyyy-MM-dd.
     static func isoString(_ date: Date) -> String { iso.string(from: date) }
 }
 
 enum SchoolDates {
     static func todayISO() -> String { DateFmt.isoString(Date()) }
     static func todayNum() -> Int { DateFmt.num(Date()) }
-    /// Montag der Woche, die `date` enthält (yyyy-MM-dd).
+    /// The Monday of `date`'s week (yyyy-MM-dd).
     static func mondayISO(of date: Date) -> String {
         var cal = Calendar(identifier: .iso8601)
         cal.firstWeekday = 2

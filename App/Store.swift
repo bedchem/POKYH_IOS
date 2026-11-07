@@ -5,9 +5,9 @@ import PokyhCore
 import WidgetKit
 #endif
 
-/// Zentraler App-Zustand: Phasen (Sperre / Login / angemeldet), Mehrbenutzer,
-/// Face-ID-Entsperrung. Passwörter liegen im Keychain hinter Face ID, nicht im Klartext.
-/// Bottom-Navigation-Tabs (top-level `nonisolated` → sichere Hashable-Vergleiche).
+/// The app's state: the phase (locked, signing in, signed in), several accounts and the
+/// Face ID unlock. Passwords sit in the Keychain behind Face ID, never in plain text.
+/// The tabs (top-level and `nonisolated`, so comparing them is safe anywhere).
 nonisolated enum AppTab: Hashable { case home, timetable, school, noten, mensa }
 
 enum ThemeMode: String, CaseIterable, Identifiable {
@@ -29,13 +29,13 @@ enum ThemeMode: String, CaseIterable, Identifiable {
     }
 }
 
-/// Status der POKYH-Backend-Verbindung (Todos/Erinnerungen/Klasse) — für die
-/// Diagnose im Profil sichtbar gemacht.
+/// How the POKYH backend connection stands (to-dos, reminders, class), shown in the
+/// profile when something's wrong.
 enum BackendStatus: Equatable {
     case unknown
     case connected
     case notStudent        // kein Schülerkonto → bewusst kein POKYH-Konto
-    case noClass           // Schüler ohne auflösbare klasseId
+    case noClass           // pupil WebUntis names no class for (why: AppState.backendClassNote)
     case failed(String)    // Backend-Fehler (Statuscode/Meldung)
 
     var label: String {
@@ -56,7 +56,7 @@ final class AppState {
 
     var phase: Phase
     var session: UserSession? {
-        // Ein anderes Konto (oder abgemeldet): dessen Hinweis gilt nicht mehr.
+        // Another account, or signed out: the notice was for someone else.
         didSet {
             PushRegistration.shared.sessionDidChange(session, in: self)
             if session?.username != privacyNotice?.username { privacyNotice = nil }
@@ -64,7 +64,7 @@ final class AppState {
             ensureProfileImageUrl()
         }
     }
-    /// Die Datenschutzerklärung, die gerade bestätigt werden soll (siehe PrivacyNotice.swift).
+    /// The privacy notice waiting to be accepted (see PrivacyNotice.swift).
     var privacyNotice: PrivacyNoticePrompt?
     /// A website sign-in opened from the phone's camera, waiting for the signed-in app.
     var pendingWebSignIn: String?
@@ -79,7 +79,7 @@ final class AppState {
     /// Bumped whenever `store` changes, which isn't observed itself, so reads through it refresh.
     private var storeRevision = 0
     var busy = false
-    /// Offline-Modus aktiv (gecachte Daten, Login kam nicht durch).
+    /// Offline: stored data on screen, the sign-in didn't get through.
     var isOffline = false
     var statusText = ""
     var error: String?
@@ -92,12 +92,14 @@ final class AppState {
         didSet { if selectedTab != oldValue { UsageReporter.shared.noteScreen() } }
     }
     var backendStatus: BackendStatus = .unknown
+    /// With `.noClass`: why, as the backend says ("pending", "no_class_found", "shared_person", …).
+    var backendClassNote: String?
     /// Unread inbox messages, for the badges. Refreshed with the notification sync.
     var unreadMessages = 0
-    /// Biometrie-Status (Face ID / Touch ID). Wird off-main ermittelt (siehe init),
-    /// startet mit einem günstigen Default → kein Hänger beim ersten Render.
+    /// Face ID or Touch ID. Found out off the main thread (see init); it starts with a
+    /// cheap default so the first frame never waits for it.
     var biometricInfo = Biometric.Info.unknown
-    /// Erhöht sich, wenn der Stundenplan-Tab angetippt wird → Ansicht springt auf „heute".
+    /// Goes up when the timetable tab is tapped again, which jumps the view to today.
     var timetableHomeSignal = 0
     var themeMode: ThemeMode {
         didSet { UserDefaults.standard.set(themeMode.rawValue, forKey: "pokyh_theme") }
@@ -125,9 +127,8 @@ final class AppState {
         phase = store.accounts.isEmpty ? .login : .lock
         let raw = UserDefaults.standard.string(forKey: "pokyh_theme") ?? ThemeMode.system.rawValue
         themeMode = ThemeMode(rawValue: raw) ?? .system
-        // Biometrie-Status (erster `canEvaluatePolicy`-Aufruf ist teuer, ~300 ms!)
-        // KOMPLETT off-main ermitteln und reaktiv nachreichen → kein Main-Thread-Hänger
-        // beim ersten Render (Views lesen `biometricInfo`, nie `Biometric.info` direkt).
+        // The first `canEvaluatePolicy` call takes about 300 ms, so it runs off the main thread
+        // and the answer arrives later. Views read `biometricInfo`, never `Biometric.info`.
         Task.detached(priority: .userInitiated) {
             let info = Biometric.info
             await MainActor.run { self.biometricInfo = info }
@@ -272,24 +273,24 @@ final class AppState {
         unreadMessages = max(0, unreadMessages - count)
     }
 
-    /// Zeit, nach der ohne Login-Antwort (kein Internet) in den Offline-Modus
-    /// gewechselt wird — sofern ein wiederkehrendes Konto + Cache vorliegt.
+    /// How long a sign-in may go unanswered (no internet) before a returning account with
+    /// stored data opens offline.
     private static let offlineTimeout: Double = 5
 
     private enum LoginOutcome { case done(UserSession), timedOut, failed(Error) }
     private enum RaceResult: Sendable { case finished, timedOut }
 
-    /// `fresh`: Zugangsdaten gerade eingegeben, nicht aus dem Schlüsselbund (erste Anmeldung).
+    /// `fresh`: the credentials were just typed in, not read from the Keychain.
     /// `token`: the authenticator app's code, for an account with two-factor sign-in.
     private func performLogin(username: String, password: String, save: Bool, allowOffline: Bool = false, fresh: Bool = false, token: String? = nil) async {
-        // Wurde der Login aus dem „Konto hinzufügen“/„Passwort nötig“-Sheet gestartet?
-        // (Dann müssen wir den Sheet-Wechsel sorgfältig sequenzieren – siehe finalize.)
+        // Started from the add-account or password sheet? Then the sheet has to leave first,
+        // see finalize.
         let viaSheet = showAddAccount
         let epoch = lockEpoch
         busy = true; error = nil
         statusText = "Verbinde mit WebUntis…"
 
-        // Offline-Fallback nur für wiederkehrende Konten mit vorhandenem Cache.
+        // Offline only for a returning account with stored data.
         let snap: UserSession? = allowOffline ? Self.offlineCandidate(username: username) : nil
         if let snap, !NetworkMonitor.shared.isOnline {
             // No way out at all: the stored copy right away, the sign-in once the connection is back.
@@ -299,7 +300,7 @@ final class AppState {
         let school = school(for: username)
         let loginTask = Task { try await self.buildSession(username: username, password: password, school: school, renewal: !fresh, token: token) }
 
-        // Ohne Offline-Option: normal auf das Ergebnis warten. Mit Option: 5-s-Rennen.
+        // Without the offline way out it simply waits; with it, the sign-in races five seconds.
         let outcome: LoginOutcome
         if snap == nil {
             do { outcome = .done(try await loginTask.value) }
@@ -307,7 +308,7 @@ final class AppState {
         } else {
             switch await Self.race(loginTask, timeout: Self.offlineTimeout) {
             case .finished:
-                // Login ist durch → Ergebnis (Sitzung oder Fehler) abholen.
+                // The sign-in finished: take its session or its error.
                 do { outcome = .done(try await loginTask.value) }
                 catch { outcome = .failed(error) }
             case .timedOut:
@@ -324,8 +325,8 @@ final class AppState {
             await finalize(s, save: save, password: password, viaSheet: viaSheet, fresh: fresh, epoch: epoch)
             busy = false; statusText = ""
         case .timedOut:
-            // Kein Internet rechtzeitig → Offline-Modus aus dem Snapshot, Login läuft
-            // im Hintergrund weiter und „upgradet" die Sitzung bei Erfolg.
+            // No internet in time: open offline from the snapshot. The sign-in carries on and
+            // upgrades the session when it gets through.
             guard let snap else { busy = false; statusText = ""; return }
             await enterOffline(snap, viaSheet: viaSheet, epoch: epoch)
             reconnecting = true
@@ -357,8 +358,8 @@ final class AppState {
         }
     }
 
-    /// Eigentlicher Netzwerk-Login: WebUntis → Fallback POKYH-Backend → Backend-Konto
-    /// beziehen. Baut die fertige Sitzung inkl. Tokens und setzt `backendStatus`.
+    /// The sign-in itself: WebUntis, else the POKYH backend alone, then the backend account.
+    /// Builds the whole session with its tokens and sets `backendStatus`.
     private func buildSession(username: String, password: String, school: School, renewal: Bool, token: String? = nil) async throws -> UserSession {
         var s: UserSession
         var backendOnly = false
@@ -369,8 +370,8 @@ final class AppState {
             // An app key is never a POKYH password. And WebUntis asking for the code means the
             // password was right, so this is no POKYH-only account either.
             if withKey || token != nil || untisError is TwoFactorRequired { throw untisError }
-            // Kein (funktionierendes) WebUntis-Konto? → direkter POKYH-Backend-Login
-            // als Fallback (gleiche Zugangsdaten). Das Backend kennt reine POKYH-Konten.
+            // No working WebUntis account: sign in to the POKYH backend directly with the same
+            // credentials. The backend knows POKYH-only accounts.
             do {
                 let backend = try await BackendClient.shared.login(
                     username: username, password: password)
@@ -378,35 +379,41 @@ final class AppState {
                 backendStatus = .connected
                 backendOnly = true
             } catch {
-                // Beide fehlgeschlagen. Die Backend-Meldung ist für ein POKYH-Konto
-                // aussagekräftiger (z. B. „Ungültige Zugangsdaten"); bei einem reinen
-                // Netzwerkfehler den ursprünglichen WebUntis-Fehler durchreichen.
+                // Both failed. For a POKYH-only account the backend's message says more (wrong
+                // credentials, say); a plain network failure passes on WebUntis' error.
                 throw (error is URLError) ? untisError : error
             }
         }
-        // POKYH-Konto für Schüler- UND Elternkonten beziehen/anlegen (kein
-        // Lehrer-/Adminkonto). Eltern bekommen ein Elternkonto (role=parent):
-        // eigene Todos, sehen nur den Klassennamen, keine Erinnerungen,
-        // unsichtbares Mitglied. Die klasseId ist bei Eltern die des Kindes
-        // (in UntisClient aufgelöst). Das Backend legt das Konto automatisch an.
+        // Students and guardians get a POKYH account (teachers and admins don't). A guardian's
+        // is role=parent: own to-dos, the class name only, no reminders, an invisible member.
+        // Their klasseId is the child's (UntisClient finds it). The backend creates the
+        // account on first sign-in.
         // Reine Backend-Konten (Fallback) haben ihre Tokens bereits.
         if !backendOnly {
             if s.isStudent || s.isParent {
                 let role = s.isParent ? "parent" : "student"
+                // The backend asks WebUntis itself, with this very session, whose it is and
+                // which class the account has; the class worked out here does not count.
                 switch await BackendClient.shared.loginWithUntis(
-                    username: s.username, klasseId: s.klasseId, klasseName: s.klasseName, role: role,
+                    username: s.username, untisSessionId: s.sessionId, role: role,
                     renewal: renewal, school: s.school, method: withKey ? "office" : nil) {
                 case .ok(let token, let refresh):
                     s.apiToken = token
                     s.apiRefresh = refresh
+                    backendStatus = .connected
+                    backendClassNote = nil
                     if let user = try? await BackendClient.shared.me(token: token) {
                         s.stableUid = user.stableUid
                         s.classId = user.classId
+                        // A pupil without a class: why, as the backend says (shown in the views).
+                        if user.classId == nil, user.role ?? "student" == "student", s.isStudent {
+                            backendStatus = .noClass
+                            backendClassNote = user.classCheckPending == true ? "pending" : user.classNote
+                        }
                     }
-                    backendStatus = .connected
-                case .noClass:
-                    backendStatus = .noClass
-                case .failed(let msg):
+                case .untisSessionExpired:
+                    backendStatus = .failed(Strings.current.common.sessionExpired)
+                case .untisUnavailable(let msg), .failed(let msg):
                     backendStatus = .failed(msg)
                 case .revoked(let msg):
                     // Signed out from another device: the saved password goes, so this phone
@@ -424,10 +431,10 @@ final class AppState {
     }
 
     /// Abschluss eines erfolgreichen Online-Logins: Konto sichern, Offline-Snapshot
-    /// persistieren, Sitzung übernehmen (mit sorgfältiger Sheet-Sequenzierung).
+    /// saved, the session taken over, with the sheet leaving first.
     private func finalize(_ s: UserSession, save: Bool, password: String, viaSheet: Bool, fresh: Bool, epoch: Int) async {
-        // Konto + Passwort sichern, BEVOR die Session getauscht wird, damit es
-        // auch dann lokal gespeichert ist, wenn der View-Wechsel dazwischenkommt.
+        // The account and password are saved before the session changes, so they're kept even
+        // when the switch of views gets in between.
         if save {
             let account = SavedAccount(
                 username: s.username,
@@ -439,11 +446,11 @@ final class AppState {
         // The watch signs in with the same account and stays signed in.
         WatchSync.signedIn(username: s.username, displayName: s.personName ?? s.username, password: password)
         store.lastActive = s.username
-        // Profilbild auch beim stillen Login (save:false) nachtragen → Konten-Liste
-        // & Sperrbildschirm zeigen das gecachte Bild.
+        // The picture on a silent sign-in too, so the list of accounts and the lock screen
+        // show it.
         store.updateImageUrl(s.imageUrl, for: s.username)
         accounts = store.accounts
-        // Token-losen Snapshot für späteren Offline-Restore ablegen.
+        // A snapshot without tokens, to open offline later.
         if s.hasUntis { DiskCache.save(Self.offlineSnapshot(s), key: Self.sessionKey, owner: s.username) }
 
         if viaSheet {
@@ -459,16 +466,16 @@ final class AppState {
         Task { await checkPrivacyNotice(fresh: fresh) }
     }
 
-    /// Login lief über ein Sheet (Konto hinzufügen / Passwort-Neueingabe): ERST das Sheet
-    /// schließen und die Dismiss-Animation abwarten, DANN die Session tauschen. Sonst kollidiert
-    /// der View-Identitätswechsel (ContentView: `RootTabView().id(username)`, oder Sperre →
-    /// angemeldet) mit der noch laufenden Sheet-Animation → das Modal hängt auf echten Geräten.
+    /// A sign-in from a sheet (add account, password again): the sheet closes and finishes
+    /// its animation before the session changes. Otherwise swapping the views
+    /// (`RootTabView().id(username)` in ContentView, or lock to signed in) runs into the
+    /// sheet's animation, and the sheet hangs on real devices.
     private func closeSheetBeforeSwap() async {
         showAddAccount = false
         try? await Task.sleep(for: .milliseconds(420))
     }
 
-    /// Wechselt in den Offline-Modus: gecachte (token-lose) Sitzung anzeigen.
+    /// Goes offline: shows the stored session, which has no tokens.
     private func enterOffline(_ snap: UserSession, viaSheet: Bool, epoch: Int) async {
         busy = false; statusText = ""
         // Same sequencing as a normal sign-in; the offline path used to swap at once and hang.
@@ -482,7 +489,7 @@ final class AppState {
         store.lastActive = snap.username
     }
 
-    /// Hintergrund-Login nach Offline-Restore erfolgreich → Sitzung „upgraden".
+    /// The sign-in behind an offline start got through: upgrade the session.
     private func upgradeFromBackground(_ s: UserSession, save: Bool, password: String, epoch: Int) async {
         // Same account still on screen, and not locked in between?
         guard epoch == lockEpoch, let current = session, AccountRoster.same(current.username, s.username) else { return }
@@ -528,16 +535,15 @@ final class AppState {
     /// In the account's own folder, like everything else it left offline.
     private static let sessionKey = "session"
 
-    /// Liefert einen Offline-Snapshot nur, wenn ein WebUntis-Konto gecacht ist
-    /// (`studentId > 0` → Stundenplan-Cache kann gelesen werden).
+    /// Only for a WebUntis account (`studentId > 0`), whose stored timetable can be read.
     private static func offlineCandidate(username: String) -> UserSession? {
         guard let snap = DiskCache.load(UserSession.self, key: sessionKey, owner: username),
               snap.studentId > 0 else { return nil }
         return snap
     }
 
-    /// Rennen: ist der Login durch oder läuft die Zeit ab? Der Login-Task läuft bei
-    /// Timeout weiter (nur die Warte-Tasks werden abgebrochen).
+    /// Which comes first, the sign-in or the timeout? On a timeout only the waiting stops;
+    /// the sign-in itself goes on.
     private static func race(_ task: Task<UserSession, Error>, timeout: Double) async -> RaceResult {
         await withTaskGroup(of: RaceResult.self) { group in
             group.addTask {
@@ -554,8 +560,8 @@ final class AppState {
         }
     }
 
-    /// Baut eine reine POKYH-Backend-Sitzung (kein WebUntis): nur API-Tokens +
-    /// Stammdaten, WebUntis-Felder bleiben neutral → `hasUntis == false`.
+    /// A POKYH-only session, no WebUntis: the API tokens and the basics, the WebUntis
+    /// fields left empty, so `hasUntis` is false.
     private static func backendOnlySession(
         from backend: (token: String, refresh: String, user: ApiUser)) -> UserSession {
         var s = UserSession(
@@ -571,10 +577,8 @@ final class AppState {
         return s
     }
 
-    /// Token-loser Sitzungs-Snapshot für den Offline-Restore. Enthält NUR
-    /// nicht-sensible Anzeige-/Cache-Schlüssel-Felder — niemals Tokens/Cookies.
-    /// Die kommen beim echten Re-Login zurück; offline brauchen wir nur die
-    /// Cache-Keys (`studentId`) + Anzeigedaten.
+    /// The session to open offline with: only what's shown and the cache keys, never
+    /// tokens or cookies. Those come back with the next real sign-in.
     private static func offlineSnapshot(_ s: UserSession) -> UserSession {
         UserSession(
             sessionId: "", bearerToken: "", studentId: s.studentId,
@@ -586,11 +590,11 @@ final class AppState {
 
     // ── Kontowechsel / -verwaltung ───────────────────────────────────────────
 
-    /// Sauberer Wechsel mit Face-ID-Bestätigung + Loading (über `busy`). The check is also what
+    /// Switches with a Face ID check and a loading state (`busy`). The check is also what
     /// opens the other account's password, so it's never skipped.
     func switchAccount(username: String) async {
         guard !busy, !AccountRoster.same(username, session?.username ?? "") else { return }
-        // Ohne gespeichertes Passwort → direkt Passwort-Neueingabe (kein Face ID nötig).
+        // No saved password: ask for it, no Face ID needed.
         guard store.hasPassword(username) else { askForPassword(username); return }
         busy = true; statusText = unlockText.confirming
         let name = AccountRoster.find(username, in: accounts)?.title ?? username
@@ -616,31 +620,31 @@ final class AppState {
     @ObservationIgnored private var passwordsKnown: [String: Bool] = [:]
     @ObservationIgnored private var passwordsKnownAt = -1
 
-    /// Widgets/Live Activity zeigen die Daten des **Standard-Kontos**. Ist kein
-    /// Standard gesetzt, zählt das aktive Konto (Einzelnutzer-Fall).
+    /// The widgets and the Live Activity show the default account. Without a default,
+    /// the active one counts (one account only).
     var isDefaultAccountActive: Bool {
         guard let active = session?.username else { return false }
         guard let fallback = store.defaultUsername else { return true }
         return AccountRoster.same(fallback, active)
     }
 
-    /// Live Activity (laufende/nächste Stunde) anhand des Stundenplans aktualisieren.
+    /// Updates the Live Activity (running or next lesson) from the timetable.
     func refreshLiveActivity(from entries: [TimetableEntry]) {
         guard let s = session else { return }
         LiveActivityManager.refresh(from: entries, className: s.klasseName)
     }
 
-    /// Lokalen Spitznamen für ein Konto setzen/zurücksetzen (leer → zurücksetzen).
+    /// Sets or clears an account's local nickname (empty clears it).
     func setNickname(_ nickname: String?, for username: String) {
         store.setNickname(nickname, for: username)
         accounts = store.accounts
     }
 
-    /// Konto neu laden: WebUntis-Re-Login, um Name/Klasse zu aktualisieren.
-    /// - Aktives Konto → volle Sitzung + Backend-Status werden erneuert.
-    /// - Anderes Konto → nur Metadaten (Klasse) im Hintergrund, aktive Sitzung bleibt
-    ///   unberührt (eigene ephemere Cookies pro Sitzung).
-    /// Ohne gespeichertes Passwort → Passwort-Neueingabe anbieten.
+    /// Reloads an account: signs in to WebUntis again for a fresh name and class.
+    /// - The active account gets a new session and backend status.
+    /// - Another one only gets its class, in the background; the active session stays as
+    ///   it is (each session has its own cookies).
+    /// Without a saved password it asks for one.
     func refreshAccount(username: String) async {
         guard store.hasPassword(username) else { askForPassword(username); return }
         // Cancelled Face ID: leave it be.
@@ -688,8 +692,8 @@ final class AppState {
         }
     }
 
-    /// Konto komplett vom Gerät entfernen, mit seinem Offline-Stand. Showed the widgets its
-    /// data (default account) or was it the last one, they go blank too.
+    /// Removes the account from the device with its offline copies. If the widgets showed its
+    /// data (default account) or it was the last one, they go blank too.
     func removeAccount(username: String) {
         ImageCache.forget(ImageCache.avatarKey(username))
         WatchSync.signedOut(username: username)
@@ -772,22 +776,22 @@ final class AppState {
         phase = accounts.isEmpty ? .login : .lock
     }
 
-    /// „Cache & Daten löschen": entfernt ALLES Gespeicherte/Gecachte vom Gerät —
-    /// Anmeldedaten (Keychain), Offline-Stundenplan/Noten, geteilte Widget-Snapshots,
-    /// In-Memory-Caches und alle App-Einstellungen. Danach: zurück zum Login.
+    /// "Cache & Daten löschen": everything stored goes, the credentials (Keychain), offline
+    /// copies, the widgets' snapshots, the caches in memory and every setting. Then back to
+    /// the sign-in.
     func clearAllData() {
         WatchSync.signedOut()
         lockEpoch += 1
         twoFactor = nil
         UnlockSession.end()
-        // 1. In-Memory-Caches
+        // 1. Caches in memory
         UntisClient.shared.clearCaches()
         BackendClient.shared.clearCaches()
         ImageCache.purge()
         URLCache.shared.removeAllCachedResponses()
-        // 2. Keychain (alle Passwörter)
+        // 2. Keychain (every password)
         Keychain.purgeAll()
-        // 3. Offline-Disk-Cache + geteilte Snapshots (App Group), then the key they were sealed with
+        // 3. Offline copies and the shared snapshots (app group), then the key they were sealed with
         DiskCache.purge()
         Outbox.shared.clearAll()
         SharedStore.purgeAll()
@@ -796,7 +800,7 @@ final class AppState {
         let notifications = UNUserNotificationCenter.current()
         notifications.removeAllPendingNotificationRequests()
         notifications.removeAllDeliveredNotifications()
-        // 4. Alle eigenen UserDefaults-Schlüssel (kein Hardcoding einzelner Keys). The storage
+        // 4. Every UserDefaults key of ours, found by prefix rather than by name. The storage
         //    format markers stay: without them the next launch would treat what's saved after
         //    this as left over from an old build and wipe it.
         let defaults = UserDefaults.standard
@@ -804,12 +808,12 @@ final class AppState {
         for key in defaults.dictionaryRepresentation().keys where key.hasPrefix("pokyh_") && !keep.contains(key) {
             defaults.removeObject(forKey: key)
         }
-        // 5. Live Activity beenden + Widgets leeren
+        // 5. End the Live Activity, empty the widgets
         LiveActivityManager.endAll()
         #if canImport(WidgetKit)
         WidgetCenter.shared.reloadAllTimelines()
         #endif
-        // 6. Zustand zurücksetzen → Login
+        // 6. Reset the state, back to the sign-in
         session = nil
         isOffline = false
         accounts = []
@@ -863,11 +867,28 @@ final class AppState {
     private func freshBackendTokens(for s: UserSession) async -> (token: String, refresh: String)? {
         if s.hasUntis {
             guard s.isStudent || s.isParent else { return nil }
-            let outcome = await BackendClient.shared.loginWithUntis(
-                username: s.username, klasseId: s.klasseId, klasseName: s.klasseName,
-                role: s.isParent ? "parent" : "student", renewal: true, school: s.school)
-            if case .ok(let token, let refresh) = outcome { return (token, refresh) }
-            return nil
+            let role = s.isParent ? "parent" : "student"
+            var outcome = await BackendClient.shared.loginWithUntis(
+                username: s.username, untisSessionId: s.sessionId, role: role, renewal: true, school: s.school)
+            // The WebUntis session has ended: sign in to WebUntis again (with what this unlock
+            // still covers, never a surprise Face ID prompt) and once more at the backend.
+            if case .untisSessionExpired = outcome, let renewed = await renewedUntisSession(for: s) {
+                outcome = await BackendClient.shared.loginWithUntis(
+                    username: s.username, untisSessionId: renewed.sessionId, role: role, renewal: true, school: s.school)
+            }
+            switch outcome {
+            case .ok(let token, let refresh):
+                return (token, refresh)
+            case .revoked:
+                return nil
+            case .untisUnavailable, .untisSessionExpired, .failed:
+                // WebUntis away or the session not renewable now: the device's own refresh token
+                // keeps the POKYH session going until the next sign-in checks again.
+                if let refresh = s.apiRefresh, let fresh = await BackendClient.shared.refresh(refreshToken: refresh) {
+                    return fresh
+                }
+                return nil
+            }
         }
         // POKYH-only accounts: the refresh token first, then the password if this unlock still
         // covers it. Never a surprise Face ID prompt in the middle of using the app.
@@ -879,7 +900,19 @@ final class AppState {
         return (login.token, login.refresh)
     }
 
-    // ── Auto-Sperre nach Inaktivität im Hintergrund, Sichtschutz ──────────────
+    /// A new WebUntis session for the account, signed in with the password (or key) this unlock
+    /// still covers; the active session takes it over. Nil when none is at hand.
+    private func renewedUntisSession(for s: UserSession) async -> UserSession? {
+        guard let password = store.password(for: s.username, context: UnlockSession.context),
+              let renewed = try? await UntisClient.shared.login(username: s.username, password: password, school: s.school) else { return nil }
+        if let current = session, AccountRoster.same(current.username, s.username) {
+            session?.sessionId = renewed.sessionId
+            session?.bearerToken = renewed.bearerToken
+        }
+        return renewed
+    }
+
+    // ── Lock after time in the background, privacy cover ─────────────────────
     /// Ten minutes in the background lock the app (Face ID again), as on Android.
     @ObservationIgnored private var autoLock = AutoLock()
 
@@ -907,9 +940,9 @@ final class AppState {
         return session
     }
 
-    // ── Nach erfolgreichem Login: Benachrichtigungen einrichten ───────────────
-    // Bewusst NICHT beim App-Start (Login-Screen) — das löste auf echter Hardware
-    // einen Laufzeit-Abbruch aus. Hier ist die UI bereits aktiv → sicher.
+    // ── After a sign-in: set up notifications ─────────────────────────────────
+    // Not at launch on the sign-in screen: on real hardware that ended the app at runtime.
+    // Here the UI is up, which is safe.
     func onAuthenticated() {
         NotificationManager.shared.configure()
         requestNotificationPermissionIfNeeded()
@@ -925,48 +958,48 @@ final class AppState {
         let key = "pokyh_notif_asked"
         guard !UserDefaults.standard.bool(forKey: key) else { return }
         UserDefaults.standard.set(true, forKey: key)
-        // Leere Completion → keine Actor-/Thread-Probleme.
+        // An empty completion, so no actor or thread trouble.
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
     }
 
-    // ── Benachrichtigungen synchronisieren (Nachrichten + Erinnerungen) ───────
+    // ── Notification checks (messages, reminders) ─────────────────────────────
     @ObservationIgnored private var lastNotifSync = Date.distantPast
-    // Eigener, längerer Throttle für die teureren Abrufe (Noten/Stundenplan):
-    // Noten lädt pro Fach – das ist zu schwer für den 60-s-Takt der Nachrichten.
+    // A longer pause for the heavier checks (grades, timetable): grades load per subject,
+    // too much for the messages' 60 seconds.
     @ObservationIgnored private var lastHeavySync = Date.distantPast
     @ObservationIgnored private let heavySyncInterval: TimeInterval = 1800   // 30 min
 
     func syncNotifications() async {
         guard let s = session else { return }
-        // Throttle (Performance): höchstens alle 60 s.
+        // At most once a minute.
         guard Date().timeIntervalSince(lastNotifSync) > 60 else { return }
         lastNotifSync = Date()
 
         if let inbox = try? await UntisClient.shared.messages(folder: .inbox, s) {
             unreadMessages = inbox.filter { !$0.isRead }.count
             NotificationManager.shared.checkNewMessages(inbox)
-            if isDefaultAccountActive { WidgetBridge.publishMessages(inbox) }   // nur Standard-Konto
+            if isDefaultAccountActive { WidgetBridge.publishMessages(inbox) }   // default account only
         }
         if let token = s.apiToken, let classId = s.classId,
            let reminders = try? await BackendClient.shared.reminders(classId: classId, token: token) {
             NotificationManager.shared.scheduleReminders(reminders)
         }
 
-        // Teurere Checks seltener: neue Noten + Stundenausfälle.
+        // The heavier checks less often: new grades and cancelled lessons.
         if Date().timeIntervalSince(lastHeavySync) > heavySyncInterval {
             lastHeavySync = Date()
             await syncGradeAndTimetableAlerts(s)
         }
     }
 
-    /// Neue Noten und Stundenausfälle erkennen → lokale Benachrichtigungen.
-    /// Nur für Schülerkonten sinnvoll (Eltern/Lehrer haben keinen MY_TIMETABLE-Notenkontext).
+    /// New grades and cancelled lessons as local notifications. Students only: guardians
+    /// and teachers have no MY_TIMETABLE grades.
     private func syncGradeAndTimetableAlerts(_ s: UserSession) async {
         if s.isStudent, let subjects = try? await UntisClient.shared.grades(year: nil, s) {
             NotificationManager.shared.checkNewGrades(subjects)
-            if isDefaultAccountActive { WidgetBridge.publishGrades(subjects) }   // nur Standard-Konto
+            if isDefaultAccountActive { WidgetBridge.publishGrades(subjects) }   // default account only
         }
-        // Stundenplan ab heute (Client liefert Mo–Sa) → kommende Ausfälle.
+        // The timetable from today (Monday to Saturday) for lessons still to be cancelled.
         if let entries = try? await UntisClient.shared.timetable(date: SchoolDates.todayISO(), s) {
             NotificationManager.shared.checkTimetableChanges(entries)
         }
