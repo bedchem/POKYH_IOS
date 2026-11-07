@@ -62,6 +62,11 @@ public struct CommonStrings: Sendable {
     public let sending: String
     public let editComment: String
     public let reportComment: String
+    public let blockAuthor: String
+    public let blockAuthorTitle: @Sendable (String) -> String
+    public let blockAuthorBody: String
+    public let blockedTitle: String
+    public let unblockAll: String
     public let reportSubject: String
     public let reportBody: @Sendable (String, String, String, String, String) -> String
 }
@@ -141,6 +146,11 @@ extension CommonStrings {
         sending: "Wird gesendet …",
         editComment: "Bearbeiten",
         reportComment: "Kommentar melden",
+        blockAuthor: "Person blockieren",
+        blockAuthorTitle: { "Kommentare von \($0) ausblenden?" },
+        blockAuthorBody: "Du siehst ihre Kommentare nicht mehr. In den Einstellungen kannst du das zurücknehmen.",
+        blockedTitle: "Blockierte Personen",
+        unblockAll: "Alle freigeben",
         reportSubject: "Meldung eines Inhalts auf POKYH",
         reportBody: { url, author, date, id, text in "Hallo POKYH-Team,\n\nich melde diesen Inhalt (Art. 16 Digital Services Act):\n\nWo: \(url)\nKommentar von „\(author)“ vom \(date) (ID \(id)):\n„\(text)“\n\nWarum der Inhalt rechtswidrig ist oder gegen die Nutzungsbedingungen verstößt:\n\n\nMein Name und meine E-Mail-Adresse:\n\n\nIch bestätige, dass meine Angaben nach bestem Wissen richtig und vollständig sind." },
     )
@@ -209,6 +219,11 @@ extension CommonStrings {
         sending: "Invio in corso …",
         editComment: "Modifica",
         reportComment: "Segnala commento",
+        blockAuthor: "Blocca persona",
+        blockAuthorTitle: { "Nascondere i commenti di \($0)?" },
+        blockAuthorBody: "Non vedrai più i suoi commenti. Puoi annullare nelle impostazioni.",
+        blockedTitle: "Persone bloccate",
+        unblockAll: "Sblocca tutti",
         reportSubject: "Segnalazione di un contenuto su POKYH",
         reportBody: { url, author, date, id, text in "Ciao team di POKYH,\n\nsegnalo questo contenuto (art. 16 Digital Services Act):\n\nDove: \(url)\nCommento di «\(author)» del \(date) (ID \(id)):\n«\(text)»\n\nPerché il contenuto è illegale o viola le condizioni d’uso:\n\n\nIl mio nome e il mio indirizzo e-mail:\n\n\nConfermo che le mie indicazioni sono esatte e complete secondo scienza e coscienza." },
     )
@@ -277,6 +292,11 @@ extension CommonStrings {
         sending: "Sending …",
         editComment: "Edit",
         reportComment: "Report comment",
+        blockAuthor: "Block person",
+        blockAuthorTitle: { "Hide comments from \($0)?" },
+        blockAuthorBody: "You won\u{2019}t see their comments any more. You can undo this in the settings.",
+        blockedTitle: "Blocked people",
+        unblockAll: "Unblock all",
         reportSubject: "Report of content on POKYH",
         reportBody: { url, author, date, id, text in "Hello POKYH team,\n\nI am reporting this content (Art. 16 Digital Services Act):\n\nWhere: \(url)\nComment by “\(author)” on \(date) (ID \(id)):\n“\(text)”\n\nWhy the content is illegal or breaks the terms of use:\n\n\nMy name and e-mail address:\n\n\nI confirm that my information is accurate and complete to the best of my knowledge." },
     )

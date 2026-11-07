@@ -27,17 +27,21 @@ struct CommentSection: View {
     @State private var failed = false
     @State private var editing: ApiComment?
     @State private var confirmDelete: ApiComment?
+    @State private var confirmBlock: ApiComment?
+    @State private var blocked: Set<String> = []
     @State private var sent = 0
 
     private static let maxLength = 2000
 
     private var token: String? { app.session?.apiToken }
+    /// What's shown: nobody this person chose to block.
+    private var visible: [ApiComment] { comments.filter { !blocked.contains($0.stableUid) } }
     private var myUid: String? { app.session?.stableUid }
 
     var body: some View {
         PokyhSection(title, spacing: Spacing.md) {
-            if !comments.isEmpty {
-                EyebrowLabel("\(comments.count)")
+            if !visible.isEmpty {
+                EyebrowLabel("\(visible.count)")
             }
         } content: {
             if token == nil {
@@ -49,7 +53,10 @@ struct CommentSection: View {
                 composer
             }
         }
-        .task { await reload() }
+        .task {
+            if let owner = app.session?.username { blocked = CommentBlocks.all(for: owner) }
+            await reload()
+        }
         .sheet(item: $editing) { c in
             CommentEditSheet(comment: c, maxLength: Self.maxLength) { body in
                 try await save(c, body: body)
@@ -62,6 +69,14 @@ struct CommentSection: View {
         } message: { c in
             Text(c.body.count > 120 ? String(c.body.prefix(120)) + "…" : c.body)
         }
+        .alert(confirmBlock.map { s.common.blockAuthorTitle($0.username) } ?? "",
+               isPresented: Binding(get: { confirmBlock != nil }, set: { if !$0 { confirmBlock = nil } }),
+               presenting: confirmBlock) { c in
+            Button(s.common.blockAuthor, role: .destructive) { block(c) }
+            Button(s.common.cancel, role: .cancel) {}
+        } message: { _ in
+            Text(s.common.blockAuthorBody)
+        }
         .sensoryFeedback(.success, trigger: sent)
     }
 
@@ -72,12 +87,12 @@ struct CommentSection: View {
                 .tint(Palette.textTertiary)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, Spacing.xl)
-        } else if comments.isEmpty {
+        } else if visible.isEmpty {
             Text(s.common.noComments)
                 .textStyle(.footnote)
                 .foregroundStyle(Palette.textTertiary)
         } else {
-            ListCard(comments) { comment in
+            ListCard(visible) { comment in
                 row(comment)
             }
         }
@@ -256,7 +271,16 @@ struct CommentSection: View {
             Button(role: .destructive) { confirmDelete = c } label: { Label(s.common.delete, systemImage: "trash") }
         } else {
             Button { report(c) } label: { Label(s.common.reportComment, systemImage: "flag") }
+            Button(role: .destructive) { confirmBlock = c } label: {
+                Label(s.common.blockAuthor, systemImage: "hand.raised")
+            }
         }
+    }
+
+    private func block(_ c: ApiComment) {
+        guard let owner = app.session?.username else { return }
+        CommentBlocks.block(c.stableUid, for: owner)
+        withAnimation(Motion.standardEase) { blocked.insert(c.stableUid) }
     }
 
     private func timeAgo(_ c: ApiComment) -> String {
@@ -384,5 +408,25 @@ private struct CommentEditSheet: View {
         } catch {
             failed = true
         }
+    }
+}
+
+/// People whose comments someone chose not to see, on this device and per account. App Review
+/// asks for a way to block abusive users wherever people post; reporting goes to POKYH as well.
+enum CommentBlocks {
+    private static func key(_ owner: String) -> String { "pokyh_blocked_" + AccountRoster.key(owner) }
+
+    static func all(for owner: String) -> Set<String> {
+        Set(UserDefaults.standard.stringArray(forKey: key(owner)) ?? [])
+    }
+
+    static func block(_ uid: String, for owner: String) {
+        var set = all(for: owner)
+        set.insert(uid)
+        UserDefaults.standard.set(Array(set), forKey: key(owner))
+    }
+
+    static func clear(for owner: String) {
+        UserDefaults.standard.removeObject(forKey: key(owner))
     }
 }

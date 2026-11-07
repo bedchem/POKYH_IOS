@@ -28,6 +28,7 @@
 		349D099E7335E5ABFF84E00B /* StubRoutes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 015C4C2F007CBBD5F042F99D /* StubRoutes.swift */; };
 		35FD9E9D26DFCEBEB0B0B4B3 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 138284BCEE8C2E4997D6D31A /* SwiftUI.framework */; };
 		3655A4F285F22FD992AE423F /* BackendClient+Account.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0D1F4B6F5F96087BADF834C /* BackendClient+Account.swift */; };
+		3B1E58566EAFA5DA6D8DA4CA /* InfoPlist.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = A26AF5C96709EB8869E5D8A4 /* InfoPlist.xcstrings */; };
 		3CBC3AD2F36EE5E8B0C0C2ED /* TodayScheduleWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ADEAEE65F207ED978C2B78C /* TodayScheduleWidget.swift */; };
 		3E9C42334659F52BD59A6258 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 0EE18DCFA6A39FAC8B27AF3D /* PrivacyInfo.xcprivacy */; };
 		4137BAAD7198FDF507A28E6D /* NextLessonWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7EB236FAC0D855B630B91D64 /* NextLessonWidget.swift */; };
@@ -240,6 +241,7 @@
 		97A085FFE8B5C7FE86EFF94D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		98B052B2302543EF670D2EC4 /* BadDataTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BadDataTests.swift; sourceTree = "<group>"; };
 		9F877C341273A616D090EC6D /* WidgetBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetBridge.swift; sourceTree = "<group>"; };
+		A26AF5C96709EB8869E5D8A4 /* InfoPlist.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = InfoPlist.xcstrings; sourceTree = "<group>"; };
 		AA09AE18D8F6D53CCBB8E194 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		AA92B0E13EC6C39A34387B30 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		AACB0CBF7C256350071B89D6 /* PrivacyNotice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivacyNotice.swift; sourceTree = "<group>"; };
@@ -498,6 +500,7 @@
 				7096DD3F08136FBACD321C8F /* ICSExport.swift */,
 				5ED5F62FCC953CC2EB5A676E /* ImageCache.swift */,
 				4B6B81055F93A633318EC42E /* Info.plist */,
+				A26AF5C96709EB8869E5D8A4 /* InfoPlist.xcstrings */,
 				26A5A6FD4632BE2D5152457B /* JSON.swift */,
 				91B623D1932F26DE97A6EA64 /* LiveActivityManager.swift */,
 				29D484021DCE9932C454BFE5 /* Localizable.xcstrings */,
@@ -709,6 +712,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				4BF56390559479D2AE241545 /* Assets.xcassets in Resources */,
+				3B1E58566EAFA5DA6D8DA4CA /* InfoPlist.xcstrings in Resources */,
 				958A9831D3E0A2B232DCB8AC /* Localizable.xcstrings in Resources */,
 				B0AAA3D208D03C6FD3987FD5 /* PrivacyInfo.xcprivacy in Resources */,
 			);

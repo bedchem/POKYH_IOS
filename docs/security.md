@@ -19,7 +19,8 @@ the disk.
 | Profile pictures | `Caches/Sealed/images` | Same sealing, file protection `complete`. |
 | Widget data (default account only) | App group `Sealed/widgets` | Sealed with the vault key, file protection until first unlock. |
 | Account list (username, class, nickname, picture URL, school), settings | UserDefaults | No secrets. |
-| Dish photos | URLCache | Public pictures only; people's pictures skip URLCache. |
+| Dish photos | `Caches/RemotePhotos`, plus URLCache | Public pictures only, unsealed; pruned after a month. People's pictures never go here. |
+| Blocked commenters | UserDefaults, per account | Only ids; cleared with all data. |
 
 ## When it goes
 

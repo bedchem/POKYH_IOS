@@ -501,6 +501,7 @@ struct SettingsView: View {
 
                 SettingsGroup(s.settings.privacySection) {
                     if app.session?.apiToken != nil { PrivacySettingsRows() }
+                    BlockedPeopleRow()
                     if let url = URL(string: Config.privacyURL) {
                         SettingsLinkRow(s.account.policy, external: true) { openURL(url) }
                     }
@@ -1293,4 +1294,28 @@ struct ProfileText {
         noAccount: "Sign in on the iPhone first.",
         logoutAndRemove: "Sign out & remove account from device"
     )
+}
+
+/// Only while someone is blocked: how many, and a way to see them all again.
+private struct BlockedPeopleRow: View {
+    @Environment(AppState.self) var app
+    @Environment(\.strings) private var s
+    @State private var count = 0
+
+    var body: some View {
+        Group {
+            if count > 0 {
+                SettingsRow(s.common.blockedTitle, hint: "\(count)") {
+                    Button(s.common.unblockAll) {
+                        if let owner = app.session?.username { CommentBlocks.clear(for: owner) }
+                        withAnimation(Motion.standardEase) { count = 0 }
+                    }
+                    .buttonStyle(.secondary(compact: true))
+                }
+            }
+        }
+        .onAppear {
+            if let owner = app.session?.username { count = CommentBlocks.all(for: owner).count }
+        }
+    }
 }

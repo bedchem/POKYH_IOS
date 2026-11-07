@@ -1,0 +1,33 @@
+{
+  "sourceLanguage" : "de",
+  "strings" : {
+    "NSCameraUsageDescription" : {
+      "comment" : "Why the camera: the QR code on the website for signing in there.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "POKYH braucht die Kamera, um den QR-Code zur Anmeldung am Computer zu lesen." } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "POKYH uses the camera to read the QR code for signing in on a computer." } },
+        "it" : { "stringUnit" : { "state" : "translated", "value" : "POKYH usa la fotocamera per leggere il codice QR per accedere dal computer." } }
+      }
+    },
+    "NSFaceIDUsageDescription" : {
+      "comment" : "Why Face ID: only the owner opens the app.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "POKYH nutzt Face ID, damit nur du deine Daten siehst." } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "POKYH uses Face ID so only you can see your data." } },
+        "it" : { "stringUnit" : { "state" : "translated", "value" : "POKYH usa Face ID perché solo tu possa vedere i tuoi dati." } }
+      }
+    },
+    "NSPhotoLibraryAddUsageDescription" : {
+      "comment" : "Why Photos: saving the recap picture, only when asked to.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "POKYH speichert deinen Rückblick als Bild in deinen Fotos, wenn du das möchtest." } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "POKYH saves your recap as a picture in Photos when you ask it to." } },
+        "it" : { "stringUnit" : { "state" : "translated", "value" : "POKYH salva il tuo riepilogo come immagine in Foto, se lo desideri." } }
+      }
+    }
+  },
+  "version" : "1.0"
+}
