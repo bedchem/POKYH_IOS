@@ -909,8 +909,8 @@ private struct WatchSettingsGroup: View {
             if pairing.state != .unsupported && pairing.state != .notPaired {
                 SettingsGroup(t.watchTitle) {
                     SettingsRow(t.watchStatus) {
-                        ProfilePill(text: statusLabel(t), tone: pairing.canSend ? Decorative.sage : Decorative.butter,
-                                    symbol: pairing.canSend ? "applewatch.radiowaves.left.and.right" : "applewatch.slash")
+                        ProfilePill(text: statusLabel(t), tone: connected ? Decorative.sage : Decorative.butter,
+                                    symbol: connected ? "applewatch.radiowaves.left.and.right" : "applewatch.slash")
                     }
                     SettingsRow(t.connect, hint: lastSentHint(t), alert: alert(t)) {
                         Button {
@@ -931,16 +931,15 @@ private struct WatchSettingsGroup: View {
 
     private func connect() {
         sending = true
-        let session = app.session
-        let password = session.flatMap { Keychain.password(for: $0.username) }
-        result = WatchSync.pairNow(username: session?.username,
-                                   displayName: session.map { $0.personName ?? $0.username },
-                                   password: password)
+        result = WatchSync.connect(app.session)
         Task {
             try? await Task.sleep(for: .milliseconds(600))
             sending = false
         }
     }
+
+    /// Ready, and the account may go over: the watch has it or gets it with the next change.
+    private var connected: Bool { pairing.canSend && WatchSync.consent == .yes }
 
     private func statusLabel(_ t: ProfileText) -> String {
         switch pairing.state {
@@ -948,7 +947,7 @@ private struct WatchSettingsGroup: View {
         case .unsupported: t.unsupported
         case .notPaired: t.notPaired
         case .appMissing: t.appMissing
-        case .ready: t.ready
+        case .ready: connected ? t.ready : t.notConnected
         }
     }
 
@@ -1230,11 +1229,17 @@ struct ProfileText {
     let appMissing: String
     let appMissingHint: String
     let ready: String
+    let notConnected: String
     let connect: String
     let connectButton: String
     let lastSent: (String) -> String
     let noAccount: String
     let logoutAndRemove: String
+    let offerTitle: String
+    let offerBody: String
+    let offerLater: String
+    let installTitle: String
+    let installBody: String
 
     static func of(_ lang: Lang) -> ProfileText {
         switch lang {
@@ -1254,11 +1259,17 @@ struct ProfileText {
         appMissing: "App fehlt",
         appMissingHint: "Die Apple Watch ist gekoppelt, aber POKYH ist darauf nicht installiert. Installiere es in der Watch-App.",
         ready: "Bereit",
+        notConnected: "Nicht verbunden",
         connect: "Mit Apple Watch verbinden",
         connectButton: "Verbinden",
         lastSent: { "Zuletzt gesendet: \($0)." },
         noAccount: "Melde dich zuerst auf dem iPhone an.",
-        logoutAndRemove: "Abmelden & Konto vom Gerät löschen"
+        logoutAndRemove: "Abmelden & Konto vom Gerät löschen",
+        offerTitle: "POKYH auf der Apple Watch",
+        offerBody: "Stundenplan, Noten, Mensa und To-dos am Handgelenk. Die Uhr meldet sich dafür mit deinem Konto an.",
+        offerLater: "Nicht jetzt",
+        installTitle: "POKYH auf die Apple Watch",
+        installBody: "Öffne die Watch-App auf dem iPhone und installiere POKYH unter „Verfügbare Apps“."
     )
 
     static let it = ProfileText(
@@ -1271,11 +1282,17 @@ struct ProfileText {
         appMissing: "App mancante",
         appMissingHint: "L’Apple Watch è abbinato, ma POKYH non è installato. Installalo dall’app Watch.",
         ready: "Pronto",
+        notConnected: "Non collegato",
         connect: "Collega ad Apple Watch",
         connectButton: "Collega",
         lastSent: { "Ultimo invio: \($0)." },
         noAccount: "Prima accedi sull’iPhone.",
-        logoutAndRemove: "Esci e rimuovi l’account dal dispositivo"
+        logoutAndRemove: "Esci e rimuovi l’account dal dispositivo",
+        offerTitle: "POKYH su Apple Watch",
+        offerBody: "Orario, voti, mensa e to-do al polso. Per questo l’orologio accede con il tuo account.",
+        offerLater: "Non ora",
+        installTitle: "POKYH su Apple Watch",
+        installBody: "Apri l’app Watch sull’iPhone e installa POKYH da “App disponibili”."
     )
 
     static let en = ProfileText(
@@ -1288,11 +1305,17 @@ struct ProfileText {
         appMissing: "App missing",
         appMissingHint: "The Apple Watch is paired, but POKYH isn't installed on it. Install it from the Watch app.",
         ready: "Ready",
+        notConnected: "Not connected",
         connect: "Connect to Apple Watch",
         connectButton: "Connect",
         lastSent: { "Last sent: \($0)." },
         noAccount: "Sign in on the iPhone first.",
-        logoutAndRemove: "Sign out & remove account from device"
+        logoutAndRemove: "Sign out & remove account from device",
+        offerTitle: "POKYH on Apple Watch",
+        offerBody: "Timetable, grades, canteen and to-dos on your wrist. The watch signs in with your account for this.",
+        offerLater: "Not now",
+        installTitle: "POKYH on Apple Watch",
+        installBody: "Open the Watch app on your iPhone and install POKYH under “Available Apps”."
     )
 }
 

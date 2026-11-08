@@ -45,6 +45,7 @@ struct RootTabView: View {
         .tint(Palette.accent)
         .modifier(RecapHost())
         .modifier(AnnouncementPopupHost())
+        .modifier(WatchOfferHost())
         .modifier(WebSignInHost(scanning: .constant(false), working: .constant(false), takesLinks: true))
         .environment(\.strings, s)
         .environment(\.searchInToolbar, !searchIsTab)

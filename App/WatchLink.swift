@@ -36,10 +36,11 @@ final class WatchLink: NSObject {
     private let store: AccountStore
     private let session: WCSession? = WatchLink.supported ? .default : nil
 
-    /// The UI tests' made-up accounts stay away from a paired watch.
+    /// The UI tests' made-up accounts stay away from a paired watch, unless the test is about
+    /// the watch (`-POKYHStubWatch YES`).
     private static var supported: Bool {
         #if DEBUG
-        if StubServer.isActive { return false }
+        if StubServer.isActive, !UserDefaults.standard.bool(forKey: "POKYHStubWatch") { return false }
         #endif
         return WCSession.isSupported()
     }
@@ -73,6 +74,16 @@ final class WatchLink: NSObject {
         send(AccountHandoff(account: nil))
     }
 
+    /// "Not now": the watch forgets whatever it was given before, whatever the consent says.
+    func withdraw() {
+        snapshot = nil
+        pendingSend?.cancel()
+        guard let session, session.activationState == .activated, session.isPaired, session.isWatchAppInstalled else { return }
+        let handoff = AccountHandoff(account: nil)
+        try? session.updateApplicationContext(handoff.payload)
+        session.transferUserInfo(handoff.payload)
+    }
+
     /// Sends the stored account again, both ways. Returns false when no watch can take it.
     @discardableResult
     func resend() -> Bool {
@@ -83,7 +94,7 @@ final class WatchLink: NSObject {
             return true
         }
         refreshPairing()
-        guard pairing.canSend else { return false }
+        guard allowed, pairing.canSend else { return false }
         let handoff = currentHandoff()
         try? session.updateApplicationContext(context(handoff))
         session.transferUserInfo(handoff.payload)
@@ -91,8 +102,11 @@ final class WatchLink: NSObject {
         return true
     }
 
+    /// Nothing of the account goes over before a yes (see WatchSync.consent).
+    private var allowed: Bool { WatchSync.consent == .yes }
+
     private func send(_ handoff: AccountHandoff) {
-        guard let session, session.activationState == .activated, session.isPaired, session.isWatchAppInstalled else { return }
+        guard allowed, let session, session.activationState == .activated, session.isPaired, session.isWatchAppInstalled else { return }
         try? session.updateApplicationContext(context(handoff))
         session.transferUserInfo(handoff.payload)
         pairing.lastSent = .now
@@ -135,7 +149,7 @@ final class WatchLink: NSObject {
 
     private func sendSnapshot() {
         pendingSend?.cancel()
-        guard let session, session.activationState == .activated, session.isPaired, session.isWatchAppInstalled,
+        guard allowed, let session, session.activationState == .activated, session.isPaired, session.isWatchAppInstalled,
               store.changedAt != nil else { return }
         try? session.updateApplicationContext(context(currentHandoff()))
     }
@@ -215,7 +229,7 @@ final class WatchLink: NSObject {
             resend()
             return
         }
-        guard store.changedAt != nil else { return }
+        guard allowed, store.changedAt != nil else { return }
         let handoff = currentHandoff()
         guard let session, session.isPaired, session.isWatchAppInstalled else { return }
         try? session.updateApplicationContext(context(handoff))
@@ -235,10 +249,11 @@ extension WatchLink: WCSessionDelegate {
         let reply = ReplyHandler(replyHandler)
         if AccountHandoff.isRequest(message) {
             // Locked phone: no answer at all. "Nothing stored" would sign the watch out.
-            Task { @MainActor in reply.call((try? self.store.handoff())?.payload ?? [:]) }
+            Task { @MainActor in reply.call(self.allowed ? (try? self.store.handoff())?.payload ?? [:] : [:]) }
         } else if WatchRequest.isSnapshotRequest(message) {
             // What we have right away; anything newer follows as applicationContext.
             Task { @MainActor in
+                guard self.allowed else { return reply.call([:]) }
                 reply.call(self.snapshot?.payload ?? [:])
                 await self.refreshForWatch()
             }
@@ -291,6 +306,71 @@ enum DefaultSchool {
 /// What the rest of the app calls: sign-in and sign-out in AppState end up on the watch.
 @MainActor
 enum WatchSync {
+    /// Asked once, when a watch with POKYH on it first shows up. The watch signs in with the
+    /// WebUntis password, so it goes over only after a yes; nil until asked.
+    enum Consent: String { case yes, no }
+
+    private static let consentKey = "pokyh_watch_consent"
+    private static let installHintKey = "pokyh_watch_install_hint"
+
+    static var consent: Consent? {
+        get { UserDefaults.standard.string(forKey: consentKey).flatMap(Consent.init(rawValue:)) }
+        set { UserDefaults.standard.set(newValue?.rawValue, forKey: consentKey) }
+    }
+
+    /// What to ask about the watch right now, if anything.
+    enum Offer: String, Identifiable {
+        /// A watch with POKYH on it, never asked: connect?
+        case connect
+        /// A watch without POKYH: how to put it on, once.
+        case install
+        var id: String { rawValue }
+    }
+
+    static func offer(signedIn: Bool) -> Offer? {
+        guard signedIn else { return nil }
+        #if DEBUG
+        // The UI tests have no watch: `-POKYHWatchOffer connect` shows the question anyway.
+        if let forced = UserDefaults.standard.string(forKey: "POKYHWatchOffer").flatMap(Offer.init(rawValue:)),
+           !UserDefaults.standard.bool(forKey: "pokyh_watch_offer_forced_seen") {
+            return forced
+        }
+        #endif
+        switch pairing.state {
+        case .ready: return consent == nil ? .connect : nil
+        case .appMissing:
+            return consent != .no && !UserDefaults.standard.bool(forKey: installHintKey) ? .install : nil
+        default: return nil
+        }
+    }
+
+    static func answered(_ offer: Offer, connect: Bool, session: UserSession?) {
+        #if DEBUG
+        UserDefaults.standard.set(true, forKey: "pokyh_watch_offer_forced_seen")
+        #endif
+        switch offer {
+        case .connect:
+            if connect {
+                self.connect(session)
+            } else {
+                consent = .no
+                link.withdraw()
+            }
+        case .install:
+            UserDefaults.standard.set(true, forKey: installHintKey)
+        }
+    }
+
+    /// Hands the signed-in account over. The password is read (behind Face ID) only when the
+    /// watch's copy is missing or belongs to another account.
+    @discardableResult
+    static func connect(_ session: UserSession?) -> PairResult {
+        guard let session else { return pairNow() }
+        if let stored = accounts.load(), AccountRoster.same(stored.username, session.username) { return pairNow() }
+        return pairNow(username: session.username, displayName: session.personName ?? session.username,
+                       password: Keychain.password(for: session.username))
+    }
+
     enum PairResult {
         case sent
         /// No paired watch, or POKYH isn't installed on it.
@@ -347,6 +427,8 @@ enum WatchSync {
             account = StoredAccount(username: username, displayName: displayName ?? username, school: school(of: username), secret: password)
         }
         guard let account else { return .noAccount }
+        // Tapping "connect" is the yes, whatever was answered before.
+        consent = .yes
         // A fresh timestamp, so the watch takes it even over a sign-out it heard earlier.
         try? accounts.save(account)
         return link.resend() ? .sent : .noWatch
