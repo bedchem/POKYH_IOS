@@ -510,64 +510,22 @@ private struct HomeworkRow: View {
     }
 }
 
-/// A member that opens to show what the class record knows about them. Also in the reminders' class list.
+/// A member of the class: picture and user name, nothing else about them.
 struct MemberRow: View {
     let member: ApiClassMember
-    @Environment(\.strings) private var s
-    @State private var expanded = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            Button {
-                withAnimation(Motion.standardEase) { expanded.toggle() }
-            } label: {
-                HStack(spacing: Spacing.iconText) {
-                    InitialAvatar(name: member.username, size: 38, colorSeed: member.username)
-                    Text(member.username)
-                        .textStyle(.body)
-                        .foregroundStyle(Palette.textPrimary)
-                        .lineLimit(1)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(Palette.textTertiary)
-                        .rotationEffect(.degrees(expanded ? 180 : 0))
-                }
-                .frame(minHeight: 60)
-                .padding(.horizontal, Spacing.card)
-                .padding(.vertical, Spacing.md)
-                .contentShape(.rect)
-            }
-            .buttonStyle(.rowPress)
-            .accessibilityHint(expanded ? s.tasks.collapse : s.tasks.expand)
-
-            if expanded {
-                VStack(alignment: .leading, spacing: Spacing.sm) {
-                    detail(s.tasks.username, member.username)
-                    if let joined = member.joinedAt, !joined.isEmpty {
-                        detail(s.tasks.joined, String(joined.prefix(10)))
-                    }
-                    detail("POKYH ID", member.stableUid)
-                }
-                .padding(.horizontal, Spacing.card)
-                .padding(.vertical, Spacing.md)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Palette.nested)
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-        }
-    }
-
-    private func detail(_ label: String, _ value: String) -> some View {
-        HStack(alignment: .top, spacing: Spacing.md) {
-            Text(label).textStyle(.caption).foregroundStyle(Palette.textTertiary).frame(width: 104, alignment: .leading)
-            Text(value)
-                .textStyle(.caption)
-                .foregroundStyle(Palette.textSecondary)
-                .lineLimit(2)
-                .textSelection(.enabled)
+        HStack(spacing: Spacing.iconText) {
+            InitialAvatar(name: member.username, size: 38, colorSeed: member.username)
+            Text(member.username)
+                .textStyle(.body)
+                .foregroundStyle(Palette.textPrimary)
+                .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .frame(minHeight: 56)
+        .padding(.horizontal, Spacing.card)
+        .accessibilityElement(children: .combine)
     }
 }
 

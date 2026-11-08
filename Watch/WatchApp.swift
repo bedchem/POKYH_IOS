@@ -48,21 +48,31 @@ struct SignInOnPhoneView: View {
 
 // MARK: Pages
 
-private enum Page: Hashable {
+private enum Page: String, Hashable {
     case today, grades, mensa, todos
+
+    /// Today, or in debug builds the page `-POKYHWatchPage` names, for screenshots.
+    static var first: Page {
+        #if DEBUG
+        if let name = UserDefaults.standard.string(forKey: "POKYHWatchPage"), let page = Page(rawValue: name) { return page }
+        #endif
+        return .today
+    }
 }
 
-/// Heute, Noten, Mensa and To-dos, one crown turn apart.
+/// Heute, Noten, Mensa and To-dos, one crown turn apart. Each says what it is beside the clock,
+/// like the system's own apps; a bare "7,50" didn't say it was the grades.
 struct DayPages: View {
     let session: WatchSession
-    @State private var page = Page.today
+    @Environment(\.strings) private var s
+    @State private var page = Page.first
 
     var body: some View {
         TabView(selection: $page) {
-            TodayPage(session: session).tag(Page.today)
-            GradesPage(session: session).tag(Page.grades)
-            MensaPage(session: session).tag(Page.mensa)
-            TodosPage(session: session).tag(Page.todos)
+            TodayPage(session: session).tag(Page.today).navigationTitle(s.common.today)
+            GradesPage(session: session).tag(Page.grades).navigationTitle(s.nav.grades)
+            MensaPage(session: session).tag(Page.mensa).navigationTitle(s.nav.mensa)
+            TodosPage(session: session).tag(Page.todos).navigationTitle(s.tasks.todos)
         }
         .tabViewStyle(.verticalPage)
         .sensoryFeedback(.selection, trigger: page)
@@ -336,10 +346,6 @@ extension WatchSnapshot.Lesson {
     }
 }
 
-/// Big watches have room to run a dial up beside the clock; on the smaller ones they'd touch.
-@MainActor private var dialLift: CGFloat {
-    WKInterfaceDevice.current().screenBounds.width >= 200 ? Spacing.xl : 0
-}
 
 /// Minutes to the bell for the Always-On display and VoiceOver: no seconds there.
 private func minutesLeft(_ seconds: TimeInterval, _ s: Strings) -> String {
@@ -368,7 +374,6 @@ private struct LessonHero: View {
             }
             if let follower { FollowerLine(lesson: follower) }
         }
-        .padding(.top, -dialLift)
     }
 }
 
@@ -711,7 +716,6 @@ private struct OverallGauge: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(s.home.overall)
         .accessibilityValue("\(WatchFormat.average(value, decimal: s.common.decimal)), \(s.home.fromGrades(count))")
-        .padding(.top, -dialLift)
     }
 }
 

@@ -30,6 +30,8 @@ final class WatchSession: NSObject {
 
     /// How long the phone gets to answer with something newer before the watch loads by itself.
     private static let phoneGrace: Duration = .seconds(8)
+    /// A phone that takes a message and never answers would keep the page spinning.
+    private static let replyTimeout: Duration = .seconds(6)
     /// WebUntis gets a sign-in from here this often at most, whatever the outcome.
     private static let ownLoadInterval: TimeInterval = 10 * 60
     /// The phone said "later" (locked, offline): don't ask again right away.
@@ -53,6 +55,15 @@ final class WatchSession: NSObject {
         self.account = account
         linkComingUp = account != nil
         super.init()
+        #if DEBUG
+        if WatchDemo.isOn {
+            self.account = WatchDemo.account
+            linkComingUp = false
+            received = WatchDemo.snapshot()
+            snapshot = received
+            return
+        }
+        #endif
         if let account, let saved = store.snapshot(), AccountRoster.same(saved.username, account.username) {
             received = saved
             queue = store.queue()
@@ -245,7 +256,12 @@ final class WatchSession: NSObject {
 
     private func ask(_ message: [String: Any]) async -> [String: Any]? {
         let reply: SendablePayload? = await withCheckedContinuation { continuation in
-            askPhone(message) { continuation.resume(returning: SendablePayload($0)) } failed: { continuation.resume(returning: nil) }
+            let once = ResumeOnce(continuation)
+            askPhone(message) { once.resume(SendablePayload($0)) } failed: { once.resume(nil) }
+            Task {
+                try? await Task.sleep(for: Self.replyTimeout)
+                once.resume(nil)
+            }
         }
         return reply?.value
     }
@@ -303,6 +319,21 @@ extension WatchSession: WCSessionDelegate {
     nonisolated func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
         let payload = SendablePayload(userInfo)
         Task { @MainActor in self.receive(payload.value) }
+    }
+}
+
+/// Whichever comes first, the answer or the timeout, the other one finds nothing left to resume.
+@MainActor
+private final class ResumeOnce {
+    private var continuation: CheckedContinuation<SendablePayload?, Never>?
+
+    init(_ continuation: CheckedContinuation<SendablePayload?, Never>) {
+        self.continuation = continuation
+    }
+
+    func resume(_ value: SendablePayload?) {
+        continuation?.resume(returning: value)
+        continuation = nil
     }
 }
 

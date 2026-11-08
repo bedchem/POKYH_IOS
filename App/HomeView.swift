@@ -36,7 +36,6 @@ struct HomeView: View {
 
     @State private var width: CGFloat = 0
     @State private var route: Route?
-    @State private var arranging = false
     @State private var showProfile = false
     /// Which blocks Home shows and in what order, by block name (see HomeLayout).
     @AppStorage("pokyh_home_layout") private var storedLayout = ""
@@ -128,10 +127,7 @@ struct HomeView: View {
             // The greeting is the heading here; the title only names the back button.
             ToolbarItem(placement: .principal) { Color.clear.frame(width: 1, height: 1) }
             if hasUntis {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button { arranging = true } label: { Image(systemName: "pencil") }
-                        .accessibilityLabel(s.nav.arrangeHome)
-                }
+                ToolbarItem(placement: .topBarLeading) { ArrangeHomeButton(layout: layout) }
             }
         }
         .profileToolbar()
@@ -139,7 +135,6 @@ struct HomeView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) { BellToolbarButton(onPick: openFromBell) }
         }
-        .sheet(isPresented: $arranging) { HomeArrangeSheet(layout: layout) }
         .sheet(isPresented: $showProfile) { NavigationStack { ProfileView() } }
         .animation(.spring(response: 0.42, dampingFraction: 0.86), value: storedLayout)
         .pushed(item: $route) { destination($0) }
@@ -1364,6 +1359,20 @@ private struct HomeLayout: Codable, Equatable {
     func added(_ section: HomeSection) -> HomeLayout {
         HomeLayout(order: (visible.filter { $0 != section } + [section]).map(\.rawValue),
                    hidden: hiddenSections.subtracting([section]).map(\.rawValue).sorted())
+    }
+}
+
+/// The pencil and the sheet it opens, with a state of their own: as Home's state, the tap rebuilt
+/// every block of Home before the sheet could start to rise.
+private struct ArrangeHomeButton: View {
+    let layout: Binding<HomeLayout>
+    @Environment(\.strings) private var s
+    @State private var open = false
+
+    var body: some View {
+        Button { open = true } label: { Image(systemName: "pencil") }
+            .accessibilityLabel(s.nav.arrangeHome)
+            .sheet(isPresented: $open) { HomeArrangeSheet(layout: layout) }
     }
 }
 

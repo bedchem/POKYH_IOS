@@ -68,6 +68,7 @@
 		9F8C23D66DFDE371988FD4F7 /* ProfilePictureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 398055BED080E28407F7C17C /* ProfilePictureTests.swift */; };
 		A2185F70214014233C7AEF7F /* TimetableView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9305591D188CF40D2D59119 /* TimetableView.swift */; };
 		A8838209FC294592BEB799D2 /* SchoolHubView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 295049F8C53D3B9647243EBD /* SchoolHubView.swift */; };
+		A8C7C6C960B9A8CE61C2BA7A /* WatchDemo.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1391E15C04444AC3A6378A23 /* WatchDemo.swift */; };
 		AB9DF364CB729DF821C9146D /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F01FDC7D24E93DB3087D8361 /* WidgetKit.framework */; };
 		AC271960F188624E08CA68B3 /* StubServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7EE0247D220289A8227A717 /* StubServer.swift */; };
 		AC46D19197F0CD4B0F5AD84A /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CD55719B3D1A4FEF120A7D7 /* HomeView.swift */; };
@@ -185,6 +186,7 @@
 		0EE18DCFA6A39FAC8B27AF3D /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		124B092C031D919A685C6309 /* AppDriver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDriver.swift; sourceTree = "<group>"; };
 		138284BCEE8C2E4997D6D31A /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
+		1391E15C04444AC3A6378A23 /* WatchDemo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchDemo.swift; sourceTree = "<group>"; };
 		1692F46262DB6CFCE72C4611 /* ScreenDumpTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenDumpTests.swift; sourceTree = "<group>"; };
 		169F3799FC8B9DEF62295D61 /* SearchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchTests.swift; sourceTree = "<group>"; };
 		1777648FEB04305143836A6C /* TodosView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodosView.swift; sourceTree = "<group>"; };
@@ -426,6 +428,7 @@
 				0EE18DCFA6A39FAC8B27AF3D /* PrivacyInfo.xcprivacy */,
 				5D41C038AFCB5256E11864DA /* Watch.entitlements */,
 				9573FB8B651BA48F66F4CF26 /* WatchApp.swift */,
+				1391E15C04444AC3A6378A23 /* WatchDemo.swift */,
 				B63818320FC32D156E160721 /* WatchSession.swift */,
 			);
 			path = Watch;
@@ -810,6 +813,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				F64F6C72D5E094D1E78D8317 /* WatchApp.swift in Sources */,
+				A8C7C6C960B9A8CE61C2BA7A /* WatchDemo.swift in Sources */,
 				ED1DB5ED144C95DE807FF56A /* WatchSession.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
