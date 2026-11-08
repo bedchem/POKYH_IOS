@@ -348,6 +348,8 @@ struct TimetableView: View {
     private struct WeekKey: Hashable {
         let offset: Int
         let source: TimetableSource?
+        /// Loaded again once a sign-in behind the stored copy gets through.
+        let offline: Bool
     }
 
     private var thisMonday: Date {
@@ -401,9 +403,9 @@ struct TimetableView: View {
         .navigationTitle(s.nav.timetable)
         .navigationBarTitleDisplayMode(.inline)
         .profileToolbar()
-        .task(id: WeekKey(offset: weekOffset, source: source)) { await load() }
+        .task(id: WeekKey(offset: weekOffset, source: source, offline: app.isOffline)) { await load() }
         // The week's absences land with its lessons, the rest of the school year behind them.
-        .task(id: source == nil ? weekOffset : nil) { await loadAbsences() }
+        .task(id: source == nil ? "\(weekOffset)|\(app.isOffline)" : nil) { await loadAbsences() }
         .task { await loadHolidays() }
         .onAppear { if !takeJump() { selectInitialDay() } }
         .onChange(of: app.timetableHomeSignal) {
@@ -775,6 +777,11 @@ struct TimetableView: View {
         guard session.hasUntis else { loading = false; return }
         let shown = source
         loading = true; error = nil
+        // Opened again, the own week shows at once from the last copy while it's asked again.
+        if entries.isEmpty, shown == nil, let stored = await UntisClient.shared.storedTimetable(date: DateFmt.isoString(monday), session),
+           !stored.isEmpty, shown == source {
+            entries = stored
+        }
         do {
             let fresh = try await week(DateFmt.isoString(monday), session)
             // An answer for a timetable no longer shown is dropped.
@@ -1125,7 +1132,7 @@ struct WeekTimetablePage: View {
                 .equatable()
             }
         }
-        .task { await load() }
+        .task(id: app.isOffline) { await load() }
     }
 
     private func load() async {
@@ -1133,6 +1140,12 @@ struct WeekTimetablePage: View {
         guard session.hasUntis else { loading = false; return }
         loading = entries.isEmpty
         error = nil
+        // The own week from the last copy at once, then quietly the fresh one.
+        if entries.isEmpty, source == nil, let stored = await UntisClient.shared.storedTimetable(date: DateFmt.isoString(monday), session),
+           !stored.isEmpty {
+            entries = stored
+            loading = false
+        }
         do {
             if let source {
                 entries = try await UntisClient.shared.timetable(source: source, date: DateFmt.isoString(monday), session)

@@ -37,12 +37,12 @@ struct ContentView: View {
         }
         // Running on cached data: drops in from the top, like Android's OfflineNotice.
         .overlay(alignment: .top) {
-            if app.isOffline && app.phase == .authed && !offlineDismissed {
+            if app.showsOffline && app.phase == .authed && !offlineDismissed {
                 OfflineBanner { offlineDismissed = true }
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
-        .animation(.spring(response: 0.5, dampingFraction: 0.82), value: app.isOffline)
+        .animation(.spring(response: 0.5, dampingFraction: 0.82), value: app.showsOffline)
         .animation(.spring(response: 0.5, dampingFraction: 0.82), value: offlineDismissed)
         .onChange(of: app.isOffline) { _, offline in
             if !offline { offlineDismissed = false }

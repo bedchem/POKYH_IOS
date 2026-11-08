@@ -20,7 +20,7 @@ enum WidgetBridge {
             .filter { $0.end > now }                         // Vergangenes weglassen
             .sorted { $0.start < $1.start }
 
-        let trimmed = Array(lessons.prefix(12))              // max. 12 Einträge
+        let trimmed = Array(lessons.prefix(12))              // 12 at most
         SharedStore.writeSnapshot(TimetableSnapshot(generatedAt: now, lessons: trimmed))
         reload()
     }

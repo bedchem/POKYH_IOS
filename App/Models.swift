@@ -50,10 +50,10 @@ struct UserSession: Codable, Equatable {
 // ── Gespeicherte Konten (Mehrbenutzer + Face ID) ───────────────────────────
 
 struct SavedAccount: Codable, Equatable, Identifiable {
-    var username: String           // dient als ID & Keychain-Schlüssel
-    var displayName: String        // Klassenname o. Benutzername
+    var username: String           // the id and the Keychain key
+    var displayName: String        // class name, else the user name
     var nickname: String?          // optionaler, lokal vergebener Spitzname
-    var imageUrl: String?          // Profilbild-URL (WebUntis) für die Konten-Liste
+    var imageUrl: String?          // WebUntis profile picture, for the list of accounts
     var school: School? = nil      // nil: saved before the school search, so the default school
     var id: String { username }
 
@@ -64,7 +64,7 @@ struct SavedAccount: Codable, Equatable, Identifiable {
     }
 }
 
-// ── Stundenplan ────────────────────────────────────────────────────────────
+// ── Timetable ──────────────────────────────────────────────────────────────
 
 struct TimetableEntry: Identifiable, Equatable, Codable {
     var id: Int

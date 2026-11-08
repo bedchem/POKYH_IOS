@@ -388,8 +388,12 @@ enum WatchSync {
     static var pairing: WatchPairing { link.pairing }
 
     static func start() {
-        // A copy saved by an older build was readable after the first unlock; this moves it.
-        try? accounts.reseal()
+        // A copy saved by an older build was readable after the first unlock; this moves it,
+        // once: a Keychain write on every launch held up the first frame.
+        let resealed = "pokyh_watch_copy_resealed"
+        if !UserDefaults.standard.bool(forKey: resealed), (try? accounts.reseal()) != nil {
+            UserDefaults.standard.set(true, forKey: resealed)
+        }
         link.activate()
     }
 

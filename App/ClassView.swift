@@ -72,7 +72,7 @@ struct ClassView: View {
             case .absences: AbsencesView()
             }
         }
-        .task { await load() }
+        .task(id: app.isOffline) { await load() }
         .refreshable { await load() }
     }
 

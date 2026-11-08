@@ -34,7 +34,7 @@ enum ThemeMode: String, CaseIterable, Identifiable {
 enum BackendStatus: Equatable {
     case unknown
     case connected
-    case notStudent        // kein Schülerkonto → bewusst kein POKYH-Konto
+    case notStudent        // not a pupil: no POKYH account, on purpose
     case noClass           // pupil WebUntis names no class for (why: AppState.backendClassNote)
     case failed(String)    // Backend-Fehler (Statuscode/Meldung)
 
@@ -81,10 +81,15 @@ final class AppState {
     var busy = false
     /// Offline: stored data on screen, the sign-in didn't get through.
     var isOffline = false
+    /// Opened on the stored copy while the sign-in is still on its way. Offline underneath (no
+    /// tokens yet), but nothing says so unless it takes longer than a sign-in usually does.
+    var signingInBehind = false
+    /// What the screens show as offline.
+    var showsOffline: Bool { isOffline && !signingInBehind }
     var statusText = ""
     var error: String?
     var showAddAccount = false
-    var prefillUsername: String?   // vorausgefüllter Benutzername bei Passwort-Neueingabe
+    var prefillUsername: String?   // filled in when the password is asked for again
     /// A sign-in waiting for the authenticator app's code, from any path: the sign-in screen, an
     /// unlock, a relaunch. An account like that can't sign itself in.
     private(set) var twoFactor: TwoFactorRequest?
@@ -123,8 +128,9 @@ final class AppState {
     @ObservationIgnored private var reconnecting = false
 
     init() {
-        accounts = store.accounts
-        phase = store.accounts.isEmpty ? .login : .lock
+        let saved = store.accounts
+        accounts = saved
+        phase = saved.isEmpty ? .login : .lock
         let raw = UserDefaults.standard.string(forKey: "pokyh_theme") ?? ThemeMode.system.rawValue
         themeMode = ThemeMode(rawValue: raw) ?? .system
         // The first `canEvaluatePolicy` call takes about 300 ms, so it runs off the main thread
@@ -156,13 +162,13 @@ final class AppState {
     var isParent: Bool { session?.isParent ?? false }
     var biometricAvailable: Bool { biometricInfo.available }
 
-    // ── Standard-Konto (Einstellungen) ───────────────────────────────────────
+    // ── Default account (settings) ───────────────────────────────────────────
     var defaultUsername: String? {
         get { _ = storeRevision; return store.defaultUsername }
         set { store.defaultUsername = newValue; storeRevision += 1 }
     }
 
-    // ── Sperrbildschirm: Face ID → automatischer Login ───────────────────────
+    // ── Lock screen: Face ID, then the sign-in by itself ─────────────────────
 
     /// Whether the lock screen should try Face ID by itself this time.
     func consumeAutoUnlock() -> Bool {
@@ -300,6 +306,41 @@ final class AppState {
         let school = school(for: username)
         let loginTask = Task { try await self.buildSession(username: username, password: password, school: school, renewal: !fresh, token: token) }
 
+        // A returning account opens at once on what it had last time; the sign-in finishes
+        // behind it and swaps the fresh data in. Waiting for WebUntis first took a second or
+        // three on every unlock. A typed password or a new account still waits.
+        if let snap, !viaSheet, !fresh, token == nil {
+            await enterOffline(snap, viaSheet: false, epoch: epoch)
+            signingInBehind = true
+            reconnecting = true
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(Self.offlineTimeout))
+                // Slower than usual: from here on it's said like any offline start.
+                if self?.lockEpoch == epoch { self?.signingInBehind = false }
+            }
+            Task { [weak self] in
+                defer {
+                    self?.reconnecting = false
+                    if self?.lockEpoch == epoch { self?.signingInBehind = false }
+                }
+                do {
+                    let s = try await loginTask.value
+                    await self?.upgradeFromBackground(s, save: save, password: password, epoch: epoch)
+                } catch {
+                    guard let self, epoch == self.lockEpoch else { return }
+                    if self.askForCode(error, username: username, password: password, save: save, school: school) { return }
+                    // No connection: the stored copy stays, the banner says so, and coming back
+                    // online signs in again.
+                    if error is URLError { return }
+                    // Refused (password changed, signed out elsewhere): back to the lock screen
+                    // with the reason, like a sign-in that failed there.
+                    self.lock(deliberate: true)
+                    self.error = (error as? AppError)?.message ?? error.localizedDescription
+                }
+            }
+            return
+        }
+
         // Without the offline way out it simply waits; with it, the sign-in races five seconds.
         let outcome: LoginOutcome
         if snap == nil {
@@ -348,7 +389,7 @@ final class AppState {
                 // Asked from the prompt, so it's the one to say so; the screen under it can't be seen.
                 twoFactor?.checking = false
                 twoFactor?.problem = (e as? AppError)?.message ?? Strings.current.errors.noConnection
-            // Schneller Netzwerkfehler (z. B. Flugmodus) + Cache → ebenfalls offline.
+            // A quick network failure (flight mode) with a stored copy: offline as well.
             } else if let snap, e is URLError {
                 await enterOffline(snap, viaSheet: viaSheet, epoch: epoch)
             } else {
@@ -430,7 +471,7 @@ final class AppState {
         return s
     }
 
-    /// Abschluss eines erfolgreichen Online-Logins: Konto sichern, Offline-Snapshot
+    /// The end of a sign-in that got through: the account and an offline snapshot
     /// saved, the session taken over, with the sheet leaving first.
     private func finalize(_ s: UserSession, save: Bool, password: String, viaSheet: Bool, fresh: Bool, epoch: Int) async {
         // The account and password are saved before the session changes, so they're kept even
@@ -502,10 +543,16 @@ final class AppState {
             store.save(account, password: password)
             accounts = store.accounts
         }
+        // What a sign-in on the lock screen does too, now that it can finish behind the app.
+        WatchSync.signedIn(username: s.username, displayName: s.personName ?? s.username, password: password)
+        store.lastActive = s.username
+        store.updateImageUrl(s.imageUrl, for: s.username)
+        accounts = store.accounts
         if s.hasUntis { DiskCache.save(Self.offlineSnapshot(s), key: Self.sessionKey, owner: s.username) }
         withAnimation(.easeInOut(duration: 0.3)) {
             session = s
             isOffline = false
+            signingInBehind = false
         }
         onAuthenticated()
         Task { await checkPrivacyNotice(fresh: false) }
@@ -770,6 +817,7 @@ final class AppState {
         unreadMessages = 0
         session = nil
         isOffline = false
+        signingInBehind = false
         // What was loaded stays sealed on disk; nothing of it lingers in memory behind the lock.
         UntisClient.shared.clearCaches()
         BackendClient.shared.clearCaches()

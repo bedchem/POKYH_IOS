@@ -116,7 +116,7 @@ struct LessonSnapshot: Codable, Hashable, Sendable, Identifiable {
     var isExam: Bool
 }
 
-/// Vom Hauptprogramm geschriebener, von Widget/Activity gelesener Stundenplan-Auszug.
+/// The part of the timetable the app writes and the widgets and Live Activity read.
 struct TimetableSnapshot: Codable, Sendable {
     var generatedAt: Date
     var lessons: [LessonSnapshot]          // chronologisch sortiert
@@ -139,7 +139,7 @@ struct GradeItem: Codable, Hashable, Sendable, Identifiable {
 
 struct GradesSnapshot: Codable, Sendable {
     var generatedAt: Date
-    var average: Double     // gewichteter Gesamtschnitt (über alle Einzelnoten)
+    var average: Double     // overall average over every single grade
     var positive: Int
     var negative: Int
     var recent: [GradeItem] // zuletzt eingetragen (absteigend)
@@ -242,7 +242,7 @@ enum SharedStore {
         return value
     }
 
-    // Stundenplan
+    // Timetable
     static func writeSnapshot(_ s: TimetableSnapshot) { write(s, to: "timetable") }
     static func readSnapshot() -> TimetableSnapshot { read(TimetableSnapshot.self, from: "timetable", fallback: .empty) }
     // Noten
@@ -277,7 +277,7 @@ nonisolated struct LessonActivityAttributes: ActivityAttributes {
         var teacher: String
         var start: Date
         var end: Date
-        var isBreak: Bool          // true = Pause bis zur nächsten Stunde
+        var isBreak: Bool          // a break until the next lesson
     }
     /// Fixed for the activity's life: the class name.
     var className: String

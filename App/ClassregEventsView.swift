@@ -56,7 +56,7 @@ struct ClassregEventsView: View {
             }
         }
         .task { withAnimation(.spring(response: 0.6, dampingFraction: 0.48).delay(0.1)) { yearShown = true } }
-        .task(id: year) { await load() }
+        .task(id: "\(year)|\(app.isOffline)") { await load() }
     }
 
     static func yearLabel(_ y: Int) -> String { "\(String(y))/\(String((y + 1) % 100))" }

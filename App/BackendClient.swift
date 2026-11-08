@@ -49,7 +49,7 @@ final class BackendClient {
     /// What the server-to-server sign-in answered, with what the UI needs to explain it.
     enum UntisLoginResult {
         case ok(token: String, refresh: String)
-        case failed(String)        // HTTP-/Netzwerkfehler (Meldung)
+        case failed(String)        // HTTP or network failure, with its message
         /// This device was signed out somewhere else; only on a renewal. Sign in again by hand.
         case revoked(String)
         /// The WebUntis session handed over has ended: sign in to WebUntis again, then once more here.
@@ -103,7 +103,7 @@ final class BackendClient {
         return .ok(token: token, refresh: refresh)
     }
 
-    /// Direkter App-Login (Nicht-Untis-Konto): Benutzername + Passwort.
+    /// Signs in to the backend alone (an account without WebUntis): user name and password.
     func login(username: String, password: String) async throws -> (token: String, refresh: String, user: ApiUser) {
         try await authPost(Config.Routes.authLogin, body: ["username": username.lowercased(), "password": password])
     }

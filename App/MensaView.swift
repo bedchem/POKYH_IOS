@@ -86,7 +86,7 @@ struct MensaView: View {
                 Task { await rate(dish, stars) }
             }
         }
-        .task { await load() }
+        .task(id: app.isOffline) { await load() }
         .refreshable { await load(force: true) }
     }
 

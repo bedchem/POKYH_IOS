@@ -64,7 +64,7 @@ struct MessagesView: View {
         .safeAreaInset(edge: .bottom) {
             if selecting { selectionBar }
         }
-        .task(id: folder) { await load(folder) }
+        .task(id: "\(folder.rawValue)|\(app.isOffline)") { await load(folder) }
         .task {
             guard startCompose, !composeOpened else { return }
             composeOpened = true

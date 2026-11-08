@@ -442,7 +442,7 @@ final class UntisClient {
         return nil
     }
 
-    // ── Klassen-Cache (pro Benutzer + Schuljahr) → spart Stundenplan/getKlassen ──
+    // ── Class cache, per user and school year: saves asking the timetable again ──
     private static func klasseCacheKey(_ username: String) -> String {
         "pokyh_klasse_\(username.lowercased())_\(SchoolDates.currentSchoolYear)"
     }
@@ -619,9 +619,9 @@ final class UntisClient {
     /// give none. First the signed-in student's class
     /// (`personId`), then `students[].klasseId`, then any `klasse.id` or `klasseId`.
     private func extractKlasseId(_ json: JSON, personId: Int) -> Int? {
-        var matched: [Int] = []        // Klasse genau des angemeldeten Schülers
+        var matched: [Int] = []        // the signed-in pupil's own class
         var fromStudents: [Int] = []   // aus students/children-Arrays
-        var fromKlassenArr: [Int] = [] // aus `klassen`-Array (masterData) — Schüler: eigene Klasse
+        var fromKlassenArr: [Int] = [] // from masterData's `klassen`: a pupil's own class
         var fromKlasseObj: [Int] = []  // beliebiges klasse.id
         var fromField: [Int] = []      // beliebiges klasseId
         func intVal(_ any: Any?) -> Int? { (any as? NSNumber)?.intValue ?? (any as? String).flatMap(Int.init) }
@@ -705,9 +705,16 @@ final class UntisClient {
     func cachedTimetable(date: String, _ s: UserSession) -> [TimetableEntry]? {
         let key = "\(s.schoolRef.loginName)-\(s.studentId)-\(date)"  // two schools can share a student id
         if let mem = timetableCache.get(key) { return mem }
-        // Offline (token-los): persistierten Stundenplan sofort ohne Spinner zeigen.
+        // Offline (no token): the stored week at once, without a spinner.
         if s.bearerToken.isEmpty { return DiskCache.load([TimetableEntry].self, key: "tt-\(key)", owner: s.username) }
         return nil
+    }
+
+    /// The week as last loaded, to show while it's asked again.
+    func storedTimetable(date: String, _ s: UserSession) async -> [TimetableEntry]? {
+        let key = "\(s.schoolRef.loginName)-\(s.studentId)-\(date)"
+        if let mem = timetableCache.get(key) { return mem }
+        return await DiskCache.loaded([TimetableEntry].self, key: "tt-\(key)", owner: s.username)
     }
 
     func timetable(date: String, _ s: UserSession) async throws -> [TimetableEntry] {
@@ -718,7 +725,7 @@ final class UntisClient {
         if s.bearerToken.isEmpty {
             return await DiskCache.loaded([TimetableEntry].self, key: "tt-\(key)", owner: s.username) ?? []
         }
-        // Ende = Start + 5 Tage (Mo–Sa)
+        // Monday to Saturday
         guard let d = DateFmt.iso.date(from: date) else { throw AppError(message: Strings.current.errors.badAnswer) }
         let end = DateFmt.isoString(Calendar.current.date(byAdding: .day, value: 5, to: d) ?? d)
         let url = "\(base(s))/api/rest/view/v1/timetable/entries?start=\(date)&end=\(end)&format=1&resourceType=STUDENT&resources=\(s.studentId)&periodTypes=&timetableType=MY_TIMETABLE&layout=START_TIME"
@@ -728,7 +735,7 @@ final class UntisClient {
             guard http.statusCode == 200 else { throw AppError(message: Strings.current.errors.timetable(http.statusCode)) }
             let entries = Self.parseTimetable(JSON.parse(data))
             timetableCache.set(key, entries)
-            DiskCache.save(entries, key: "tt-\(key)", owner: s.username)   // Offline-Fallback persistieren
+            DiskCache.save(entries, key: "tt-\(key)", owner: s.username)   // for offline
             return entries
         } catch let netErr as URLError {
             // Only a real network failure falls back to the stored copy, never an auth error.
@@ -805,6 +812,13 @@ final class UntisClient {
     }
 
     // ── Noten ──────────────────────────────────────────────────────────────
+
+    /// The grades as last loaded, to show while they're asked again.
+    func storedGrades(year: Int?, _ s: UserSession) async -> [SubjectGrades]? {
+        let cacheKey = "\(s.schoolRef.loginName)-\(s.studentId)-\(year ?? 0)"
+        if let mem = gradesCache.get(cacheKey) { return mem }
+        return await DiskCache.loaded([SubjectGrades].self, key: "grades-\(cacheKey)", owner: s.username)
+    }
 
     func grades(year: Int?, _ s: UserSession) async throws -> [SubjectGrades] {
         let cacheKey = "\(s.schoolRef.loginName)-\(s.studentId)-\(year ?? 0)"
@@ -1780,7 +1794,7 @@ final class UntisClient {
         }
     }
 
-    // ── Passwort ─────────────────────────────────────────────────────────────
+    // ── Password ─────────────────────────────────────────────────────────────
 
     /// Changes the WebUntis password the way the profile page does; WebUntis checks its rules.
     func changePassword(old: String, new: String, _ s: UserSession) async throws {

@@ -276,11 +276,11 @@ struct AbsencesView: View {
             }
         }
         .appBackground()
-        .task(id: year) {
+        .task(id: "\(year)|\(app.isOffline)") {
             wholeYear = false
             await load()
         }
-        .task { await loadPermissions() }
+        .task(id: app.isOffline) { await loadPermissions() }
         .onChange(of: canReport) {
             if openReport && canReport && !reportOpened {
                 reportOpened = true

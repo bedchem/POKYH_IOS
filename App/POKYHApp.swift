@@ -68,7 +68,7 @@ struct POKYHApp: App {
                 // Leaving the screen, not arriving on it at launch.
                 if old == .active { app.appWillResignActive() }   // Sichtschutz im App-Umschalter
             case .active:
-                app.appDidBecomeActive()        // Auto-Sperre nach langer Inaktivität
+                app.appDidBecomeActive()        // locks after a long time away
                 UsageReporter.shared.appBecameActive()
                 PushRegistration.shared.appBecameActive()
             @unknown default:

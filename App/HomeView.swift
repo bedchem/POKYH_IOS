@@ -270,7 +270,7 @@ struct HomeView: View {
             Text(dateLine)
                 .textStyle(wide ? .body : .callout)
                 .foregroundStyle(Palette.textSecondary)
-            if app.isOffline {
+            if app.showsOffline {
                 let tone = Decorative.butter
                 Label(s.home.offlineLine, systemImage: "wifi.slash")
                     .textStyle(TextStyle.footnote.weight(.semibold))

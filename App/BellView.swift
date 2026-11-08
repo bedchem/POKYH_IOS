@@ -31,6 +31,7 @@ final class BellStore: ObservableObject {
     private var synced = false
     private var asked: [BellFeed.Source: Int64] = [:]
     private var refreshedAt: Int64 = 0
+    private var wasOnline = false
 
     // The account's copy of the marks: what it is known to hold, when it was last read.
     private var remoteSeen = Set<String>()
@@ -66,6 +67,12 @@ final class BellStore: ObservableObject {
         guard let s = app.session else { return }
         if refreshedAt == 0 { refreshedAt = currentMs }
         if Self.owner(of: s) != owner { adopt(s) }
+        // Signed in behind a stored copy: what was read off the disk is read again for real.
+        let online = s.apiToken != nil
+        if online != wasOnline {
+            wasOnline = online
+            asked = [:]
+        }
         load(s, force: false)
         pull(s)
     }
@@ -378,7 +385,7 @@ struct BellToolbarButton: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { store.resumed(app) }
         }
-        .task(id: app.session?.username) {
+        .task(id: "\(app.session?.username ?? "")|\(app.isOffline)") {
             store.start(app)
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(60))

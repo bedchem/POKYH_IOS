@@ -12,6 +12,7 @@ struct GradesView: View {
     @Environment(\.strings) private var s
     @State private var subjects: [SubjectGrades] = []
     @State private var loading = true
+    @State private var loadedYear: Int?
     @State private var error: String?
     @State private var year = SchoolDates.currentSchoolYear
     @State private var sort: GradeSort = .name
@@ -20,9 +21,10 @@ struct GradesView: View {
 
     var body: some View {
         Group {
-            if loading {
+            // The last copy stays on screen while it's asked again.
+            if loading && subjects.isEmpty {
                 GradesSkeleton()
-            } else if let error {
+            } else if let error, subjects.isEmpty {
                 ErrorStateView(message: error) { Task { await load() } }
             } else {
                 content
@@ -36,7 +38,8 @@ struct GradesView: View {
         .profileToolbar()
         // Full width on iPad, so the tiles line up under the title instead of in a narrower column.
         .appBackground(wide: true)
-        .task(id: year) { await load() }
+        // Again once a sign-in behind the stored copy gets through.
+        .task(id: "\(year)|\(app.isOffline)") { await load() }
     }
 
     private var yearMenu: some View {
@@ -195,10 +198,21 @@ struct GradesView: View {
 
     private func load() async {
         guard let session = app.session else { return }
+        let asked = year == SchoolDates.currentSchoolYear ? nil : year
+        // Another school year: nothing of the one before stays.
+        if loadedYear != year {
+            subjects = []
+            loadedYear = year
+        }
         loading = true
         error = nil
+        // Opened again, the last copy shows at once instead of the skeleton.
+        if subjects.isEmpty, let stored = await UntisClient.shared.storedGrades(year: asked, session), !stored.isEmpty {
+            subjects = stored
+        }
         do {
-            subjects = try await UntisClient.shared.grades(year: year == SchoolDates.currentSchoolYear ? nil : year, session)
+            let fresh = try await UntisClient.shared.grades(year: asked, session)
+            if fresh != subjects { subjects = fresh }
             if year == SchoolDates.currentSchoolYear { WatchSync.grades(subjects, for: session) }
             // Only the default account's current year feeds the grades widget.
             if year == SchoolDates.currentSchoolYear, app.isDefaultAccountActive {

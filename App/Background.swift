@@ -27,7 +27,7 @@ enum BackgroundRefresh {
     }
 
     private static func handle(_ task: BGAppRefreshTask) {
-        schedule()   // immer den nächsten Lauf nachlegen
+        schedule()   // always line up the next run
         let work = Task { @MainActor in
             await runSync()
             task.setTaskCompleted(success: !Task.isCancelled)

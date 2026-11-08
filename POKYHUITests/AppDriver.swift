@@ -6,6 +6,8 @@ import XCTest
 class AppTestCase: XCTestCase {
     let app = XCUIApplication()
     private(set) var trail: [String] = []
+    /// Taps in the crawl that changed nothing on screen, for its report.
+    private var silent: [String] = []
     private var crashes = 0
 
     /// Where logs and the mode file go. `make uitest` points it at a folder of its own.
@@ -309,15 +311,39 @@ class AppTestCase: XCTestCase {
                 visited.insert("\(screen)|\(next.label)")
                 taps += 1
                 note("crawl[\(screen)] \(next.label)")
+                let before = fingerprint()
                 app.coordinate(withNormalizedOffset: .zero)
                     .withOffset(CGVector(dx: next.frame.midX, dy: next.frame.midY)).tap()
                 pause(0.45)
+                // Nothing on screen moved: a button that does nothing, or one that only
+                // vibrates. Listed for a look, not failed: a few are meant to (a selected tab).
+                if app.alerts.count == 0, app.keyboards.count == 0, fingerprint() == before {
+                    silent.append("\(screen) | \(next.label)")
+                }
                 fillFieldsIfAny()
                 dismissForeignAlert()
             }
         }
         if relaunchIfDead(mode: mode, account: account, env: env, context: "at the end of the crawl") { note("relaunched") }
         note("crawl done after \(taps) taps")
+        let report = "\(taps) taps, \(silent.count) without a visible change\n\n" + silent.joined(separator: "\n")
+        try? report.write(toFile: "\(Self.outputDir)/silent-taps-\(name.filter(\.isLetter)).txt", atomically: true, encoding: .utf8)
+    }
+
+
+    /// Everything readable on screen and the state of every control, to tell whether a tap did anything.
+    private func fingerprint() -> String {
+        guard let root = try? app.snapshot() else { return "" }
+        let screen = root.frame
+        var parts: [String] = []
+        func walk(_ node: XCUIElementSnapshot) {
+            if node.frame.intersection(screen).width > 2, !node.label.isEmpty || node.value != nil {
+                parts.append("\(node.elementType.rawValue)|\(node.label)|\(String(describing: node.value))|\(node.isSelected)|\(Int(node.frame.minY))")
+            }
+            node.children.forEach(walk)
+        }
+        walk(root)
+        return parts.joined(separator: "\n")
     }
 
     func screenName() -> String {
