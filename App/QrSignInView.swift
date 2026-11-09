@@ -9,15 +9,23 @@ import PokyhDesign
 extension AppState {
     /// The computer waiting for a scanned code. Nil: the code ran out or was used already.
     func webSignInInfo(code: String) async throws -> BackendClient.QrLoginInfo? {
-        guard let token = session?.apiToken else { throw AppError.sessionExpired }
+        guard let token = try await webSignInToken() else { throw AppError.sessionExpired }
         return try await BackendClient.shared.qrLoginInfo(code: code, token: token)
+    }
+
+    /// Opened from the camera the app is often still signing in behind its stored copy: wait for
+    /// that. Without a connection it says so instead of calling the session expired.
+    private func webSignInToken() async throws -> String? {
+        if let token = await backendTokenWhenReady() { return token }
+        if isOffline || !NetworkMonitor.shared.isOnline { throw URLError(.notConnectedToInternet) }
+        return nil
     }
 
     /// Signs the computer in: it takes over the app's WebUntis session, so it needs no
     /// authenticator code, and the saved password or app key renews it later. False: the code
     /// ran out meanwhile.
     func approveWebSignIn(code: String) async throws -> Bool {
-        guard var s = session, let token = s.apiToken else { throw AppError.sessionExpired }
+        guard let token = try await webSignInToken(), var s = session else { throw AppError.sessionExpired }
         var saved: String?
         if s.hasUntis {
             // Without the password the computer is signed out as soon as the handed-over session

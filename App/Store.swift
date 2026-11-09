@@ -908,6 +908,18 @@ final class AppState {
     // ── Backend token ─────────────────────────────────────────────────────────
     @ObservationIgnored private var tokenRenewal: Task<(token: String, refresh: String)?, Never>?
 
+    /// The backend token once there is one. A returning account opens on its stored copy, which
+    /// has none, and signs in behind it; a link opened from the camera lands in that moment, so it
+    /// waits for that sign-in instead of calling the session expired. Nil when it doesn't bring one.
+    func backendTokenWhenReady(within limit: Duration = .seconds(20)) async -> String? {
+        let deadline = ContinuousClock.now + limit
+        while session != nil, session?.apiToken == nil, reconnecting || signingInBehind || busy,
+              ContinuousClock.now < deadline, !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(200))
+        }
+        return session?.apiToken
+    }
+
     /// The POKYH access token lasts an hour. After a 401 the app signs in to the backend again,
     /// the way Android does. Requests failing together share one renewal.
     func renewBackendToken(expired: String) async -> String? {

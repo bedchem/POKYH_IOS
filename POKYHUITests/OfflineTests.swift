@@ -125,6 +125,12 @@ final class OfflineTests: AppTestCase {
         // The account row's "more" menu signs out; the big button at the bottom only locks.
         let row = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "anna")).firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 3), "no account row")
+        // The accounts sit under the activity grid, below the fold on a phone.
+        let bottom = app.windows.firstMatch.frame.maxY - 60
+        for _ in 0..<6 where row.frame.maxY > bottom {
+            app.swipeUp(velocity: .slow)
+            pause(0.4)
+        }
         let more = app.buttons.matching(NSPredicate(format: "label == %@", "Mehr")).allElementsBoundByIndex
             .min { abs($0.frame.midY - row.frame.midY) < abs($1.frame.midY - row.frame.midY) }
         more?.tap()
