@@ -34,7 +34,12 @@ extension BackendClient {
                 body["password"] = password
             }
             if let sessionId, !sessionId.isEmpty { body["sessionId"] = sessionId }
-            if let school { body["school"] = ["loginName": school.loginName, "server": school.server] }
+            if let school {
+                // The name too, or the website shows the login name as the school's.
+                var ref = ["loginName": school.loginName, "server": school.server]
+                if !school.name.isEmpty { ref["name"] = school.name }
+                body["school"] = ref
+            }
             return body
         }
     }

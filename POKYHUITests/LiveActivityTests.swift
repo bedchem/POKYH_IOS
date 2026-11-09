@@ -26,7 +26,8 @@ final class LiveActivityTests: AppTestCase {
 
     private var isOn: Bool { (toggle.value as? String) == "1" }
 
-    func testOffByDefaultAndRemembered() {
+    func testOffByDefaultAndRemembered() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom != .phone, "iPad and Mac have no Live Activities")
         launch()
         waitForTabs()
         openSettings()

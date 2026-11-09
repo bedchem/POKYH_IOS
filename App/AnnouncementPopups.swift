@@ -6,15 +6,19 @@ import PokyhCore
 import PokyhDesign
 
 /// Admin announcements for the signed-in app, as one stack. Checked on every return to the
-/// foreground (throttled here), shown once the app has settled.
+/// foreground (throttled here) and once the session has its token, shown once the app has settled.
 @MainActor
 final class PopupStore: ObservableObject {
     static let shared = PopupStore()
 
     @Published private(set) var stack = PopupStack()
+    /// The popup whose content is laid out and can be read.
+    @Published private(set) var readyKey: String?
 
     private static let seenKey = "pokyh_popups_seen"
     private var lastCheck: Int64 = 0
+    /// Whether that check went out with the account's token.
+    private var checkedSignedIn = false
     private var owner: String?
 
     private var seen: [String: PopupSeenEntry] {
@@ -32,15 +36,22 @@ final class PopupStore: ObservableObject {
         if owner != app.session?.username {
             owner = app.session?.username
             stack = PopupStack()
+            readyKey = nil
             lastCheck = 0
+            checkedSignedIn = false
         }
+        let token = app.session?.apiToken
         let now = DayClock.ms(Date())
-        if now - lastCheck < PopupSchedule.recheckMs { return }
+        // Without the token the backend only hands out what's meant for every school, so the
+        // first check with it can't wait for the throttle: the school's own popups come with it.
+        let gotToken = token != nil && !checkedSignedIn
+        if now - lastCheck < PopupSchedule.recheckMs, !gotToken { return }
         lastCheck = now
+        checkedSignedIn = token != nil
         let who = owner
         Task {
             // Optional by nature: a network or parse failure never surfaces.
-            guard let live = try? await BackendClient.shared.activePopups(token: app.session?.apiToken), who == owner else { return }
+            guard let live = try? await BackendClient.shared.activePopups(token: token), who == owner else { return }
             let clock = DayClock()
             let seen = seen
             let at = DayClock.ms(Date())
@@ -53,6 +64,13 @@ final class PopupStore: ObservableObject {
         stack.markViewed(popup)
         markSeen([popup])
     }
+
+    func contentReady(_ popup: AnnouncementPopup) {
+        if readyKey != popup.key { readyKey = popup.key }
+    }
+
+    /// The current popup's content is there to read.
+    var currentIsReady: Bool { stack.current.map { $0.key == readyKey } ?? false }
 
     func go(to index: Int) { stack.go(to: index) }
     func back() { stack.back() }
@@ -67,6 +85,7 @@ final class PopupStore: ObservableObject {
         guard !stack.locked else { return }
         let popups = stack.popups
         stack = PopupStack()
+        readyKey = nil
         markSeen(popups)
     }
 
@@ -95,7 +114,7 @@ enum PresentedModal {
 }
 
 /// Shows what's due over the whole app. A popup never flashes past while the sign-in check or a
-/// sheet is still settling, and waits behind a recap that's open.
+/// sheet is still settling, and waits behind a recap that's open and the privacy notice, as on Android.
 struct AnnouncementPopupHost: ViewModifier {
     @Environment(AppState.self) private var app
     @ObservedObject private var store = PopupStore.shared
@@ -114,7 +133,8 @@ struct AnnouncementPopupHost: ViewModifier {
                 }
             }
             .animation(reduceMotion ? .easeOut(duration: Motion.fast) : .spring(response: 0.4, dampingFraction: 0.85), value: settled && due)
-            .task { store.check(app) }
+            // A returning account opens on its stored copy first; the token comes a moment later.
+            .task(id: app.session?.apiToken != nil) { store.check(app) }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active { store.check(app) }
             }
@@ -124,7 +144,7 @@ struct AnnouncementPopupHost: ViewModifier {
                 try? await Task.sleep(for: .milliseconds(PopupSchedule.settleMs))
                 while !Task.isCancelled {
                     let active = UIApplication.shared.applicationState == .active
-                    if active, !app.busy, RecapStore.shared.open == nil, !PresentedModal.isUp {
+                    if active, !app.busy, app.privacyNotice == nil, RecapStore.shared.open == nil, !PresentedModal.isUp {
                         settled = true
                         return
                     }
@@ -137,7 +157,8 @@ struct AnnouncementPopupHost: ViewModifier {
 /// A card in the app's own language: an icon tile, the title, the backend's content and a footer
 /// with "Zurück", one dot per popup and "Weiter". The ones still waiting peek out above the card.
 /// Until a popup has been up for the minimum time a countdown ring sits where the X goes and nothing
-/// closes or skips it. Only time the app is actually in the foreground counts.
+/// closes or skips it. Only time the app is actually in the foreground counts, and only once the
+/// content is laid out: a blank card counting down would let a popup go unread.
 private struct AnnouncementPopupDialog: View {
     @ObservedObject var store: PopupStore
     @Environment(\.strings) private var s
@@ -145,8 +166,12 @@ private struct AnnouncementPopupDialog: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var elapsed: Int64 = 0
     @State private var forward = true
+    /// Shown this long without its content: counts down anyway.
+    @State private var gaveUpOn: String?
 
     private static let peek: CGFloat = 9
+    /// A web content process that doesn't come up mustn't hold a popup shut for good.
+    private static let contentWait: Duration = .seconds(3)
 
     var body: some View {
         let stack = store.stack
@@ -167,12 +192,22 @@ private struct AnnouncementPopupDialog: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .accessibilityAddTraits(.isModal)
-        .task(id: "\(stack.current?.key ?? "")|\(stack.locked)|\(scenePhase == .active)") { await countDown() }
+        .task(id: "\(stack.current?.key ?? "")|\(stack.locked)|\(scenePhase == .active)|\(readable)") { await countDown() }
+        .task(id: stack.current?.key) {
+            guard let key = store.stack.current?.key, !store.currentIsReady else { return }
+            try? await Task.sleep(for: Self.contentWait)
+            if !Task.isCancelled { gaveUpOn = key }
+        }
         .onChange(of: stack.current?.key) { elapsed = 0 }
     }
 
+    /// Its content is there, or isn't coming.
+    private var readable: Bool {
+        store.currentIsReady || (gaveUpOn != nil && gaveUpOn == store.stack.current?.key)
+    }
+
     private func countDown() async {
-        guard let current = store.stack.current, store.stack.locked, scenePhase == .active else { return }
+        guard let current = store.stack.current, store.stack.locked, scenePhase == .active, readable else { return }
         var last = ContinuousClock.now
         while elapsed < PopupSchedule.minViewMs {
             try? await Task.sleep(for: .milliseconds(50))
@@ -211,7 +246,7 @@ private struct AnnouncementPopupDialog: View {
                     closeOrCountdown(locked: stack.locked)
                 }
 
-                PopupBody(popup: current)
+                PopupBody(popup: current) { store.contentReady(current) }
                     .id(current.key)
                     .transition(stepTransition)
 
@@ -381,24 +416,44 @@ private struct PopupDots: View {
 /// there than rebuilt by hand. Grows with its content and scrolls once the card is full.
 private struct PopupBody: View {
     let popup: AnnouncementPopup
+    /// Laid out at its own width: from here on it can be read.
+    let onReady: () -> Void
     @State private var height: CGFloat = 1
+    @State private var ready = false
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     // Read so the page comes out again when the text size changes.
     @Environment(\.dynamicTypeSize) private var typeSize
 
+    /// Room kept while the page loads, as on Android: the card doesn't open as a sliver and then jump.
+    private static let placeholder: CGFloat = 120
+
     var body: some View {
         let size = UIFontMetrics(forTextStyle: .body).scaledValue(for: 15)
-        PopupWebView(document: PopupSchedule.document(body: popup.html, isDark: scheme == .dark, fontSize: Double(size)), height: $height)
-            // As tall as its content, less when the card is full: the title and buttons stay.
-            .frame(maxHeight: height)
+        PopupWebView(document: PopupSchedule.document(body: popup.html, isDark: scheme == .dark, fontSize: Double(size)),
+                     onHeight: { height = max(1, $0) },
+                     onReady: {
+                         if !ready { withAnimation(reduceMotion ? nil : .easeOut(duration: Motion.fast)) { ready = true } }
+                         onReady()
+                     })
+            // As tall as its content, less when the card is full: the title and buttons stay. Kept
+            // at a sliver while loading, so the page measures its own height and not the room.
+            .frame(maxHeight: ready ? height : 1)
+            .frame(minHeight: ready ? 0 : Self.placeholder, alignment: .top)
+            .overlay {
+                if !ready { ProgressView().tint(Palette.textTertiary) }
+            }
             .layoutPriority(-1)
-            .accessibilityLabel(popup.title)
     }
 }
 
 private struct PopupWebView: UIViewRepresentable {
     let document: String
-    @Binding var height: CGFloat
+    let onHeight: (CGFloat) -> Void
+    let onReady: () -> Void
+
+    /// Nothing kept on disk, and one for all popups rather than a fresh one per page.
+    @MainActor private static let dataStore = WKWebsiteDataStore.nonPersistent()
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -406,7 +461,7 @@ private struct PopupWebView: UIViewRepresentable {
         let config = WKWebViewConfiguration()
         // The HTML is sanitised on the server; it gets no scripts and leaves nothing behind anyway.
         config.defaultWebpagePreferences.allowsContentJavaScript = false
-        config.websiteDataStore = .nonPersistent()
+        config.websiteDataStore = Self.dataStore
         let view = WKWebView(frame: .zero, configuration: config)
         view.isOpaque = false
         view.backgroundColor = .clear
@@ -414,31 +469,42 @@ private struct PopupWebView: UIViewRepresentable {
         view.scrollView.bounces = false
         view.scrollView.showsHorizontalScrollIndicator = false
         view.navigationDelegate = context.coordinator
-        context.coordinator.watch(view) { height in
-            self.height = max(1, height)
-        }
+        context.coordinator.watch(view)
         return view
     }
 
     func updateUIView(_ view: WKWebView, context: Context) {
+        // The newest closures every time: ones kept from the first pass can point at state that's gone.
+        context.coordinator.onHeight = onHeight
+        context.coordinator.onReady = onReady
         guard context.coordinator.loaded != document else { return }
-        context.coordinator.loaded = document
-        view.loadHTMLString(document, baseURL: URL(string: Config.backendURL))
+        context.coordinator.load(document, into: view)
     }
 
     static func dismantleUIView(_ view: WKWebView, coordinator: Coordinator) {
         coordinator.stop()
     }
 
+    @MainActor
     final class Coordinator: NSObject, WKNavigationDelegate {
         var loaded: String?
+        var onHeight: (CGFloat) -> Void = { _ in }
+        var onReady: () -> Void = {}
+        private var finished = false
         private var observation: NSKeyValueObservation?
 
-        func watch(_ view: WKWebView, onHeight: @escaping (CGFloat) -> Void) {
+        func load(_ document: String, into view: WKWebView) {
+            loaded = document
+            finished = false
+            view.loadHTMLString(document, baseURL: URL(string: Config.backendURL))
+        }
+
+        func watch(_ view: WKWebView) {
             // Images decode late, so it's the content size that says how tall this gets.
-            observation = view.scrollView.observe(\.contentSize, options: [.new]) { _, change in
-                guard let size = change.newValue, size.height > 0 else { return }
-                DispatchQueue.main.async { onHeight(size.height) }
+            observation = view.scrollView.observe(\.contentSize, options: [.new]) { [weak self, weak view] _, change in
+                guard let size = change.newValue, size.height > 0, let coordinator = self, let view else { return }
+                // Not inside the layout pass that reported it.
+                Task { @MainActor in coordinator.measured(size, in: view) }
             }
         }
 
@@ -446,8 +512,26 @@ private struct PopupWebView: UIViewRepresentable {
             observation = nil
         }
 
+        private func measured(_ size: CGSize, in view: WKWebView) {
+            onHeight(size.height)
+            // A page starts out 980 points wide; only at the view's own width is the height real.
+            let width = view.bounds.width
+            if finished, width > 0, abs(size.width - width) < 1 { onReady() }
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            finished = true
+            measured(webView.scrollView.contentSize, in: webView)
+        }
+
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            // The page went with its process: load it once more.
+            guard let document = loaded else { return }
+            load(document, into: webView)
+        }
+
         func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
-                     decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+                     decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
             guard action.navigationType == .linkActivated, let url = action.request.url else {
                 // The page itself; anything else it tries to load in its own frame stays out.
                 decisionHandler(action.navigationType == .other ? .allow : .cancel)

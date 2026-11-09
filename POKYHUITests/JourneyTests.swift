@@ -89,7 +89,8 @@ final class JourneyTests: AppTestCase {
         XCTAssertTrue(see("Los geht", timeout: 10), "the recap never opened")
         tapBlindly(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Los geht")).firstMatch)
         pause(1)
-        for _ in 0..<20 where app.state == .runningForeground {
+        // Every section is on: more pages than taps would be a walk that never reaches the poster.
+        for _ in 0..<40 where app.state == .runningForeground {
             tapBlindly(app.buttons["Weiter"].firstMatch)
             pause(0.2)
         }
@@ -106,14 +107,17 @@ final class JourneyTests: AppTestCase {
     func testPopupsAndPrivacyNotice() {
         launch(env: ["POKYH_STUB_POPUPS": "1", "POKYH_STUB_PRIVACY": "1"])
         waitForTabs()
-        pause(6)
+        // The privacy notice first; the popups wait behind it, as on Android.
+        XCTAssertTrue(see("Verstanden", timeout: 8), "no privacy notice")
+        tap("Verstanden", timeout: 2)
+        XCTAssertTrue(see("Weiter", timeout: 10), "the popups never came after the notice")
         assertAlive("with the popups up")
+        pause(3.5)
         tap("Weiter", timeout: 3)
         pause(3.5)
         tap("Weiter", timeout: 3)
         pause(3.5)
         tap("Schließen", timeout: 2)
-        tap("Verstanden", timeout: 2)
         assertAlive()
     }
 

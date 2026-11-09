@@ -316,6 +316,14 @@ final class UntisClient {
         return s
     }
 
+    /// Whether WebUntis still takes the session: only a live one gets a bearer token. Unknown
+    /// (no connection) counts as alive, there's nothing better to hand over then.
+    func sessionAlive(_ s: UserSession) async -> Bool {
+        guard !s.sessionId.isEmpty else { return false }
+        guard let token = try? await fetchToken(s) else { return true }
+        return !token.isEmpty
+    }
+
     private func fetchToken(_ s: UserSession) async throws -> String {
         let (data, http) = try await get("\(base(s))/api/token/new", s)
         guard http.statusCode == 200 else { return "" }

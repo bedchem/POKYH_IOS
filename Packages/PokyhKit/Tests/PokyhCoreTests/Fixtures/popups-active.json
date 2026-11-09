@@ -1,0 +1,51 @@
+{
+  "now": "2026-11-02T08:00:00.000Z",
+  "popups": [
+    {
+      "id": "0b7d2c1e-4f3a-4c7e-9a51-2f6b8e1d0a01",
+      "revision": 1,
+      "title": "Neue Mensa-Zeiten",
+      "html": "<h2>Neue Mensa-Zeiten</h2>\n<p>Ab <strong>Montag</strong> öffnet die Mensa um <span style=\"color:#e11d48\">11:30</span>.</p>\n<ul>\n<li>Montag bis Freitag</li>\n<li><input checked disabled=\"disabled\" type=\"checkbox\" /> Vorbestellung in der App</li>\n<li><input disabled=\"disabled\" type=\"checkbox\" /> Barzahlung</li>\n</ul>\n<blockquote>\n<p>Bitte Tabletts zurückbringen.</p>\n</blockquote>\n<table>\n<thead>\n<tr>\n<th>Tag</th>\n<th>Von</th>\n<th>Bis</th>\n</tr>\n</thead>\n<tbody><tr>\n<td>Mo–Do</td>\n<td>11:30</td>\n<td>14:00</td>\n</tr>\n</tbody></table>\n<p>Mehr auf <a href=\"https://pokyh.com\" target=\"_blank\" rel=\"noopener noreferrer nofollow\">pokyh.com</a>.</p>\n",
+      "showCount": 1,
+      "startsAt": null,
+      "endsAt": null,
+      "slotMs": null
+    },
+    {
+      "id": "0b7d2c1e-4f3a-4c7e-9a51-2f6b8e1d0a02",
+      "revision": 3,
+      "title": "Skitag",
+      "html": "<p>Der <strong>Skitag</strong> ist am 12. Februar.<br />Treffpunkt: <code>Busbahnhof</code>, 7:15 Uhr.</p>\n<details><summary>Was mitnehmen?</summary>Helm, Handschuhe, Jause.</details>",
+      "showCount": 7,
+      "startsAt": "2026-11-01T00:00:00.000Z",
+      "endsAt": "2026-11-08T00:00:00.000Z",
+      "slotMs": 86400000
+    },
+    {
+      "id": "0b7d2c1e-4f3a-4c7e-9a51-2f6b8e1d0a03",
+      "revision": 1,
+      "title": "Elternsprechtag",
+      "html": "<p>Am Freitag.</p>\n",
+      "showCount": 1,
+      "startsAt": "2026-11-02T07:00:00.000Z",
+      "endsAt": "2026-11-03T07:00:00.000Z",
+      "slotMs": null
+    },
+    {
+      "id": "0b7d2c1e-4f3a-4c7e-9a51-2f6b8e1d0a04",
+      "revision": "2",
+      "title": "Seltsam",
+      "html": null,
+      "showCount": null,
+      "startsAt": 0,
+      "endsAt": null,
+      "slotMs": "nope"
+    },
+    {
+      "revision": 1,
+      "title": "Ohne Id",
+      "html": "<p>x</p>",
+      "showCount": 1
+    }
+  ]
+}

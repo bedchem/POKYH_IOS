@@ -64,6 +64,7 @@ nonisolated enum StubRoutes {
             path.removeFirst("/WebUntis".count)
             return untis(path, url: url, method: method, query: query, headers: headers, body: body)
         }
+        if let answer = engagement(path, method: method, query: query, headers: headers, body: body) { return answer }
         return backend(path, method: method, query: query, body: body)
     }
 
@@ -463,10 +464,6 @@ nonisolated enum StubRoutes {
         case "/dish-ratings/batch":
             let ids = json["dishIds"] as? [String] ?? []
             return StubAnswer(json: Dictionary(ids.map { ($0, rating) }) { a, _ in a })
-        case "/recaps":
-            return StubAnswer(json: ["recaps": StubServer.showsRecap ? [recap] : [Any]()])
-        case "/popups/active":
-            return StubAnswer(json: ["popups": StubServer.showsPopups ? popups : [Any]()])
         case "/subject-images":
             return StubAnswer(json: [["subject": "mathematik"]])
         case "/subject-images/report":
@@ -483,6 +480,12 @@ nonisolated enum StubRoutes {
         if parts.first == "subject-images" { return image }
         if parts.first == "auth", parts.count >= 2, parts[1] == "sessions" { return StubAnswer(json: [String: Any]()) }
         if parts.first == "auth", parts.count >= 3, parts[1] == "qr" {
+            // What the computer gets, by field name only: tests check the password and a session go along.
+            if method == "POST", parts.last == "approve" {
+                var fields = json.keys.sorted()
+                if let school = json["school"] as? [String: Any] { fields += school.keys.sorted().map { "school.\($0)" } }
+                StubServer.log("QR approve \(fields.joined(separator: ","))")
+            }
             return StubAnswer(json: ["label": "Safari auf Mac", "ip": "203.0.113.5", "place": "Brixen"])
         }
         if parts.first == "users", parts.count >= 3, parts[2] == "todos" {
@@ -490,10 +493,6 @@ nonisolated enum StubRoutes {
         }
         if parts.first == "classes", parts.count >= 3, parts[2] == "reminders" {
             return reminderRoute(parts: Array(parts.dropFirst(3)), method: method, json: json)
-        }
-        if parts.first == "recaps", parts.count >= 2 {
-            if parts.count >= 3 { return StubAnswer(json: ["openedAt": stamp(0), "finishedAt": NSNull()] as [String: Any]) }
-            return StubAnswer(json: recapDetail)
         }
         StubServer.log("UNROUTED backend \(method) \(path)")
         return StubAnswer(json: [String: Any]())
@@ -683,25 +682,101 @@ startxref
         }
     }
 
+    // ── Recaps and popups (routes/recaps.ts, routes/popups.ts) ─────────────────
+    // What the backend sends, field for field, so the app meets the same nulls and the same need
+    // for a token: /recaps answers 401 without one, /popups/active leaves out a school's own popups.
+
+    nonisolated(unsafe) private static var recapViews: [String: (openedAt: String, finishedAt: String?)] = [:]
+
+    /// toISOString(): always with milliseconds.
+    private static let isoMillis: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+    private static func stampMs(_ offsetDays: Int) -> String { isoMillis.string(from: day(offsetDays)) }
+
+    /// The session as requireAuth and optionalAuth read it: a bearer token, or none.
+    private static func bearer(_ headers: [String: String]) -> String? {
+        let value = headers.first { $0.key.caseInsensitiveCompare("Authorization") == .orderedSame }?.value ?? ""
+        guard value.hasPrefix("Bearer ") else { return nil }
+        let token = value.dropFirst("Bearer ".count).trimmingCharacters(in: .whitespaces)
+        return token.isEmpty ? nil : token
+    }
+
+    private static func engagement(_ path: String, method: String, query: [String: String], headers: [String: String], body: Data) -> StubAnswer? {
+        let parts = path.split(separator: "/").map(String.init)
+        switch parts.first {
+        case "popups":
+            guard parts.count == 2, parts[1] == "active" else { return nil }
+            guard ["web", "android", "ios"].contains(query["platform"] ?? "") else {
+                return StubAnswer(json: ["error": "Ungültige Eingabe"], status: 400)
+            }
+            let signedIn = query["audience"] != "guest" && bearer(headers) != nil
+            let list = StubServer.showsPopups ? everySchoolPopups + (signedIn ? schoolPopups : []) : []
+            return StubAnswer(json: ["now": stampMs(0), "popups": list] as [String: Any])
+        case "recaps":
+            guard bearer(headers) != nil else { return StubAnswer(json: ["error": "Missing Authorization header"], status: 401) }
+            return lock.withLock { recapRoute(Array(parts.dropFirst()), method: method, json: object(body)) }
+        default:
+            return nil
+        }
+    }
+
+    private static func recapRoute(_ parts: [String], method: String, json: [String: Any]) -> StubAnswer {
+        let mine = StubServer.showsRecap ? [recap] : []
+        guard let id = parts.first else { return StubAnswer(json: ["recaps": mine]) }
+        guard UUID(uuidString: id) != nil else { return StubAnswer(json: ["error": "Ungültige Eingabe"], status: 400) }
+        guard let found = mine.first(where: { $0["id"] as? String == id }) else {
+            return StubAnswer(json: ["error": "Recap nicht gefunden"], status: 404)
+        }
+        if parts.count == 1 { return StubAnswer(json: ["recap": found, "pokyh": recapFigures] as [String: Any]) }
+        guard parts.count == 2, parts[1] == "view", method == "POST" else { return StubAnswer(json: ["error": "Not found"], status: 404) }
+        // The first opening and the first time to the end count; watching again changes nothing.
+        var view = recapViews[id] ?? (openedAt: stampMs(0), finishedAt: nil)
+        if json["finished"] as? Bool == true, view.finishedAt == nil { view.finishedAt = stampMs(0) }
+        recapViews[id] = view
+        return StubAnswer(json: ["openedAt": view.openedAt, "finishedAt": view.finishedAt ?? NSNull()] as [String: Any])
+    }
+
+    private static let recapId = "6f1b2a10-0000-4000-8000-0000000000a1"
+
+    /// clientRow: every part (stored as ""), seen as this run of the app has marked it.
     private static var recap: [String: Any] {
-        ["id": "recap-1", "title": "Dein Schuljahr", "periodFrom": dayString(-60), "periodTo": dayString(-1), "endsAt": stamp(20),
-         "sections": ["school", "absences", "pokyh"], "openedAt": NSNull(), "finishedAt": NSNull()]
+        let view = recapViews[recapId]
+        return ["id": recapId, "title": "Dein Schuljahr", "periodFrom": dayString(-60), "periodTo": dayString(-1), "endsAt": stampMs(20),
+                "sections": ["school", "absences", "grades", "exams", "classreg", "pokyh"],
+                "openedAt": view?.openedAt ?? NSNull(), "finishedAt": view?.finishedAt ?? NSNull()]
     }
 
-    private static var recapDetail: [String: Any] {
-        ["recap": recap,
-         "pokyh": ["covered": ["from": dayString(-60), "to": dayString(-1)], "usageConsent": true,
-                   "totals": ["activeDays": 42, "activeSeconds": 36000, "longestStreak": 9],
-                   "weekdays": [1, 2, 3, 4, 5, 6, 7], "hours": Array(repeating: 60, count: 24),
-                   "created": ["todosDone": 5, "reminders": 2, "comments": 3, "ratings": 4],
-                   "favouriteDish": ["name": ["de": "Spaghetti", "it": "Spaghetti", "en": "Spaghetti"]],
-                   "rank": ["topPercent": 10]] as [String: Any]]
+    /// recapPokyhFigures with everything it can answer.
+    private static var recapFigures: [String: Any] {
+        ["covered": ["from": dayString(-60), "to": dayString(-1)], "usageConsent": true, "memberSince": stampMs(-400),
+         "kept": ["liveFrom": dayString(-90), "archive": false] as [String: Any],
+         "totals": ["activeDays": 42, "logins": 12, "activeSeconds": 36000, "visits": 180, "screens": 640, "longestStreak": 9],
+         "weekdays": [9, 8, 7, 9, 6, 2, 1],
+         "hours": [0, 0, 0, 0, 0, 0, 120, 2400, 5300, 900, 400, 300, 2600, 3100, 4200, 3900, 2700, 2100, 3300, 4800, 3500, 1800, 400, 0],
+         "platforms": ["phone": 30, "desktop": 4, "app": 28, "web": 6], "firstDay": dayString(-58),
+         "busiestDay": ["date": dayString(-20), "activeSeconds": 2400, "logins": 2] as [String: Any],
+         "pages": [["page": "/timetable", "views": 120], ["page": "/grades", "views": 64]] as [[String: Any]],
+         "created": ["todos": 7, "todosDone": 5, "reminders": 2, "comments": 3, "ratings": 4],
+         "favouriteDish": ["name": ["de": "Spinatknödel", "it": "Canederli agli spinaci", "en": "Spinach dumplings"], "stars": 5] as [String: Any],
+         "rank": ["topPercent": 10, "group": 240]]
     }
 
-    private static var popups: [[String: Any]] {
-        // Text only: a web view would fetch anything else for real, past this stub.
-        [["id": "pop-1", "revision": 1, "title": "Hinweis", "html": "<p>Erster Hinweis</p>", "showCount": 1] as [String: Any],
-         ["id": "pop-2", "revision": 1, "title": "Noch einer", "html": "<p>Zweiter</p>", "showCount": 3, "startsAt": stamp(-1), "endsAt": stamp(10), "slotMs": 86_400_000]]
+    // contentHtml as services/popupRender.ts makes it from the admin's Markdown. Text only: a web
+    // view would fetch an image for real, past this stub.
+    private static var everySchoolPopups: [[String: Any]] {
+        [["id": "0b7d2c1e-4f3a-4c7e-9a51-2f6b8e1d0a01", "revision": 1, "title": "Neue Mensa-Zeiten",
+          "html": "<p>Ab <strong>Montag</strong> öffnet die Mensa um <span style=\"color:#e11d48\">11:30</span>.</p>\n<ul>\n<li>Montag bis Freitag</li>\n<li><input checked disabled=\"disabled\" type=\"checkbox\" /> Vorbestellung in der App</li>\n</ul>\n<blockquote>\n<p>Bitte Tabletts zurückbringen.</p>\n</blockquote>\n<table>\n<thead>\n<tr>\n<th>Tag</th>\n<th>Bis</th>\n</tr>\n</thead>\n<tbody><tr>\n<td>Mo–Do</td>\n<td>14:00</td>\n</tr>\n<tr>\n<td>Fr</td>\n<td>13:00</td>\n</tr>\n</tbody></table>\n<p>Mehr auf <a href=\"https://pokyh.com\" target=\"_blank\" rel=\"noopener noreferrer nofollow\">pokyh.com</a>.</p>\n",
+          "showCount": 1, "startsAt": NSNull(), "endsAt": NSNull(), "slotMs": NSNull()]]
+    }
+
+    /// A school's own: only with the account's session.
+    private static var schoolPopups: [[String: Any]] {
+        [["id": "0b7d2c1e-4f3a-4c7e-9a51-2f6b8e1d0a02", "revision": 2, "title": "Skitag",
+          "html": "<p>Der <strong>Skitag</strong> ist am 12. Februar.<br />Treffpunkt: <code>Busbahnhof</code>, 7:15 Uhr.</p>\n<details><summary>Was mitnehmen?</summary>Helm, Handschuhe, Jause.</details>",
+          "showCount": 3, "startsAt": stampMs(-1), "endsAt": stampMs(2), "slotMs": 86_400_000]]
     }
 }
 #endif

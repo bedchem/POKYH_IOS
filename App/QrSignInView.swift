@@ -14,11 +14,21 @@ extension AppState {
     }
 
     /// Signs the computer in: it takes over the app's WebUntis session, so it needs no
-    /// authenticator code, and the saved password or app key renews it later. Only what this
-    /// unlock already covers; never a Face ID sheet of its own. False: the code ran out meanwhile.
+    /// authenticator code, and the saved password or app key renews it later. False: the code
+    /// ran out meanwhile.
     func approveWebSignIn(code: String) async throws -> Bool {
-        guard let s = session, let token = s.apiToken else { throw AppError.sessionExpired }
-        let saved = CredentialStore.shared.password(for: s.username, context: UnlockSession.context)
+        guard var s = session, let token = s.apiToken else { throw AppError.sessionExpired }
+        var saved: String?
+        if s.hasUntis {
+            // Without the password the computer is signed out as soon as the handed-over session
+            // ends. Signing a computer in is worth a Face ID when this unlock no longer covers it.
+            if CredentialStore.shared.hasPassword(s.username) { saved = await savedPassword(for: s.username) }
+            // WebUntis ends a session that sat unused for a while and the app only notices on its
+            // next request, so a dead one is replaced before it's handed over.
+            if !(await UntisClient.shared.sessionAlive(s)), let renewed = await renewedUntisSession(for: s) {
+                s.sessionId = renewed.sessionId
+            }
+        }
         let isKey = saved.map(AppKey.isKey) ?? false
         let credential = BackendClient.QrCredential(
             username: s.username,

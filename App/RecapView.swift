@@ -1,6 +1,7 @@
 import SwiftUI
 import Combine
 import UIKit
+import UniformTypeIdentifiers
 import PokyhCore
 import PokyhDesign
 
@@ -26,6 +27,8 @@ final class RecapStore: ObservableObject {
     @Published private(set) var progress: [String: RecapProgress] = [:]
 
     private static let refreshEvery = 15.0 * 60
+    /// Back in the app after this long, the list is asked for again, like the web on a visible tab.
+    private static let staleAfter = 60.0
     /// The story waits this long, then for anything else on screen to go away, then gives up until
     /// the next refresh.
     private static let quietMs = 2200
@@ -34,6 +37,7 @@ final class RecapStore: ObservableObject {
     private static let keptWeeks = 60
 
     private var owner: String?
+    private var refreshedAt = Date.distantPast
     private var autoTried = Set<String>()
     private var preloaded = Set<String>()
     private var running: [String: Task<RecapFigures.Untis, Error>] = [:]
@@ -44,11 +48,15 @@ final class RecapStore: ObservableObject {
             owner = app.session?.username
             recaps = nil
             open = nil
+            refreshedAt = .distantPast
             autoTried = []
             preloaded = []
             running = [:]
             progress = [:]
         }
+        // A returning account opens on its stored copy, which has no token; /recaps needs one.
+        // RecapHost starts this again once the sign-in behind the app has brought it.
+        guard app.session?.apiToken != nil else { return }
         while !Task.isCancelled {
             await refresh(app)
             preload(app)
@@ -57,10 +65,15 @@ final class RecapStore: ObservableObject {
         }
     }
 
+    /// Asked longer ago than a quick trip out of the app.
+    var isStale: Bool { Date().timeIntervalSince(refreshedAt) > Self.staleAfter }
+
     /// An error leaves the last answer, or none, in place.
     private func refresh(_ app: AppState) async {
-        guard let token = app.session?.apiToken, let list = try? await BackendClient.shared.recaps(token: token) else { return }
+        let who = owner
+        guard let token = app.session?.apiToken, let list = try? await BackendClient.shared.recaps(token: token), who == owner else { return }
         recaps = list
+        refreshedAt = Date()
     }
 
     private func maybeOpen(_ app: AppState) async {
@@ -69,7 +82,9 @@ final class RecapStore: ObservableObject {
         for _ in 0..<Self.quietTries {
             if Task.isCancelled { return }
             let active = UIApplication.shared.applicationState == .active
-            if active, app.phase == .authed, !app.busy, open == nil, PopupStore.shared.stack.current == nil, !PresentedModal.isUp {
+            // The privacy notice first, as on the web.
+            if active, app.phase == .authed, !app.busy, open == nil, app.privacyNotice == nil,
+               PopupStore.shared.stack.current == nil, !PresentedModal.isUp {
                 autoTried.insert(due.id)
                 open = due
                 return
@@ -326,13 +341,22 @@ private enum RecapUntisCalls {
 
 // ── The mascot ──────────────────────────────────────────────────────────────
 
-/// The pixel mascot wherever a recap shows it: banner, story and poster. Same pose for each mood
-/// as Android's reactionOf.
+/// The pixel mascot wherever a recap shows it: banner, story and poster, on nothing but the page
+/// itself, as on Android. Same pose for each mood as Android's reactionOf.
 struct RecapMascot: View {
     let mood: RecapStoryModel.Mood
-    var size: CGFloat = 88
-    var fill: Color = Palette.accentTint
-    var ink: Color = Palette.accentText
+    /// The sprite's width; it's as tall as its 40 × 37 pixels make it.
+    var width: CGFloat = 72
+
+    /// From the bottom of its frame up to the soles of its feet, for standing it on a line: the three
+    /// rows of shadow below them, and what's left under the drawing once its pixels snap to whole
+    /// screen pixels (as PixelArt does).
+    static func soles(_ width: CGFloat, scale: CGFloat) -> CGFloat {
+        let w = CGFloat(Mascot.width), h = CGFloat(Mascot.height)
+        let fit = width * scale / w
+        let pixel = (fit >= 2 ? fit.rounded(.down) : fit) / max(scale, 1)
+        return (width * h / w - h * pixel) / 2 + 3 * pixel
+    }
 
     private var look: MascotLook {
         switch mood {
@@ -362,9 +386,7 @@ struct RecapMascot: View {
     }
 
     var body: some View {
-        MascotView(look: look, size: size * 0.82, motionKey: mood.rawValue)
-            .frame(width: size, height: size)
-            .background(fill, in: .pokyh(size * 0.28))
+        MascotView(look: look, size: width, motionKey: mood.rawValue)
             .accessibilityHidden(true)
     }
 }
@@ -387,7 +409,7 @@ struct RecapBanner: View {
                         Circle()
                             .strokeBorder(Brand.accent, style: StrokeStyle(lineWidth: 3, dash: isNew ? [6, 4] : []))
                             .rotationEffect(.degrees(turning && isNew && !reduceMotion ? 360 : 0))
-                        RecapMascot(mood: .wave, size: 34, fill: .clear)
+                        RecapMascot(mood: .wave, width: 28)
                     }
                     .frame(width: 48, height: 48)
                     VStack(alignment: .leading, spacing: 0) {
@@ -425,11 +447,22 @@ struct RecapBanner: View {
 /// Keeps the store going and shows the story while one is open.
 struct RecapHost: ViewModifier {
     @Environment(AppState.self) private var app
+    @Environment(\.scenePhase) private var scenePhase
     @ObservedObject private var store = RecapStore.shared
+    /// Counts the returns to the app that found the list old.
+    @State private var returns = 0
+
+    /// The account, whether it has a token yet, and the returns: a change of any starts over.
+    private var following: String {
+        "\(app.session?.username ?? "")|\(app.session?.apiToken != nil)|\(returns)"
+    }
 
     func body(content: Content) -> some View {
         content
-            .task(id: app.session?.username) { await store.follow(app) }
+            .task(id: following) { await store.follow(app) }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active, store.isStale { returns += 1 }
+            }
             .fullScreenCover(item: $store.open) { recap in
                 RecapStoryView(recap: recap, store: store)
             }
@@ -509,6 +542,8 @@ struct RecapStoryView: View {
     }
 
     @State private var load = Load.waiting
+    /// The figures were asked for before the session had its token, so without the POKYH part.
+    @State private var loadedWithoutToken = false
     @State private var index = 0
     @State private var attempt = 0
     @State private var forward = true
@@ -574,6 +609,8 @@ struct RecapStoryView: View {
 
     private func close() { store.open = nil }
 
+    private var period: String { "\(format.day(recap.periodFrom)) – \(format.day(recap.periodTo))" }
+
     private func next() {
         guard isReady else { return }
         if index < slides.count - 1 {
@@ -607,13 +644,15 @@ struct RecapStoryView: View {
             let bottomInset = proxy.safeAreaInsets.bottom
             ZStack {
                 colors.bg.ignoresSafeArea()
-                RecapPage(slide: slide, summary: summary, notice: notice, safeBottom: bottomInset, format: format)
+                RecapPage(slide: slide, summary: summary, notice: notice, period: period, safeBottom: bottomInset, format: format)
                     .id(slide.id)
                     .transition(pageTransition)
                 chrome(colors)
             }
             .contentShape(.rect)
             .onTapGesture { location in
+                // The last page has its own buttons: a tap on a figure mustn't close the story.
+                guard slide.layout != .summary else { return }
                 if location.x < proxy.size.width / 3 { back() } else { next() }
             }
         }
@@ -637,6 +676,12 @@ struct RecapStoryView: View {
         .statusBarHidden()
         .task { store.markView(recap, finished: false, token: app.session?.apiToken) }
         .task(id: attempt) { await loadFigures() }
+        // Opened from the banner before the sign-in behind the app was through: once more with the token.
+        .onChange(of: app.session?.apiToken != nil) { _, hasToken in
+            guard hasToken else { return }
+            if isFailed || loadedWithoutToken { attempt += 1 }
+            if recap.openedAt == nil { store.markView(recap, finished: false, token: app.session?.apiToken) }
+        }
         .onChange(of: slide.id) {
             if slide.layout == .summary { store.markView(recap, finished: true, token: app.session?.apiToken) }
         }
@@ -652,6 +697,7 @@ struct RecapStoryView: View {
         load = .waiting
         let t = s.recap
         let session = app.session
+        loadedWithoutToken = session?.apiToken == nil
         var detail: RecapDetail?
         if let token = session?.apiToken { detail = try? await store.detail(recap, token: token) }
         var untis: RecapFigures.Untis?
@@ -701,29 +747,49 @@ struct RecapStoryView: View {
             .padding(.trailing, Spacing.sm)
             Spacer(minLength: 0)
             HStack(spacing: Spacing.sm) {
-                if index > 0 {
-                    Button(t.text("back"), action: back)
-                        .buttonStyle(StoryButtonStyle(fill: colors.edge, ink: colors.soft))
-                }
                 if slide.layout == .summary {
-                    Button(t.text("replay")) {
+                    // Four words don't fit side by side: back and again as symbols, sharing first.
+                    storyIcon("chevron.left", label: t.text("back"), colors, action: back)
+                    storyIcon("arrow.counterclockwise", label: t.text("replay"), colors) {
                         forward = false
                         withAnimation(pageAnimation) { index = 0 }
                     }
-                    .buttonStyle(StoryButtonStyle(fill: colors.edge, ink: colors.soft))
-                    Button(t.text("share")) { posterOpen = true }
+                    Spacer(minLength: 0)
+                    Button(t.text("done"), action: close)
                         .buttonStyle(StoryButtonStyle(fill: colors.edge, ink: colors.soft))
-                        .disabled(summary.isEmpty)
+                    Button { posterOpen = true } label: {
+                        Label(t.text("share"), systemImage: "square.and.arrow.up")
+                    }
+                    .buttonStyle(StoryButtonStyle(fill: colors.accent, ink: colors.accentInk))
+                    .disabled(summary.isEmpty)
+                } else {
+                    if index > 0 {
+                        Button(t.text("back"), action: back)
+                            .buttonStyle(StoryButtonStyle(fill: colors.edge, ink: colors.soft))
+                    }
+                    Spacer(minLength: 0)
+                    Button(primaryLabel) {
+                        if isFailed { attempt += 1 } else { next() }
+                    }
+                    .buttonStyle(StoryButtonStyle(fill: colors.accent, ink: colors.accentInk))
                 }
-                Spacer(minLength: 0)
-                Button(primaryLabel) {
-                    if isFailed { attempt += 1 } else { next() }
-                }
-                .buttonStyle(StoryButtonStyle(fill: colors.accent, ink: colors.accentInk))
             }
             .padding(.horizontal, Spacing.xl)
             .padding(.bottom, Spacing.lg)
         }
+    }
+
+    private func storyIcon(_ symbol: String, label: String, _ colors: StoryColors, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 17, weight: .bold))
+                .foregroundStyle(colors.soft)
+                .frame(width: 48, height: 48)
+                .background(colors.edge, in: .circle)
+                .contentShape(.circle)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
     }
 }
 
@@ -750,8 +816,10 @@ private struct RecapPage: View {
     let slide: RecapStoryModel.Slide
     let summary: [RecapStoryModel.SummaryItem]
     let notice: String?
+    let period: String
     let safeBottom: CGFloat
     let format: any RecapFormat
+    @Environment(\.displayScale) private var displayScale
 
     /// What the buttons need to stand on, above the safe area.
     private static let ground: CGFloat = 88
@@ -767,7 +835,7 @@ private struct RecapPage: View {
                 ScrollView {
                     Group {
                         if slide.layout == .summary {
-                            StorySummary(slide: slide, items: summary, colors: colors)
+                            StorySummary(slide: slide, items: summary, period: period, colors: colors)
                         } else {
                             StoryWords(slide: slide, notice: notice, colors: colors, format: format)
                         }
@@ -778,8 +846,16 @@ private struct RecapPage: View {
                 }
                 .scrollBounceBehavior(.basedOnSize)
                 .scrollIndicators(.hidden)
+                // What runs on under the mascot fades out instead of ending on a hard line.
+                .mask {
+                    VStack(spacing: 0) {
+                        Color.black
+                        LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom).frame(height: 28)
+                    }
+                }
+                // Its feet on the ground's top edge, the shadow on the edge.
                 StoryMascot(slide: slide, colors: colors)
-                    .padding(.bottom, -Spacing.sm)
+                    .padding(.bottom, -RecapMascot.soles(StoryMascot.width, scale: displayScale))
                 Color.clear.frame(height: Self.ground)
             }
             .padding(.horizontal, Spacing.xxl)
@@ -1082,8 +1158,10 @@ private struct StoryMascot: View {
     let slide: RecapStoryModel.Slide
     let colors: StoryColors
     @Environment(\.strings) private var s
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var hop = 0
+
+    /// About a quarter of a phone's width, near Android's: eight screen pixels to each of its
+    /// pixels on a 3x phone, five on a 2x iPad.
+    static let width = CGFloat(Mascot.width) * 8 / 3
 
     private var alignment: HorizontalAlignment {
         switch slide.place {
@@ -1105,46 +1183,73 @@ private struct StoryMascot: View {
                     .padding(.vertical, Spacing.sm)
                     .background(colors.accent, in: .pokyh(Radius.md))
             }
-            RecapMascot(mood: slide.mood, size: 84, fill: colors.chip, ink: colors.accent)
-                .symbolEffect(.bounce, value: hop)
+            RecapMascot(mood: slide.mood, width: Self.width)
         }
         .frame(maxWidth: .infinity, alignment: Alignment(horizontal: alignment, vertical: .center))
-        .onAppear { if !reduceMotion { hop += 1 } }
     }
 }
 
-/// The last page: the period's figures at a glance.
+/// The last page: the period's figures at a glance. The first one large, the rest small enough
+/// that a full recap fits a phone without scrolling.
 private struct StorySummary: View {
     let slide: RecapStoryModel.Slide
     let items: [RecapStoryModel.SummaryItem]
+    let period: String
     let colors: StoryColors
     @Environment(\.strings) private var s
 
     private static let heading = TextStyle(34, 40, .heavy, tracking: -0.02, relativeTo: .largeTitle)
+    private static let hero = TextStyle.numeral(52)
+    private static let value = TextStyle(19, 24, .heavy, tracking: -0.01, relativeTo: .title3)
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            if case .words(let title) = slide.value {
-                Text(title)
-                    .textStyle(Self.heading)
-                    .foregroundStyle(.white)
-                    .minimumScaleFactor(0.6)
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: Spacing.xs) {
+                if case .words(let title) = slide.value {
+                    Text(title)
+                        .textStyle(Self.heading)
+                        .foregroundStyle(.white)
+                        .minimumScaleFactor(0.6)
+                }
+                Text(period)
+                    .textStyle(.subheadline)
+                    .foregroundStyle(colors.soft)
+            }
+            .padding(.bottom, Spacing.sm)
+            if let first = items.first {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(s.recap.text(first.label))
+                        .textStyle(TextStyle.subheadline.weight(.semibold))
+                        .foregroundStyle(colors.soft)
+                    Text(first.value)
+                        .textStyle(Self.hero)
+                        .foregroundStyle(colors.accent)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.5)
+                }
+                .padding(.horizontal, Spacing.lg)
+                .padding(.vertical, Spacing.md)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(colors.chip, in: .pokyh(Radius.lg))
+                .accessibilityElement(children: .combine)
             }
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
-                ForEach(items) { item in
-                    VStack(alignment: .leading, spacing: Spacing.xs) {
+                ForEach(items.dropFirst()) { item in
+                    VStack(alignment: .leading, spacing: 2) {
                         Text(s.recap.text(item.label))
-                            .textStyle(.footnote)
+                            .textStyle(.caption)
                             .foregroundStyle(colors.soft)
-                            .lineLimit(2)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
                         Text(item.value)
-                            .textStyle(.title2)
+                            .textStyle(Self.value)
                             .foregroundStyle(colors.accent)
-                            .lineLimit(2)
-                            .minimumScaleFactor(0.7)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.55)
                     }
-                    .padding(14)
-                    .frame(maxWidth: .infinity, minHeight: 76, alignment: .topLeading)
+                    .padding(.horizontal, Spacing.md)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .background(colors.chip, in: .pokyh(Radius.md))
                     .accessibilityElement(children: .combine)
                 }
@@ -1155,8 +1260,8 @@ private struct StorySummary: View {
 
 // ── The poster ──────────────────────────────────────────────────────────────
 
-/// The card to keep and share: the pose, the color, which figures (up to five) and whether the
-/// first name is on it. Rendered to a picture for the share sheet.
+/// The card to keep and share: the pose (arrows or a swipe across the card), the color, which
+/// figures (up to five) and whether the first name is on it. Sharing stays pinned under it.
 private struct RecapPosterSheet: View {
     let title: String
     let firstName: String?
@@ -1168,7 +1273,7 @@ private struct RecapPosterSheet: View {
     @State private var color = RecapPoster.colors[0]
     @State private var picked: [String] = []
     @State private var showName = true
-    @State private var rendered: Image?
+    @State private var rendered: UIImage?
     @State private var copied = false
 
     private var website: String {
@@ -1197,35 +1302,39 @@ private struct RecapPosterSheet: View {
         let t = s.recap
         NavigationStack {
             ScrollView {
-                VStack(spacing: Spacing.lg) {
-                    preview
-                    posePicker(t)
+                VStack(spacing: Spacing.xl) {
+                    VStack(spacing: Spacing.md) {
+                        preview
+                        posePicker(t)
+                    }
                     group(t.text("customizeColor")) { colorPicker }
                     group("\(t.text("customizeFigures")) · \(t.text("customizeRoom", ["n": String(RecapPoster.slots)]))") {
-                        VStack(spacing: Spacing.xs) {
-                            ForEach(items) { item in
-                                let on = picked.contains(item.id)
-                                check(t.text(item.label), value: item.value, on: on, enabled: on || picked.count < RecapPoster.slots) {
-                                    picked = RecapPoster.toggled(picked, item.id)
-                                }
-                            }
-                            if let firstName {
-                                check(t.text("customizeName"), value: firstName, on: showName, enabled: true) { showName.toggle() }
-                            }
-                        }
+                        figureList(t)
                     }
-                    actions(t)
                 }
-                .padding(Spacing.screenH)
+                .padding(.horizontal, Spacing.screenH)
+                .padding(.top, Spacing.sm)
+                .padding(.bottom, Spacing.lg)
                 .frame(maxWidth: WidthClass.formMaxWidth)
                 .frame(maxWidth: .infinity)
             }
+            .safeAreaInset(edge: .bottom, spacing: 0) { shareBar(t) }
             .background(Palette.bg.ignoresSafeArea())
             .navigationTitle(t.text("customize"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button(role: .close) { dismiss() }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        UIPasteboard.general.string = shareText
+                        withAnimation(Motion.snappy) { copied = true }
+                    } label: {
+                        Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                            .contentTransition(.symbolEffect(.replace))
+                    }
+                    .accessibilityLabel(copied ? t.text("shareCopied") : t.text("shareCopy"))
                 }
             }
         }
@@ -1237,26 +1346,44 @@ private struct RecapPosterSheet: View {
 
     private func render() {
         // Fixed at the card's own size, so the picture doesn't change with the phone's settings.
+        // 3x makes it 1080 × 1920, a story's own size.
         let renderer = ImageRenderer(content: card.environment(\.colorScheme, .light).environment(\.dynamicTypeSize, .large))
         renderer.scale = 3
         renderer.proposedSize = ProposedViewSize(width: RecapPosterCard.size.width, height: RecapPosterCard.size.height)
-        rendered = renderer.uiImage.map { Image(uiImage: $0) }
+        rendered = renderer.uiImage
     }
 
-    @ViewBuilder
     private var preview: some View {
         Group {
             if let rendered {
-                rendered.resizable().scaledToFit()
+                Image(uiImage: rendered).resizable().scaledToFit()
             } else {
                 Color(hex: color)
             }
         }
         .aspectRatio(RecapPosterCard.size.width / RecapPosterCard.size.height, contentMode: .fit)
         .frame(maxWidth: 300)
-        .clipShape(.pokyh(Radius.md))
+        .clipShape(.pokyh(Radius.lg))
         .warmShadow(.level3)
+        .contentShape(.rect)
+        // Sideways across the card: the next pose, as on Android.
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 24).onEnded { value in
+                let dx = value.translation.width
+                guard abs(dx) > 50, abs(dx) > abs(value.translation.height) else { return }
+                pose = pose.stepped(dx < 0 ? 1 : -1)
+            }
+        )
+        .accessibilityElement()
         .accessibilityLabel(title)
+        .accessibilityValue(s.recap.text(pose.textKey))
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment: pose = pose.stepped(1)
+            case .decrement: pose = pose.stepped(-1)
+            @unknown default: break
+            }
+        }
     }
 
     private func posePicker(_ t: RecapStrings) -> some View {
@@ -1265,6 +1392,7 @@ private struct RecapPosterSheet: View {
             Text(t.text(pose.textKey))
                 .textStyle(.headline)
                 .foregroundStyle(Palette.textPrimary)
+                .contentTransition(.opacity)
                 .frame(minWidth: 120)
             stepButton("chevron.right", label: s.system.next) { pose = pose.stepped(1) }
         }
@@ -1283,24 +1411,50 @@ private struct RecapPosterSheet: View {
     }
 
     private var colorPicker: some View {
-        HStack(spacing: Spacing.sm) {
+        HStack(spacing: 0) {
             ForEach(RecapPoster.colors, id: \.self) { c in
                 Button { color = c } label: {
-                    RoundedRectangle(cornerRadius: Radius.xs, style: .continuous)
+                    Circle()
                         .fill(Color(hex: c))
-                        .frame(height: 36)
+                        // The night blue would vanish on a dark sheet without an edge.
+                        .overlay { Circle().strokeBorder(Palette.border, lineWidth: 1) }
+                        .frame(width: 34, height: 34)
+                        .padding(4)
                         .overlay {
-                            if c == color {
-                                Image(systemName: "checkmark")
-                                    .font(.system(size: 13, weight: .bold))
-                                    .foregroundStyle(Color(RecapPoster.inks(c).ink))
-                            }
+                            Circle().strokeBorder(c == color ? Palette.textPrimary : .clear, lineWidth: 2.5)
                         }
+                        .frame(maxWidth: .infinity)
+                        .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
                 .accessibilityAddTraits(c == color ? .isSelected : [])
             }
         }
+        .animation(Motion.snappy, value: color)
+    }
+
+    private func figureList(_ t: RecapStrings) -> some View {
+        VStack(spacing: 0) {
+            ForEach(Array(items.enumerated()), id: \.element.id) { i, item in
+                let on = picked.contains(item.id)
+                if i > 0 { divider }
+                check(t.text(item.label), value: item.value, on: on, enabled: on || picked.count < RecapPoster.slots) {
+                    picked = RecapPoster.toggled(picked, item.id)
+                }
+            }
+            if let firstName {
+                divider
+                check(t.text("customizeName"), value: firstName, on: showName, enabled: true) { showName.toggle() }
+            }
+        }
+        .background(Palette.card, in: .pokyh(Radius.md))
+    }
+
+    private var divider: some View {
+        Rectangle()
+            .fill(Palette.separator)
+            .frame(height: 1)
+            .padding(.leading, 48)
     }
 
     private func group<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
@@ -1308,6 +1462,7 @@ private struct RecapPosterSheet: View {
             Text(title)
                 .textStyle(TextStyle.footnote.weight(.semibold))
                 .foregroundStyle(Palette.textSecondary)
+                .padding(.leading, Spacing.xs)
             content()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1317,20 +1472,20 @@ private struct RecapPosterSheet: View {
         Button(action: action) {
             HStack(spacing: Spacing.md) {
                 Image(systemName: on ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 20))
+                    .font(.system(size: 21))
                     .foregroundStyle(on ? Palette.accent : Palette.textTertiary)
+                    .contentTransition(.symbolEffect(.replace))
                 Text(label)
                     .textStyle(.callout)
                     .foregroundStyle(enabled ? Palette.textPrimary : Palette.textTertiary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Text(value)
                     .textStyle(TextStyle.callout.weight(.semibold))
-                    .foregroundStyle(Palette.textSecondary)
+                    .foregroundStyle(enabled ? Palette.textSecondary : Palette.textTertiary)
                     .lineLimit(1)
             }
             .padding(.horizontal, Spacing.md)
-            .padding(.vertical, 10)
-            .background(Palette.card, in: .pokyh(Radius.sm))
+            .frame(minHeight: 48)
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
@@ -1338,29 +1493,51 @@ private struct RecapPosterSheet: View {
         .accessibilityAddTraits(on ? .isSelected : [])
     }
 
-    private func actions(_ t: RecapStrings) -> some View {
-        VStack(spacing: Spacing.sm) {
+    /// Always in reach, however far down the list is scrolled.
+    private func shareBar(_ t: RecapStrings) -> some View {
+        Group {
             if let rendered {
-                ShareLink(item: rendered, message: Text(shareText), preview: SharePreview(title, image: rendered)) {
-                    ButtonLabel(t.text("share"), symbol: "square.and.arrow.up")
+                ShareLink(item: PosterPicture(image: rendered, name: title), message: Text(shareText),
+                          preview: SharePreview(title, image: Image(uiImage: rendered))) {
+                    ButtonLabel(t.text("share"), symbol: "square.and.arrow.up").frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.primary)
+            } else {
+                Button {} label: { ButtonLabel(t.text("share"), symbol: "square.and.arrow.up").frame(maxWidth: .infinity) }
+                    .disabled(true)
             }
-            Button {
-                UIPasteboard.general.string = shareText
-                copied = true
-            } label: {
-                ButtonLabel(copied ? t.text("shareCopied") : t.text("shareCopy"), symbol: copied ? "checkmark" : "doc.on.doc")
-            }
-            .buttonStyle(.secondary)
+        }
+        .buttonStyle(.primary)
+        .frame(maxWidth: WidthClass.formMaxWidth)
+        .padding(.horizontal, Spacing.screenH)
+        .padding(.top, Spacing.md)
+        .padding(.bottom, Spacing.sm)
+        .frame(maxWidth: .infinity)
+        .background {
+            LinearGradient(colors: [Palette.bg.opacity(0), Palette.bg], startPoint: .top, endPoint: UnitPoint(x: 0.5, y: 0.35))
+                .ignoresSafeArea()
         }
     }
 }
 
-/// The picture itself: the title, the first figure huge, the others on rows of their own, the
-/// mascot at the bottom, all on a bold color. Sizes are fixed, it's a picture and not a screen.
+/// The poster as a PNG file of its own name, so "Save Image", Messages and Instagram all take it.
+private struct PosterPicture: Transferable {
+    let image: UIImage
+    let name: String
+
+    static var transferRepresentation: some TransferRepresentation {
+        DataRepresentation(exportedContentType: .png) { $0.image.pngData() ?? Data() }
+            .suggestedFileName { "POKYH \($0.name).png" }
+    }
+}
+
+/// The picture itself, like a page of the story: a dotted sky, the title, the first figure huge
+/// and the others on rows of their own, the mascot standing on the ground with the website.
+/// Sizes are fixed, it's a picture and not a screen.
 private struct RecapPosterCard: View {
     static let size = CGSize(width: 360, height: 640)
+    /// Rendered at 3x: seven picture pixels to each of the mascot's.
+    private static let mascot = CGFloat(Mascot.width) * 7 / 3
+    private static let ground: CGFloat = 76
 
     let title: String
     let name: String
@@ -1376,11 +1553,10 @@ private struct RecapPosterCard: View {
     var body: some View {
         let inks = RecapPoster.inks(color)
         let ink = Color(inks.ink), soft = Color(inks.soft), box = Color(inks.box)
-        ZStack(alignment: .bottom) {
-            Color(hex: color)
-            VStack(alignment: .leading, spacing: 10) {
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 0) {
                 Text(title)
-                    .font(font(32))
+                    .font(font(34))
                     .foregroundStyle(ink)
                     .lineLimit(3)
                     .minimumScaleFactor(0.6)
@@ -1389,59 +1565,93 @@ private struct RecapPosterCard: View {
                         .font(font(17, .semibold))
                         .foregroundStyle(soft)
                         .lineLimit(1)
+                        .padding(.top, 2)
                 }
-                if let big = figures.first {
-                    VStack(spacing: 2) {
-                        Text(big.value)
-                            .font(font(84, .black))
-                            .monospacedDigit()
-                            .foregroundStyle(ink)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.35)
-                        Text(big.label)
-                            .font(font(19, .bold))
-                            .foregroundStyle(ink)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.6)
+                Spacer(minLength: Spacing.lg)
+                VStack(spacing: 10) {
+                    if let big = figures.first {
+                        VStack(spacing: 0) {
+                            Text(big.value)
+                                .font(font(88, .black))
+                                .monospacedDigit()
+                                .foregroundStyle(ink)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.35)
+                            Text(big.label)
+                                .font(font(19, .bold))
+                                .foregroundStyle(ink)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.6)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.bottom, Spacing.sm)
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, Spacing.xs)
-                }
-                ForEach(Array(figures.dropFirst().enumerated()), id: \.offset) { _, figure in
-                    HStack(spacing: Spacing.sm) {
-                        Text(figure.label)
-                            .font(font(15, .semibold))
-                            .foregroundStyle(soft)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.7)
-                        Spacer(minLength: Spacing.xs)
-                        Text(figure.value)
-                            .font(font(21))
-                            .foregroundStyle(ink)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.5)
+                    ForEach(Array(figures.dropFirst().enumerated()), id: \.offset) { _, figure in
+                        HStack(spacing: Spacing.sm) {
+                            Text(figure.label)
+                                .font(font(15, .semibold))
+                                .foregroundStyle(soft)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.7)
+                            Spacer(minLength: Spacing.xs)
+                            Text(figure.value)
+                                .font(font(21))
+                                .foregroundStyle(ink)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.5)
+                        }
+                        .padding(.horizontal, 14)
+                        .frame(height: 44)
+                        .background(box, in: .pokyh(Radius.sm))
                     }
-                    .padding(.horizontal, Spacing.md)
-                    .frame(height: 44)
-                    .background(box, in: .pokyh(Radius.xs))
                 }
-                Spacer(minLength: 0)
+                Spacer(minLength: Spacing.lg)
             }
-            .padding(Spacing.xl)
-            HStack(alignment: .bottom) {
-                Text(website.uppercased())
-                    .font(font(13, .bold))
-                    .foregroundStyle(ink)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                RecapMascot(mood: pose.mood, size: 92, fill: box, ink: ink)
-                Color.clear.frame(maxWidth: .infinity, maxHeight: 1)
-            }
-            .padding(.horizontal, Spacing.xl)
-            .padding(.bottom, Spacing.lg)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, Spacing.xxl)
+            .padding(.top, 30)
+            // Its feet on the ground's edge, the shadow on the edge.
+            RecapMascot(mood: pose.mood, width: Self.mascot)
+                .padding(.bottom, -RecapMascot.soles(Self.mascot, scale: 3))
+            Text(website.uppercased())
+                .font(font(13, .heavy))
+                .tracking(2)
+                .foregroundStyle(soft)
+                .lineLimit(1)
+                .frame(height: Self.ground)
         }
         .frame(width: Self.size.width, height: Self.size.height)
+        .background(alignment: .bottom) {
+            ZStack(alignment: .bottom) {
+                Color(hex: color)
+                PosterDots(color: ink.opacity(0.09))
+                VStack(spacing: 0) {
+                    Rectangle().fill(soft.opacity(0.4)).frame(height: 4)
+                    box
+                }
+                .frame(height: Self.ground)
+            }
+        }
+    }
+}
+
+/// The story's dotted sky, on the poster.
+private struct PosterDots: View {
+    let color: Color
+
+    var body: some View {
+        Canvas { context, size in
+            let step: CGFloat = 12, dot: CGFloat = 2
+            var y: CGFloat = 5
+            while y < size.height {
+                var x: CGFloat = 5
+                while x < size.width {
+                    context.fill(Path(CGRect(x: x, y: y, width: dot, height: dot)), with: .color(color))
+                    x += step
+                }
+                y += step
+            }
+        }
     }
 }
 
@@ -1465,7 +1675,7 @@ private enum RecapPreviewData {
 #Preview("Story page") {
     let slides = RecapStoryModel.build(RecapPreviewData.input, RecapPreviewData.format)
     GeometryReader { proxy in
-        RecapPage(slide: slides[1], summary: [], notice: nil, safeBottom: proxy.safeAreaInsets.bottom, format: RecapPreviewData.format)
+        RecapPage(slide: slides[1], summary: [], notice: nil, period: "", safeBottom: proxy.safeAreaInsets.bottom, format: RecapPreviewData.format)
     }
     .background(slides[1].theme.colors.bg)
     .environment(\.strings, .of(.de))

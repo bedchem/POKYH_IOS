@@ -373,8 +373,11 @@ class AppTestCase: XCTestCase {
     }
 
     private func fillFieldsIfAny() {
-        guard app.keyboards.count > 0 else { return }
-        app.typeText("Test 12")
+        // A keyboard can belong to QuickLook's own process (a PDF's text) or be on its way out:
+        // then nothing of the app has the focus and typing fails.
+        let focused = app.descendants(matching: .any).matching(NSPredicate(format: "hasKeyboardFocus == 1")).firstMatch
+        guard app.keyboards.count > 0, focused.exists else { return }
+        focused.typeText("Test 12")
         note("typed in a field")
     }
 

@@ -17,6 +17,27 @@ public struct AnnouncementPopup: Codable, Equatable, Identifiable, Sendable {
         self.showCount = showCount; self.startsAt = startsAt; self.endsAt = endsAt; self.slotMs = slotMs
     }
 
+    /// Only the id has to be there. Anything else of the wrong type falls back, so one odd field
+    /// never takes every popup with it.
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        revision = c.number(.revision) ?? 1
+        title = (try? c.decodeIfPresent(String.self, forKey: .title)) ?? ""
+        html = (try? c.decodeIfPresent(String.self, forKey: .html)) ?? ""
+        showCount = max(1, c.number(.showCount) ?? 1)
+        startsAt = try? c.decodeIfPresent(String.self, forKey: .startsAt)
+        endsAt = try? c.decodeIfPresent(String.self, forKey: .endsAt)
+        // Int64 on its own: a slot of a month is past Int on the watch.
+        if let ms = try? c.decodeIfPresent(Int64.self, forKey: .slotMs) {
+            slotMs = ms
+        } else if let ms = try? c.decodeIfPresent(Double.self, forKey: .slotMs), ms.isFinite, abs(ms) < 9e18 {
+            slotMs = Int64(ms)
+        } else {
+            slotMs = nil
+        }
+    }
+
     /// An edited popup with "show again" gets a new revision, and so counts as unseen.
     public var key: String { "\(id):\(revision)" }
 }
@@ -26,7 +47,7 @@ public struct AnnouncementPopupFeed: Decodable, Sendable {
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        popups = try c.decodeIfPresent([AnnouncementPopup].self, forKey: .popups) ?? []
+        popups = (try c.decodeIfPresent([Lenient<AnnouncementPopup>].self, forKey: .popups) ?? []).compactMap(\.value)
     }
 
     private enum CodingKeys: String, CodingKey { case popups }

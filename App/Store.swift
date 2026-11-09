@@ -219,7 +219,7 @@ final class AppState {
     }
 
     /// A saved password: without asking while the app is unlocked, otherwise after one more check.
-    private func savedPassword(for username: String) async -> String? {
+    func savedPassword(for username: String) async -> String? {
         if let password = store.password(for: username, context: UnlockSession.context) { return password }
         guard let ctx = await authenticate(reason: unlockText.confirmReason) else { return nil }
         UnlockSession.begin(ctx)
@@ -963,7 +963,7 @@ final class AppState {
 
     /// A new WebUntis session for the account, signed in with the password (or key) this unlock
     /// still covers; the active session takes it over. Nil when none is at hand.
-    private func renewedUntisSession(for s: UserSession) async -> UserSession? {
+    func renewedUntisSession(for s: UserSession) async -> UserSession? {
         guard let password = store.password(for: s.username, context: UnlockSession.context),
               let renewed = try? await UntisClient.shared.login(username: s.username, password: password, school: s.school) else { return nil }
         if let current = session, AccountRoster.same(current.username, s.username) {
