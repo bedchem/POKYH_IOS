@@ -37,8 +37,9 @@ final class RecapPopupTests: AppTestCase {
     private func closePopups(_ popups: [(title: String, says: String)], shots: String) {
         for (i, popup) in popups.enumerated() {
             XCTAssertTrue(see(popup.title, timeout: 15), "popup \(popup.title) never showed")
-            // The countdown waits for the content, however long the page takes to load.
-            XCTAssertTrue(see(popup.says, timeout: 8), "the content of \(popup.title) isn't there")
+            // The countdown waits for the content, however long the page takes to load. A simulator
+            // that was just created starts WebKit slowly the first time, hence the generous wait.
+            XCTAssertTrue(see(popup.says, timeout: 15), "the content of \(popup.title) isn't there")
             let content = app.webViews.firstMatch
             XCTAssertGreaterThan(content.exists ? content.frame.height : 0, 20, "the content of \(popup.title) came out flat")
             if i == 0 { shoot("popup-\(shots)") }
@@ -83,9 +84,11 @@ final class RecapPopupTests: AppTestCase {
                         format: "label IN %@", ["Bild sichern", "Kopieren", "In „Dateien“ sichern", "Save Image", "Copy"])).firstMatch
                     XCTAssertTrue(keep.waitForExistence(timeout: 8), "the share sheet didn't come up with the picture")
                     shoot("recap-share-\(shots)")
-                    let closeShare = app.buttons.matching(NSPredicate(format: "label IN %@", ["Schließen", "Close"])).allElementsBoundByIndex.last
-                    if let closeShare, closeShare.isHittable { closeShare.tap() } else { app.swipeDown(velocity: .fast) }
+                    // A sheet on the phone, a popover on the iPad: a tap on the poster sheet's title
+                    // closes either and leaves the poster sheet up.
+                    app.staticTexts["Anpassen"].firstMatch.tap()
                     pause(1)
+                    XCTAssertFalse(keep.exists, "the share sheet didn't go away")
                     closePoster.tap()
                     pause(0.8)
                 } else {
