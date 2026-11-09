@@ -1,6 +1,6 @@
 # Day-to-day commands. `make` alone sets everything up.
 
-SIMULATOR ?= iPhone 18 Pro
+SIMULATOR ?= iPhone 18 Pro Max
 IPAD ?= iPad Pro 13-inch (M5)
 WATCH ?= Apple Watch Series 12 (46mm)
 DERIVED = build/dd

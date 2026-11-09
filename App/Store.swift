@@ -681,6 +681,19 @@ final class AppState {
         LiveActivityManager.refresh(from: entries, className: s.klasseName)
     }
 
+    /// The settings' switch. Turned on, it starts from this week's last copy right away instead
+    /// of waiting for the next timetable load.
+    func setLiveActivity(_ on: Bool) {
+        LiveActivityManager.isEnabled = on
+        guard on else { LiveActivityManager.endAll(); return }
+        guard let s = session, isDefaultAccountActive else { return }
+        Task {
+            guard let week = await UntisClient.shared.storedTimetable(date: SchoolDates.mondayISO(of: Date()), s),
+                  let current = session, AccountRoster.same(current.username, s.username) else { return }
+            refreshLiveActivity(from: week)
+        }
+    }
+
     /// Sets or clears an account's local nickname (empty clears it).
     func setNickname(_ nickname: String?, for username: String) {
         store.setNickname(nickname, for: username)

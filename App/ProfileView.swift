@@ -4,6 +4,7 @@ import PokyhCore
 import PokyhDesign
 import UserNotifications
 import Combine
+import ActivityKit
 
 // Profile and settings lay their rows out on the canvas under thin rules, no cards, the way the
 // web's settings page does. Settings is its own page behind the gear, like on Android.
@@ -494,6 +495,7 @@ struct SettingsView: View {
                 SettingsGroup(s.settings.notifications) {
                     NotificationsItem()
                     NotificationKindRows()
+                    LiveActivityRow()
                 }
                 .padding(.top, groupGap)
 
@@ -890,6 +892,46 @@ private struct NotificationKindRows: View {
                 PushRegistration.shared.setEnabled(kind, value)
             }
         )
+    }
+}
+
+/// The running lesson on the Lock Screen and in the Dynamic Island. Off until switched on here;
+/// iPhone only, iPad and Mac have no Live Activities.
+private struct LiveActivityRow: View {
+    @Environment(AppState.self) var app
+    @Environment(\.strings) private var s
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var on = LiveActivityManager.isEnabled
+    @State private var allowed = ActivityAuthorizationInfo().areActivitiesEnabled
+
+    private struct Words {
+        let title: String
+        let blocked: String
+
+        static func of(_ lang: Lang) -> Words {
+            switch lang {
+            case .de: Words(title: "Live-Aktivität", blocked: "In den iPhone-Einstellungen ausgeschaltet.")
+            case .it: Words(title: "Attività Live", blocked: "Disattivate nelle impostazioni dell’iPhone.")
+            case .en: Words(title: "Live Activity", blocked: "Turned off in iPhone Settings.")
+            }
+        }
+    }
+
+    var body: some View {
+        if UIDevice.current.userInterfaceIdiom == .phone, app.session?.hasUntis == true {
+            let t = Words.of(s.lang)
+            SettingsRow(t.title, hint: on && !allowed ? t.blocked : nil) {
+                Toggle(t.title, isOn: Binding(get: { on }, set: { value in
+                    on = value
+                    app.setLiveActivity(value)
+                }))
+                .labelsHidden()
+                .tint(Palette.accent)
+            }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { allowed = ActivityAuthorizationInfo().areActivitiesEnabled }
+            }
+        }
     }
 }
 

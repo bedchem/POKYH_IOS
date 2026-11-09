@@ -84,6 +84,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         NotificationManager.shared.configure()
+        // One left running by a version that started them unasked.
+        if !LiveActivityManager.isEnabled { LiveActivityManager.endAll() }
         return true
     }
 

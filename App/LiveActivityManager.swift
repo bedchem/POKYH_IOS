@@ -7,9 +7,19 @@ import ActivityKit
 /// Island): starts, updates and ends it from the timetable. The widget extension draws it
 /// (`ActivityConfiguration`).
 enum LiveActivityManager {
+    private static let enabledKey = "pokyh_live_activity"
+
+    /// Off until turned on in the settings: a lesson on the Lock Screen all day isn't something
+    /// to get unasked.
+    static var isEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: enabledKey) }
+        set { UserDefaults.standard.set(newValue, forKey: enabledKey) }
+    }
+
     #if os(iOS)
     static func refresh(from entries: [TimetableEntry], className: String, now: Date = Date()) {
-        guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
+        // Versions before the switch started one on their own; it goes with the next refresh.
+        guard isEnabled, ActivityAuthorizationInfo().areActivitiesEnabled else { endAll(); return }
 
         // Today's lessons from now on that take place, in order.
         let upcoming = entries
@@ -49,6 +59,7 @@ enum LiveActivityManager {
     }
 
     static func endAll() {
+        guard !Activity<LessonActivityAttributes>.activities.isEmpty else { return }
         Task {
             for activity in Activity<LessonActivityAttributes>.activities {
                 await activity.end(nil, dismissalPolicy: .immediate)

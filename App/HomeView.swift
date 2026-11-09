@@ -1079,6 +1079,7 @@ struct HomeView: View {
             let next = (try? await UntisClient.shared.timetable(date: nextMonday, session)) ?? []
             weekEntries = this + next
             WatchSync.timetable(this, week: monday, for: session)
+            if app.isDefaultAccountActive { app.refreshLiveActivity(from: this) }
             hues = Timetable.hues(for: this)
             todayFailed = false
         } catch let e as AppError where e.message == "session_expired" {

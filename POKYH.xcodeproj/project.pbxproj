@@ -93,6 +93,7 @@
 		C9E425E3CF9C891AC1EF6224 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F01FDC7D24E93DB3087D8361 /* WidgetKit.framework */; };
 		CF26250A3744D9EFEC411323 /* MessagesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2CC0B25C4A8169F5B361398 /* MessagesView.swift */; };
 		D258C795767D4D798D66D81B /* LockView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D673189980C353C0F98F905 /* LockView.swift */; };
+		D65405AE1E85233278667E9C /* LiveActivityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBD820C2DEBFF791AF07B5F6 /* LiveActivityTests.swift */; };
 		D69C6CD2DBDB08AE155B8349 /* WidgetBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F877C341273A616D090EC6D /* WidgetBridge.swift */; };
 		D6DA4088A7662800AE4EE704 /* OfflineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4C71350835BEEB122E81A3F /* OfflineTests.swift */; };
 		D983AEA121F7A5F78529DF4F /* SharedKit.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4FB6F899C5834EF3CD9AD47 /* SharedKit.swift */; };
@@ -292,6 +293,7 @@
 		F4C71350835BEEB122E81A3F /* OfflineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineTests.swift; sourceTree = "<group>"; };
 		F7EE0247D220289A8227A717 /* StubServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StubServer.swift; sourceTree = "<group>"; };
 		F950E635FE83EB14AF664CAB /* PokyhKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = PokyhKit; path = Packages/PokyhKit; sourceTree = SOURCE_ROOT; };
+		FBD820C2DEBFF791AF07B5F6 /* LiveActivityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveActivityTests.swift; sourceTree = "<group>"; };
 		FD94457031D3AE583E573711 /* Crypto.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Crypto.swift; sourceTree = "<group>"; };
 		FDFB1F95CEC510BB82576B66 /* WatchWidgets.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = WatchWidgets.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -348,6 +350,7 @@
 				98B052B2302543EF670D2EC4 /* BadDataTests.swift */,
 				D75EF47AFF198931951F72A9 /* JourneyTests.swift */,
 				2C050CBDA14AC8FC4135CC62 /* LanguageTests.swift */,
+				FBD820C2DEBFF791AF07B5F6 /* LiveActivityTests.swift */,
 				F4C71350835BEEB122E81A3F /* OfflineTests.swift */,
 				398055BED080E28407F7C17C /* ProfilePictureTests.swift */,
 				7B2A64185C03761652DC2E48 /* QuickStartTests.swift */,
@@ -798,6 +801,7 @@
 				5BA10BBAAF908171E725CBB3 /* BadDataTests.swift in Sources */,
 				C6C1916B94F96781A209E2F9 /* JourneyTests.swift in Sources */,
 				C2A1CA3E8DD9AE0739F66FAA /* LanguageTests.swift in Sources */,
+				D65405AE1E85233278667E9C /* LiveActivityTests.swift in Sources */,
 				D6DA4088A7662800AE4EE704 /* OfflineTests.swift in Sources */,
 				9F8C23D66DFDE371988FD4F7 /* ProfilePictureTests.swift in Sources */,
 				476DD696BBD18CE24A0B039F /* QuickStartTests.swift in Sources */,
