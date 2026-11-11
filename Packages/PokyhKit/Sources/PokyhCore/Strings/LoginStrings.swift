@@ -80,6 +80,12 @@ public struct LoginStrings: Sendable {
     public let badKey: String
     public let officePaste: String
     public let mascotTooMuch: String
+    public let promptTitle: String
+    public let promptWrong: String
+    public let promptWrongKey: String
+    public let promptSignedOut: String
+    public let promptAgain: String
+    public let lockWithPassword: String
 }
 
 
@@ -164,6 +170,12 @@ extension LoginStrings {
         badKey: "Benutzername oder Schlüssel ist falsch.",
         officePaste: "Aus der Zwischenablage einfügen",
         mascotTooMuch: "Hey, lass das!",
+        promptTitle: "Passwort eingeben",
+        promptWrong: "Das gespeicherte Passwort stimmt nicht mehr. Gib das aktuelle ein.",
+        promptWrongKey: "Der gespeicherte Schlüssel stimmt nicht mehr. Hol dir in WebUntis einen neuen.",
+        promptSignedOut: "Dieses Konto wurde auf einem anderen Gerät abgemeldet. Melde dich wieder an.",
+        promptAgain: "Das Passwort stimmt nicht.",
+        lockWithPassword: "Mit Passwort anmelden",
     )
 }
 
@@ -248,6 +260,12 @@ extension LoginStrings {
         badKey: "Nome utente o chiave errati.",
         officePaste: "Incolla dagli appunti",
         mascotTooMuch: "Ehi, smettila!",
+        promptTitle: "Inserisci la password",
+        promptWrong: "La password salvata non è più valida. Inserisci quella attuale.",
+        promptWrongKey: "La chiave salvata non è più valida. Prendine una nuova in WebUntis.",
+        promptSignedOut: "Questo account è stato disconnesso da un altro dispositivo. Accedi di nuovo.",
+        promptAgain: "La password non è corretta.",
+        lockWithPassword: "Accedi con la password",
     )
 }
 
@@ -332,5 +350,11 @@ extension LoginStrings {
         badKey: "Wrong user name or key.",
         officePaste: "Paste from clipboard",
         mascotTooMuch: "Hey, stop that!",
+        promptTitle: "Enter your password",
+        promptWrong: "The saved password no longer works. Enter your current one.",
+        promptWrongKey: "The saved key no longer works. Get a new one in WebUntis.",
+        promptSignedOut: "This account was signed out on another device. Sign in again.",
+        promptAgain: "That password isn’t right.",
+        lockWithPassword: "Sign in with password",
     )
 }

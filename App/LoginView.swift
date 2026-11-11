@@ -4,18 +4,22 @@ import PokyhDesign
 
 /// Sign-in, Android's calm auth layout: mascot, big title, then two steps like WebUntis itself:
 /// first the school (any school on WebUntis, through the public search), then the account.
-/// `isAdditional` is the "Konto hinzufügen" / "Passwort nötig" sheet.
+/// `isAdditional` is the "Konto hinzufügen" sheet; with a `prompt` it asks a saved account for
+/// its password again.
 struct LoginView: View {
     var isAdditional = false
     @Environment(AppState.self) var app
     @Environment(\.dismiss) private var dismiss
     @Environment(\.strings) private var s
 
+    /// Kept for the sheet's whole life: the app forgets the prompt as soon as the sheet closes.
+    @State private var prompt: PasswordPrompt?
     @State private var username = ""
     @State private var password = ""
     @State private var saveCredentials = true
     @State private var showPassword = false
     @State private var size: CGSize = .zero
+    @State private var confirmRemove = false
     @FocusState private var focus: Field?
 
     /// Remembered until the end of the school year, so the next sign-in starts at the password.
@@ -35,6 +39,16 @@ struct LoginView: View {
     enum Field { case user, pass, school }
 
     enum SchoolLookup: Equatable { case idle, searching, done(SchoolSearch) }
+
+    init(isAdditional: Bool = false, prompt: PasswordPrompt? = nil) {
+        self.isAdditional = isAdditional
+        _prompt = State(initialValue: prompt)
+        if let prompt {
+            _username = State(initialValue: prompt.username)
+            // A saved account signs in at its own school; one saved before the search, at the fallback.
+            _school = State(initialValue: CredentialStore.savedSchool(for: prompt.username) ?? .fallback)
+        }
+    }
 
     // Android sets the title in its display face at 44.
     private static let titleStyle = TextStyle(44, 44, .heavy, tracking: -0.022, relativeTo: .largeTitle)
@@ -72,20 +86,18 @@ struct LoginView: View {
         }
         .onAppear {
             app.error = nil
-            if let u = app.prefillUsername {
-                username = u
-                app.prefillUsername = nil
-                // A saved account signs in at its own school; one saved before the search, at the fallback.
-                if app.accounts.contains(where: { $0.username.caseInsensitiveCompare(u) == .orderedSame }) {
-                    school = app.school(for: u)
-                }
-                if school != nil { focus = .pass }
-            }
+            if prompt != nil { focus = .pass }
         }
         .onChange(of: schoolQuery) { _, query in search(query) }
         // A failed attempt: the mascot wobbles.
         .onChange(of: app.error) { _, error in
             if error != nil { mascotEvent = MascotEvent(.error, n: Self.now) }
+        }
+        // Turned down: the password goes, ready for the next try.
+        .onChange(of: app.refusedAttempts) {
+            guard !officeOpen else { return }
+            password = ""
+            focus = .pass
         }
         .task(id: school) {
             loginOptions = nil
@@ -178,13 +190,14 @@ struct LoginView: View {
             VStack(spacing: Spacing.lg) {
                 if !wide { mascot }
                 VStack(alignment: .leading, spacing: Spacing.sm) {
-                    Text(s.login.signIn)
+                    Text(prompt == nil ? s.login.signIn : s.login.promptTitle)
                         .textStyle(Self.titleStyle)
                         .foregroundStyle(Palette.textPrimary)
                         .accessibilityAddTraits(.isHeader)
-                    Text(s.login.subtitle)
+                    Text(lead)
                         .textStyle(.callout)
-                        .foregroundStyle(Palette.textTertiary)
+                        .foregroundStyle(promptReason == nil ? Palette.textTertiary : Palette.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -208,22 +221,47 @@ struct LoginView: View {
 
     private var passwordAllowed: Bool { loginOptions?.password != false }
 
+    /// Why the password is asked for again; nil when nothing went wrong.
+    private var promptReason: String? {
+        switch prompt?.reason {
+        case .wrongPassword: return s.login.promptWrong
+        case .wrongKey: return s.login.promptWrongKey
+        case .signedOutElsewhere: return s.login.promptSignedOut
+        case .missing, nil: return nil
+        }
+    }
+
+    private var lead: String { promptReason ?? s.login.subtitle }
+
+    /// The saved account the prompt is for, while it's still saved.
+    private var promptAccount: SavedAccount? {
+        prompt.flatMap { AccountRoster.find($0.username, in: app.accounts) }
+    }
+
     private func accountStep(_ chosen: School) -> some View {
         VStack(spacing: Spacing.md) {
-            // Choosing another keeps this one offered first in the list.
-            SchoolChip(school: chosen) {
-                school = nil
-                focus = .school
+            if prompt != nil {
+                // The account is given; only its password is missing.
+                SavedAccountChip(account: promptAccount, username: username, school: chosen)
+            } else {
+                // Choosing another keeps this one offered first in the list.
+                SchoolChip(school: chosen) {
+                    school = nil
+                    focus = .school
+                }
             }
 
-            if loginOptions?.office365 == true {
+            // An account known to sign in with a password needn't be offered Microsoft first.
+            if loginOptions?.office365 == true, prompt?.reason != .wrongPassword || !passwordAllowed {
                 OfficeButton(showOr: passwordAllowed) { officeOpen = true }
             }
 
             if passwordAllowed {
-                field(s.login.username, text: typed($username), field: .user, symbol: "person", secure: false)
-                    .submitLabel(.next)
-                    .onSubmit { focus = .pass }
+                if prompt == nil {
+                    field(s.login.username, text: typed($username), field: .user, symbol: "person", secure: false)
+                        .submitLabel(.next)
+                        .onSubmit { focus = .pass }
+                }
                 field(s.login.password, text: typed($password), field: .pass, symbol: "key", secure: true)
                     .submitLabel(.go)
                     .onSubmit { Task { await submit() } }
@@ -254,6 +292,20 @@ struct LoginView: View {
 
             TextLinkButton(s.login.forgotPassword) { resetting = true }
                 .frame(maxWidth: .infinity)
+
+            // An account that won't sign in anymore (left the school, say) can go right here.
+            if prompt != nil, promptAccount != nil {
+                TextLinkButton(s.profile.removeAccountConfirm, color: Palette.danger) { confirmRemove = true }
+                    .frame(maxWidth: .infinity)
+                    .confirmationDialog(s.profile.removeAccountTitle, isPresented: $confirmRemove, titleVisibility: .visible) {
+                        Button(s.profile.removeAccountConfirm, role: .destructive) {
+                            Task { await app.removeAccountFromSheet(username) }
+                        }
+                        Button(s.common.cancel, role: .cancel) {}
+                    } message: {
+                        Text(s.profile.removeAccountBody(promptAccount?.title ?? username))
+                    }
+            }
         }
     }
 
@@ -559,6 +611,42 @@ private struct SchoolChip: View {
         .padding(.trailing, Spacing.xs)
         .padding(.vertical, Spacing.sm)
         .background(Palette.cardAlt, in: .pokyh(Radius.lg))
+    }
+}
+
+/// The saved account a password is asked for, where a new sign-in has the school and user name.
+private struct SavedAccountChip: View {
+    let account: SavedAccount?
+    let username: String
+    let school: School
+
+    var body: some View {
+        HStack(spacing: Spacing.md) {
+            AvatarView(url: account?.imageUrl, name: username, size: 40, colorSeed: username)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(account?.title ?? username)
+                    .textStyle(.callout.weight(.semibold))
+                    .foregroundStyle(Palette.textPrimary)
+                    .lineLimit(1)
+                Text(detail)
+                    .textStyle(.caption)
+                    .foregroundStyle(Palette.textTertiary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, Spacing.sm)
+        .padding(.vertical, Spacing.sm)
+        .frame(minHeight: 56)
+        .background(Palette.cardAlt, in: .pokyh(Radius.lg))
+        .accessibilityElement(children: .combine)
+    }
+
+    /// A nickname hides who it is, so the user name comes first then.
+    private var detail: String {
+        let place = school.name.isEmpty ? school.loginName : school.name
+        guard let account, account.title != account.username else { return place }
+        return "\(account.username) · \(place)"
     }
 }
 

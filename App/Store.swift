@@ -49,6 +49,20 @@ enum BackendStatus: Equatable {
     }
 }
 
+/// A saved account whose password has to be typed in again, and why.
+struct PasswordPrompt: Equatable {
+    enum Reason: Equatable {
+        /// Signed out here, or nothing readable behind Face ID: nothing went wrong.
+        case missing
+        case wrongPassword
+        case wrongKey
+        case signedOutElsewhere
+    }
+
+    let username: String
+    let reason: Reason
+}
+
 @MainActor
 @Observable
 final class AppState {
@@ -88,8 +102,17 @@ final class AppState {
     var showsOffline: Bool { isOffline && !signingInBehind }
     var statusText = ""
     var error: String?
-    var showAddAccount = false
-    var prefillUsername: String?   // filled in when the password is asked for again
+    /// The sign-in sheet over the lock screen or the profile: a new account, or `passwordPrompt`.
+    var showAddAccount = false {
+        didSet { if !showAddAccount { passwordPrompt = nil } }
+    }
+    /// The saved account the sheet asks the password for again, and why. Nil for a new account.
+    private(set) var passwordPrompt: PasswordPrompt?
+    /// Goes up whenever a typed password was turned down, so the form can clear the field.
+    private(set) var refusedAttempts = 0
+    /// The saved account whose stored password just failed to sign in for some other reason. The
+    /// lock screen offers to type it in, so no failure leaves an account locked out.
+    private(set) var failedAccount: String?
     /// A sign-in waiting for the authenticator app's code, from any path: the sign-in screen, an
     /// unlock, a relaunch. An account like that can't sign itself in.
     private(set) var twoFactor: TwoFactorRequest?
@@ -206,10 +229,57 @@ final class AppState {
         await performLogin(username: username, password: password, save: false, allowOffline: true)
     }
 
-    private func askForPassword(_ username: String) {
+    private func askForPassword(_ username: String, reason: PasswordPrompt.Reason = .missing) {
         busy = false; statusText = ""
-        prefillUsername = username
+        passwordPrompt = PasswordPrompt(username: username, reason: reason)
         showAddAccount = true
+    }
+
+    /// "Anderes Konto hinzufügen", "Manuell anmelden": the sheet for an account not saved yet.
+    func addAccount() {
+        passwordPrompt = nil
+        showAddAccount = true
+    }
+
+    /// A saved account signed into by typing its password, without Face ID or the stored copy.
+    func enterPassword(for username: String) {
+        guard !busy else { return }
+        askForPassword(username)
+    }
+
+    /// The stored password doesn't sign in anymore. It goes, so does the watch's copy: trying it
+    /// again would only count towards WebUntis' lock-out. The account and its offline copies stay
+    /// for when the right one is typed in. `afterLock`: the lock screen is still coming in.
+    private func storedPasswordRefused(_ username: String, reason: PasswordPrompt.Reason, afterLock: Bool = false) {
+        WatchSync.signedOut(username: username)
+        store.signOut(username)
+        accounts = store.accounts
+        guard afterLock else { askForPassword(username, reason: reason); return }
+        // A sheet presented while its host is still being swapped in can hang (see finalize).
+        let epoch = lockEpoch
+        Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(450))
+            guard let self, self.lockEpoch == epoch, self.phase == .lock, !self.showAddAccount, !self.busy else { return }
+            self.askForPassword(username, reason: reason)
+        }
+    }
+
+    /// What a refused stored password means for the prompt; nil for any other failure.
+    private static func promptReason(_ error: Error, password: String) -> PasswordPrompt.Reason? {
+        switch (error as? AppError)?.refusal {
+        case .wrongCredentials: return AppKey.isKey(password) ? .wrongKey : .wrongPassword
+        case .signedOutElsewhere: return .signedOutElsewhere
+        case nil: return nil
+        }
+    }
+
+    /// The sign-in behind a stored copy was refused: the copy goes behind the lock and the
+    /// password is asked for there. False for any other failure.
+    private func refusedBehind(_ error: Error, username: String, password: String) -> Bool {
+        guard let reason = Self.promptReason(error, password: password) else { return false }
+        lock(deliberate: true)
+        storedPasswordRefused(username, reason: reason, afterLock: true)
+        return true
     }
 
     private func authenticate(reason: String) async -> LAContext? {
@@ -293,7 +363,7 @@ final class AppState {
         // see finalize.
         let viaSheet = showAddAccount
         let epoch = lockEpoch
-        busy = true; error = nil
+        busy = true; error = nil; failedAccount = nil
         statusText = "Verbinde mit WebUntis…"
 
         // Offline only for a returning account with stored data.
@@ -332,10 +402,12 @@ final class AppState {
                     // No connection: the stored copy stays, the banner says so, and coming back
                     // online signs in again.
                     if error is URLError { return }
-                    // Refused (password changed, signed out elsewhere): back to the lock screen
-                    // with the reason, like a sign-in that failed there.
+                    // Password changed, signed out elsewhere: the password is asked for again.
+                    if self.refusedBehind(error, username: username, password: password) { return }
+                    // Refused for another reason: back to the lock screen, which says why.
                     self.lock(deliberate: true)
                     self.error = (error as? AppError)?.message ?? error.localizedDescription
+                    self.failedAccount = username
                 }
             }
             return
@@ -377,9 +449,10 @@ final class AppState {
                     let s = try await loginTask.value
                     await self?.upgradeFromBackground(s, save: save, password: password, epoch: epoch)
                 } catch {
-                    // The connection came back and WebUntis wants the code after all.
+                    // The connection came back and WebUntis wants the code, or a new password.
                     guard let self, epoch == self.lockEpoch else { return }
-                    _ = self.askForCode(error, username: username, password: password, save: save, school: school)
+                    if self.askForCode(error, username: username, password: password, save: save, school: school) { return }
+                    _ = self.refusedBehind(error, username: username, password: password)
                 }
             }
         case .failed(let e):
@@ -392,8 +465,20 @@ final class AppState {
             // A quick network failure (flight mode) with a stored copy: offline as well.
             } else if let snap, e is URLError {
                 await enterOffline(snap, viaSheet: viaSheet, epoch: epoch)
+            } else if !fresh, let reason = Self.promptReason(e, password: password) {
+                // The stored password: asked for again, with the reason.
+                storedPasswordRefused(username, reason: reason)
             } else {
-                self.error = (e as? AppError)?.message ?? e.localizedDescription
+                let refused = (e as? AppError)?.refusal == .wrongCredentials
+                if refused, let prompt = passwordPrompt, AccountRoster.same(prompt.username, username), !AppKey.isKey(password) {
+                    // The user name is given, so only the password can be wrong.
+                    self.error = Strings.current.login.promptAgain
+                } else {
+                    self.error = (e as? AppError)?.message ?? e.localizedDescription
+                }
+                if refused { refusedAttempts += 1 }
+                // Without a connection typing the password wouldn't help.
+                if !fresh, !(e is URLError) { failedAccount = username }
             }
             busy = false; statusText = ""
         }
@@ -420,6 +505,12 @@ final class AppState {
                 backendStatus = .connected
                 backendOnly = true
             } catch {
+                if let untis = untisError as? AppError, untis.refusal == .wrongCredentials {
+                    // Both turned it down: WebUntis' word for it, in the app's language.
+                    if (error as? AppError)?.status == 401 { throw untis }
+                    // POKYH didn't answer, so a POKYH-only account may still be fine: no refusal.
+                    if error is URLError { throw AppError(message: untis.message) }
+                }
                 // Both failed. For a POKYH-only account the backend's message says more (wrong
                 // credentials, say); a plain network failure passes on WebUntis' error.
                 throw (error is URLError) ? untisError : error
@@ -456,13 +547,13 @@ final class AppState {
                     backendStatus = .failed(Strings.current.common.sessionExpired)
                 case .untisUnavailable(let msg), .failed(let msg):
                     backendStatus = .failed(msg)
-                case .revoked(let msg):
+                case .revoked:
                     // Signed out from another device: the saved password goes, so this phone
                     // asks for it again instead of signing itself back in.
                     WatchSync.signedOut(username: s.username)
                     store.signOut(s.username)
                     accounts = store.accounts
-                    throw AppError(message: msg)
+                    throw AppError(message: Strings.current.login.promptSignedOut, refusal: .signedOutElsewhere)
                 }
             } else {
                 backendStatus = .notStudent
@@ -573,7 +664,8 @@ final class AppState {
             await upgradeFromBackground(fresh, save: false, password: password, epoch: epoch)
         } catch {
             guard epoch == lockEpoch else { return }
-            _ = askForCode(error, username: snap.username, password: password, save: false, school: school)
+            if askForCode(error, username: snap.username, password: password, save: false, school: school) { return }
+            _ = refusedBehind(error, username: snap.username, password: password)
         }
     }
 
@@ -775,7 +867,17 @@ final class AppState {
         if wasActive {
             LiveActivityManager.endAll()
             lock(deliberate: true)
+        } else if accounts.isEmpty, phase == .lock {
+            // The last one went from the lock screen: nothing is left to unlock.
+            phase = .login
         }
+    }
+
+    /// From the password sheet: the sheet leaves first, then the account goes, which can swap the
+    /// lock screen under it for the sign-in.
+    func removeAccountFromSheet(_ username: String) async {
+        await closeSheetBeforeSwap()
+        removeAccount(username: username)
     }
 
     func logout() {
@@ -824,6 +926,9 @@ final class AppState {
     private func lock(deliberate: Bool) {
         lockEpoch += 1
         twoFactor = nil
+        // Whatever the signed-in screens left; the lock screen shows what's set after this.
+        error = nil
+        failedAccount = nil
         UnlockSession.end()
         autoUnlockArmed = !deliberate
         busy = false; statusText = ""

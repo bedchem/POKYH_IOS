@@ -122,11 +122,12 @@ final class UntisClient {
                 switch form.answer {
                 case .ok: return try await completeFormLogin(user: username, sessionId: form.sessionId, school: school)
                 case .codeRequired: throw TwoFactorRequired(wrongCode: false)
+                case .badCredentials: throw AppError(message: t.errors.badCredentials, refusal: .wrongCredentials)
                 default: break
                 }
             }
-            let msg = json.error.message.string ?? t.errors.loginFailed
-            throw AppError(message: msg)
+            if json.error.code.int == -8504 { throw AppError(message: t.errors.badCredentials, refusal: .wrongCredentials) }
+            throw AppError(message: json.error.message.string ?? t.errors.loginFailed)
         }
         guard let studentId = json.result.personId.int else {
             throw AppError(message: t.errors.loginFailed)
@@ -158,7 +159,7 @@ final class UntisClient {
         }
         let json = JSON.parse(data)
         if json.error.exists || !json.result.exists {
-            if json.error.code.int == -8504 { throw AppError(message: t.login.badKey) }
+            if json.error.code.int == -8504 { throw AppError(message: t.login.badKey, refusal: .wrongCredentials) }
             throw AppError(message: json.error.message.string ?? t.errors.loginFailed)
         }
         guard let sessionId = Self.sessionId(http), !sessionId.isEmpty else { throw AppError(message: t.errors.loginFailed) }
@@ -212,7 +213,7 @@ final class UntisClient {
         switch form.answer {
         case .ok: return try await completeFormLogin(user: user, sessionId: form.sessionId, school: school)
         case .codeRequired, .codeWrong: throw TwoFactorRequired(wrongCode: true)
-        case .badCredentials: throw AppError(message: t.badCredentials)
+        case .badCredentials: throw AppError(message: t.badCredentials, refusal: .wrongCredentials)
         case .refused: throw AppError(message: t.refused)
         case .unavailable: throw AppError(message: t.noConnection)
         }

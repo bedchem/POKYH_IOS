@@ -16,6 +16,8 @@ Status: **done** = in the iOS app on `redesign`, **planned** = part of the rewri
 | Siri and Shortcuts | "Nächste Stunde", "Stundenplan heute" as App Intents | nothing | App Actions / `shortcuts.xml` | planned |
 | Watch | watchOS app: today, grades, Mensa, to-dos; complications; works without the phone nearby | nothing | Wear OS app + tiles, same data via the Data Layer API | planned |
 | Current lesson above the tab bar | `tabViewBottomAccessory` shows the running lesson on every tab | nothing | a slim bar above `PokyhBottomNav` | planned |
+| Stored password turned down | When WebUntis (and POKYH, for its own accounts) refuses the saved password, or the device was signed out elsewhere, it is dropped and the password sheet opens for that account with the reason; nothing tries the old one again | the unlock fails with the error and keeps trying the old password | `AppError.refusal` equivalent in `UntisClient`/`AppState.buildSession`, then `addAccount(prefill)` with a reason | done |
+| Accounts removed from the lock screen | Edit mode and a long-press menu on the saved accounts (remove, sign in with the password typed); the last one leaves the sign-in | only from the profile | same actions on `LockScreen`'s account list | done |
 
 Not iOS-only, even though the old iOS app had them first: calendar export (`.ics` for the week
 and for exams) and the offline mode exist on Android too.

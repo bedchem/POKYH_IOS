@@ -98,7 +98,7 @@ struct ProfileView: View {
         .sensoryFeedback(.success, trigger: app.session?.username)
         .sensoryFeedback(.selection, trigger: app.defaultUsername)
         .sheet(isPresented: Bindable(app).showAddAccount) {
-            NavigationStack { LoginView(isAdditional: true) }
+            NavigationStack { LoginView(isAdditional: true, prompt: app.passwordPrompt) }
         }
         .sheet(isPresented: $showConnectionStatus) {
             if let s = app.session { ConnectionStatusView(session: s) }
@@ -126,7 +126,7 @@ struct ProfileView: View {
                     menu: { accountMenu(acc) }
                 )
             }
-            AddAccountRow { app.showAddAccount = true }
+            AddAccountRow { app.addAccount() }
         }
     }
 

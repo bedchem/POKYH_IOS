@@ -48,6 +48,9 @@ nonisolated enum StubServer {
     /// Face ID fails instead of passing.
     static var biometryFails: Bool { env["POKYH_STUB_BIOMETRY"] == "fail" }
 
+    /// The password WebUntis takes now, as if it had been changed on the website. Unset, any does.
+    static var currentPassword: String? { env["POKYH_STUB_PASSWORD"] }
+
     /// Seconds in the background until the app locks, instead of ten minutes.
     static var autoLockSeconds: Int? { isActive ? env["POKYH_STUB_AUTOLOCK"].flatMap(Int.init) : nil }
 

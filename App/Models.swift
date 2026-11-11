@@ -395,7 +395,16 @@ struct AppError: LocalizedError {
     var message: String
     /// The backend's HTTP status, where it answered.
     var status: Int? = nil
+    /// Set when these credentials won't sign in again as they are, so a stored copy is no use.
+    var refusal: Refusal? = nil
     var errorDescription: String? { message }
+
+    enum Refusal: Equatable {
+        /// WebUntis turned the password or app key down (and POKYH too, for an account of its own).
+        case wrongCredentials
+        /// This device was signed out from another one; the backend won't renew it.
+        case signedOutElsewhere
+    }
     static let sessionExpired = AppError(message: "session_expired")
     var isSessionExpired: Bool { message == Self.sessionExpired.message }
 }

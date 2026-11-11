@@ -163,6 +163,76 @@ final class JourneyTests: AppTestCase {
         assertAlive("after removing the account")
     }
 
+    /// The password was changed on the website: the stored one is turned down, the app asks for
+    /// the new one on the spot, says so when it's mistyped, and keeps the right one.
+    func testChangedPasswordIsAskedForAgain() {
+        launch()
+        waitForTabs()
+        app.terminate()
+
+        let changed = ["POKYH_STUB_PASSWORD": "neu-2026"]
+        launch(account: nil, reset: false, env: changed)
+        XCTAssertTrue(see("Das gespeicherte Passwort stimmt nicht mehr", timeout: 15), "the password was never asked for again")
+        attachScreen("asked again")
+        XCTAssertFalse(app.textFields["Benutzername"].exists, "the account is given, no user name to type")
+        let field = app.secureTextFields.firstMatch
+        typeInto(field, "neu-2025\n")
+        XCTAssertTrue(see("Das Passwort stimmt nicht.", timeout: 8), "a mistyped password went unsaid")
+        typeInto(field, "neu-2026\n")
+        waitForTabs()
+        app.terminate()
+
+        // Kept: the next start gets in with Face ID alone.
+        launch(account: nil, reset: false, env: changed)
+        waitForTabs(timeout: 20)
+    }
+
+    /// Saved accounts go from the lock screen too, from a row's menu and in edit mode; the menu
+    /// also signs in with the password typed. With the last one gone the sign-in is left.
+    func testRemoveAccountsOnTheLockScreen() {
+        launch()
+        waitForTabs()
+        app.terminate()
+        // Face ID fails throughout, so nothing unlocks behind the second sign-in or the lock screen.
+        let noFaceID = ["POKYH_STUB_BIOMETRY": "fail"]
+        launch(account: "eltern", reset: false, env: noFaceID)
+        waitForTabs()
+        app.terminate()
+
+        launch(account: nil, reset: false, env: noFaceID)
+        XCTAssertTrue(see("GESPEICHERTE KONTEN", timeout: 8), "no saved accounts on the lock screen")
+        func row(_ name: String) -> XCUIElement {
+            app.buttons.matching(NSPredicate(format: "label CONTAINS %@", name)).firstMatch
+        }
+
+        // The menu: the password typed instead of Face ID.
+        row("anna").press(forDuration: 1.0)
+        XCTAssertTrue(tap("Mit Passwort anmelden", timeout: 3), "no password sign-in in the menu")
+        XCTAssertTrue(see("Passwort eingeben", timeout: 4), "the password sheet never came")
+        attachScreen("password typed")
+        leaveEverything()
+
+        // The menu again: removing.
+        row("eltern").press(forDuration: 1.0)
+        XCTAssertTrue(tap("Konto entfernen", timeout: 3), "no removal in the menu")
+        pause(0.6)
+        XCTAssertTrue(tap("Konto entfernen", timeout: 3), "removal wasn't confirmed")
+        pause(1.5)
+        XCTAssertFalse(row("eltern").exists, "eltern is still there")
+        XCTAssertTrue(row("anna").exists, "the other account went too")
+
+        // Edit mode, for the last one.
+        XCTAssertTrue(tap("Bearbeiten", timeout: 2), "no edit button")
+        pause(0.5)
+        attachScreen("editing")
+        tapBlindly(row("anna"))
+        pause(0.6)
+        XCTAssertTrue(tap("Konto entfernen", timeout: 3), "removal wasn't confirmed")
+        XCTAssertTrue(see("Mit deinem WebUntis-Konto", timeout: 6), "the sign-in didn't take over")
+        XCTAssertFalse(see("GESPEICHERTE KONTEN", timeout: 1), "the lock screen stayed")
+        assertAlive("after removing the last account")
+    }
+
     func testLockBackgroundForeground() {
         launch(env: ["POKYH_STUB_AUTOLOCK": "1"])
         waitForTabs()

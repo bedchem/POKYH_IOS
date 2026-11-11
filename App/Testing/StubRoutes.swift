@@ -156,7 +156,9 @@ nonisolated enum StubRoutes {
         case "authenticate":
             let params = request["params"] as? [String: Any] ?? [:]
             let name = (params["user"] as? String ?? "").lowercased()
-            if params["password"] as? String == "falsch" || name == "nurpokyh" || StubProfile.rejects(name, password: params["password"] as? String) {
+            let password = params["password"] as? String
+            let changed = StubServer.currentPassword.map { $0 != password } ?? false
+            if password == "falsch" || changed || name == "nurpokyh" || StubProfile.rejects(name, password: password) {
                 return error(-8504, "bad credentials")
             }
             if name == "zweifa" || StubProfile.asksForCode(name) { return error(-8998, "two factor") }
