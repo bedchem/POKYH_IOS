@@ -3,7 +3,7 @@ import Testing
 @testable import PokyhCore
 
 // The shape WebUntis' class picker answers with (timetable/filter?resourceType=CLASS), names made up.
-private let filter: [String: Any] = [
+nonisolated(unsafe) private let filter: [String: Any] = [
     "resourceType": "CLASS",
     "preSelected": ["id": 1962, "shortName": "4.BFS-FI", "displayName": "4.BFS-FI"] as [String: Any],
     "departments": [["id": 2, "shortName": "V", "longName": "Vollzeit"] as [String: Any]],
