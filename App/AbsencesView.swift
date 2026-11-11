@@ -1310,6 +1310,8 @@ private struct ExcuseAbsenceSheet: View {
     @State private var metaFailed = false
     @State private var teachers: [String]?
     @State private var teachersFailed = false
+    /// WebUntis names class teachers, but not which of them is the class teacher proper.
+    @State private var teacherUnclear = false
     @State private var reason: AbsenceReason?
     @State private var note = ""
     @State private var saving = false
@@ -1379,7 +1381,7 @@ private struct ExcuseAbsenceSheet: View {
             .insetSurface(radius: Radius.lg)
         }
 
-        // Who it goes to: the class teachers WebUntis names for the class.
+        // Who it goes to: the class teacher WebUntis names for the class, never the deputy.
         VStack(alignment: .leading, spacing: Spacing.sm) {
             EyebrowLabel(t.exTo, color: Palette.textSecondary)
             HStack(spacing: Spacing.iconText) {
@@ -1396,7 +1398,7 @@ private struct ExcuseAbsenceSheet: View {
             .padding(Spacing.md)
             .insetSurface(radius: Radius.lg)
             if noTeacher {
-                Text(t.exNoTeacher).textStyle(.footnote).foregroundStyle(Brand.danger)
+                Text(teacherUnclear ? t.exTeacherUnclear : t.exNoTeacher).textStyle(.footnote).foregroundStyle(Brand.danger)
             }
         }
 
@@ -1438,7 +1440,10 @@ private struct ExcuseAbsenceSheet: View {
         if reason == nil, let m = found { reason = m.reasons.first { $0.id == m.defaultReasonId } }
         do {
             var seen = Set<Int>()
-            teachers = try await people.filter { $0.isClassTeacher && seen.insert($0.id).inserted }.map(\.name)
+            let classTeachers = try await people.filter { $0.isClassTeacher && seen.insert($0.id).inserted }
+            let main = await UntisClient.shared.mainClassTeacher(among: classTeachers, session)
+            teachers = main.map { [$0.name] } ?? []
+            teacherUnclear = main == nil && !classTeachers.isEmpty
         } catch {
             teachers = []
             teachersFailed = true

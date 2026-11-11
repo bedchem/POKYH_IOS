@@ -1666,9 +1666,23 @@ final class UntisClient {
         if let failure { throw AppError(message: failure) }
     }
 
+    /// The class teacher an excuse goes to, among the class teachers the account may write to:
+    /// never the deputy, whom WebUntis lists beside them. Nil when it can't be told.
+    func mainClassTeacher(among classTeachers: [MessageRecipient], _ s: UserSession) async -> MessageRecipient? {
+        let start = SchoolDates.mondayISO(of: Date())
+        let monday = DateFmt.iso.date(from: start) ?? Date()
+        let end = DateFmt.isoString(Calendar.current.date(byAdding: .day, value: 5, to: monday) ?? monday)
+        let url = "\(base(s))\(TimetableRoutes.filter)?resourceType=CLASS&timetableType=STANDARD&start=\(start)&end=\(end)"
+        var teachers: ClassTeachers?
+        if let reply = try? await get(url, s, timeout: 12), reply.1.statusCode == 200 {
+            teachers = ClassTeacherPick.read(JSON.parse(reply.0).raw)
+        }
+        return ClassTeacherPick.pick(classTeachers, name: \.name, teachers: teachers)
+    }
+
     /// "Entschuldigen" for absences that are over: WebUntis refuses to add a reason to those, so the
-    /// excuse goes to the class teachers as a message (one each when the account may only write to
-    /// one teacher at a time). Without the right to write to teachers, it is saved on the absence.
+    /// excuse goes to the class teacher as one message, never to the deputy. Without the right to
+    /// write to teachers, it is saved on the absence.
     func excuseByMessage(absences: [AbsenceEntry], reason: AbsenceReason, note: String, _ s: UserSession) async throws -> ExcuseResult {
         let strings = Strings.current
         let t = strings.absences
@@ -1704,6 +1718,7 @@ final class UntisClient {
         let teachers = people.filter { classTeacherIds.contains($0.id) && seen.insert($0.id).inserted }
             .map { MessageRecipient(id: $0.id, type: "CLASS_TEACHERS", name: $0.name, isClassTeacher: true) }
         guard !teachers.isEmpty else { throw AppError(message: t.exNoTeacher) }
+        guard let teacher = await mainClassTeacher(among: teachers, s) else { throw AppError(message: t.exTeacherUnclear) }
 
         var childName: String?
         if s.isParent, let app = (try? await fetchAppData(s)).flatMap({ $0 }) {
@@ -1712,28 +1727,16 @@ final class UntisClient {
         let (subject, text) = ExcuseMessage.compose(open, lang: strings.lang, reasonName: reason.name, note: note,
                                                     childName: childName, signature: s.isParent ? nil : s.personName)
         let html = Self.plainTextToHtml(text)
-        let option = await messagePermissions(s, token: await freshMessageToken(s), schoolYearId: await currentSchoolYearId(s)).recipientOption
-        let batches = option == "TEACHER" ? teachers.map { [$0] } : [teachers]
-
-        var sentTo: [String] = []
-        var failed: [String] = []
-        var expired = false
-        for batch in batches {
-            let names = batch.map(\.name)
-            if expired { failed += names; continue }
-            do {
-                try await sendMessage(subject: subject, content: html, recipients: batch, s)
-                sentTo += names
-            } catch let e as AppError {
-                failed += names
-                expired = e.isSessionExpired
-            } catch {
-                failed += names
-            }
+        do {
+            try await sendMessage(subject: subject, content: html, recipients: [teacher], s)
+        } catch let e as AppError where e.isSessionExpired {
+            throw e
+        } catch {
+            throw AppError(message: t.exSendFailed)
         }
-        if sentTo.isEmpty { throw expired ? AppError.sessionExpired : AppError(message: t.exSendFailed) }
+        let sentTo = [teacher.name]
         let span = ExcuseMessage.span(of: open)
-        return ExcuseResult(viaMessage: true, sentTo: sentTo, failed: failed,
+        return ExcuseResult(viaMessage: true, sentTo: sentTo, failed: [],
                             excuse: SentExcuse(start: span.start, end: span.end, sentAt: ISO8601DateFormatter().string(from: .now),
                                                recipients: sentTo, messageId: nil))
     }
