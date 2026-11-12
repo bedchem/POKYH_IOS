@@ -95,7 +95,7 @@ struct MensaView: View {
         error = nil
         do {
             dishes = try await BackendClient.shared.dishes(force: force)
-            RemotePhotos.prefetch(dishes.compactMap { $0.imageUrl.flatMap(URL.init(string:)) })
+            RemotePhotos.prefetch(dishes.compactMap(\.photoURL))
             WatchSync.mensa(dishes)
             loading = false
             await loadRatings()
@@ -190,7 +190,7 @@ private struct MensaPlan: View {
 
     /// The dish served large: the first with a photo, else the first.
     static func lead(_ dishes: [Dish]) -> Dish? {
-        dishes.first { !($0.imageUrl ?? "").isEmpty } ?? dishes.first
+        dishes.first { $0.photoURL != nil } ?? dishes.first
     }
 
     private func weekTitle(_ start: Date, firstDay: Date) -> String {
@@ -395,7 +395,7 @@ struct DishPlate: View {
             style: dish.map { FoodStyle.of(category: $0.category, tags: $0.tags) } ?? .pasta,
             seed: dish?.id ?? "loading",
             size: size == .table ? .table : .plate,
-            photo: dish?.imageUrl.flatMap { URL(string: $0) },
+            photo: dish?.photoURL,
             empty: dish == nil
         )
     }
@@ -466,7 +466,7 @@ struct DishDetailView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Spacing.section) {
-                if let raw = dish.imageUrl, !raw.isEmpty {
+                if dish.photoURL != nil {
                     DishImage(dish: dish, height: 210)
                         .clipShape(.pokyh(Radius.xxl))
                         .fadeIn()
@@ -759,7 +759,7 @@ struct DishImage: View {
             .frame(maxWidth: .infinity)
             .frame(height: height)
             .overlay {
-                if let urlStr = dish.imageUrl, let url = URL(string: urlStr) {
+                if let url = dish.photoURL {
                     CachedImage(url: url) { placeholder }
                 } else {
                     placeholder

@@ -47,12 +47,23 @@ public enum RemotePhotos {
         }
     }
 
+    // Photos come from any site a menu links to: no cookies they could set and send back,
+    // no second copy in URLCache (the bytes are kept below).
+    private static let session: URLSession = {
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.httpCookieStorage = nil
+        cfg.httpShouldSetCookies = false
+        cfg.urlCache = nil
+        return URLSession(configuration: cfg)
+    }()
+
     /// From disk, else the network, saved for next time.
     private static func bytes(_ url: URL) async -> Data? {
         let path = file(for: url)
         if let stored = try? Data(contentsOf: path) { return stored }
-        guard let (data, response) = try? await URLSession.shared.data(from: url),
-              (response as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) ?? true,
+        guard let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http",
+              let (data, response) = try? await session.data(from: url),
+              let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
               !data.isEmpty else { return nil }
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try? data.write(to: path, options: .atomic)

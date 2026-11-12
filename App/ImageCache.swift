@@ -25,7 +25,7 @@ nonisolated enum ImageCache {
         #if DEBUG
         StubServer.attach(to: cfg)
         #endif
-        return URLSession(configuration: cfg)
+        return URLSession(configuration: cfg, delegate: SameHostCredentials(), delegateQueue: nil)
     }()
 
     private static let files = SealedFiles(
@@ -180,5 +180,27 @@ struct CachedImage<Placeholder: View>: View {
             if next == nil { next = await ImageCache.fetch(url, key: key) }
             if let next { withAnimation(.easeOut(duration: 0.25)) { loaded = next } }
         }
+    }
+}
+
+/// A picture request carries the WebUntis session (Cookie, Authorization) for the school's own
+/// server. A redirect to any other address goes without it.
+private nonisolated final class SameHostCredentials: NSObject, URLSessionTaskDelegate, Sendable {
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping @Sendable (URLRequest?) -> Void
+    ) {
+        let from = task.originalRequest?.url
+        guard request.url?.host != from?.host || request.url?.scheme != from?.scheme else {
+            completionHandler(request)
+            return
+        }
+        var request = request
+        request.setValue(nil, forHTTPHeaderField: "Cookie")
+        request.setValue(nil, forHTTPHeaderField: "Authorization")
+        completionHandler(request)
     }
 }

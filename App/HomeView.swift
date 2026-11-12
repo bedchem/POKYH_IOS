@@ -857,7 +857,7 @@ struct HomeView: View {
     private func dishThumb(_ dish: Dish, width: CGFloat, height: CGFloat, radius: CGFloat, tone: Tone) -> some View {
         ZStack {
             tone.fill
-            if let raw = dish.imageUrl, let url = URL(string: raw) {
+            if let url = dish.photoURL {
                 CachedImage(url: url) { dishGlyph(tone, size: width > 60 ? 30 : 18) }
             } else {
                 dishGlyph(tone, size: width > 60 ? 30 : 18)
@@ -1146,7 +1146,7 @@ struct HomeView: View {
         guard let dishes = try? await BackendClient.shared.dishes() else { return }
         WatchSync.mensa(dishes)
         // The Mensa tab then opens with its photos already on disk.
-        RemotePhotos.prefetch(dishes.compactMap { $0.imageUrl.flatMap(URL.init(string:)) })
+        RemotePhotos.prefetch(dishes.compactMap(\.photoURL))
         // Same date rule as the Mensa tab: today or the next day the menu has.
         guard let day = MensaSchedule.days(from: dishes).first(where: { !$0.dishes.isEmpty }) else {
             mensaDay = nil

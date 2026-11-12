@@ -24,6 +24,8 @@ enum Config {
 
     // POKYH backend
     static var backendURL: String { app.backendURL.absoluteString }
+    /// A picture or link from a backend answer, which may name it by path only.
+    static func backendLink(_ raw: String?) -> URL? { app.backendLink(raw) }
     static var apiKey: String { app.apiKey }
     static var serverKey: String { app.serverKey }
 

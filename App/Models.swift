@@ -291,6 +291,7 @@ struct Dish: Identifiable, Equatable, Hashable, Codable {
     var description: String?
     var category: String
     var date: String
+    /// As the backend sent it, which may be just a path: pictures go through `photoURL`.
     var imageUrl: String?
     var price: Double?
     var allergens: [String]
@@ -299,6 +300,9 @@ struct Dish: Identifiable, Equatable, Hashable, Codable {
     var protein: Double?
     var carbs: Double?
     var fat: Double?
+
+    // Resolved when shown, so menus kept on disk from before still get their pictures.
+    var photoURL: URL? { Config.backendLink(imageUrl) }
 }
 
 struct DishRatingsData: Equatable {
