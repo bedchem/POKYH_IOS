@@ -46,7 +46,8 @@ x-pokyh-info: &pokyhInfo
   POKYHDefaultSchool: $(POKYH_DEFAULT_SCHOOL)
   POKYHDefaultUntisServer: $(POKYH_DEFAULT_UNTIS_SERVER)
   POKYHDefaultSchoolName: $(POKYH_DEFAULT_SCHOOL_NAME)
-  CFBundleDisplayName: POKYH
+  POKYHCurrency: $(POKYH_CURRENCY)
+  CFBundleDisplayName: $(POKYH_APP_NAME)
   CFBundleShortVersionString: $(MARKETING_VERSION)
   CFBundleVersion: $(CURRENT_PROJECT_VERSION)
   ITSAppUsesNonExemptEncryption: false
@@ -167,7 +168,7 @@ targets:
       path: Widgets/Info.plist
       properties:
         <<: *pokyhInfo
-        CFBundleDisplayName: POKYH
+        CFBundleDisplayName: $(POKYH_APP_NAME)
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     entitlements:

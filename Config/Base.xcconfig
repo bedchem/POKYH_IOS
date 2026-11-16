@@ -4,6 +4,11 @@
 POKYH_VERSION = 2.1.0
 POKYH_BUILD = 1
 
+// The name on the home screen and wherever the app names itself.
+POKYH_APP_NAME = POKYH
+// Mensa prices, ISO 4217; the menu itself doesn't say.
+POKYH_CURRENCY = EUR
+
 POKYH_BUNDLE_ID = dev.plattnericus.POKYH
 POKYH_APP_GROUP = group.$(POKYH_BUNDLE_ID)
 POKYH_KEYCHAIN_GROUP = $(AppIdentifierPrefix)$(POKYH_BUNDLE_ID)

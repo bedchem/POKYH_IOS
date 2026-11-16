@@ -7,6 +7,7 @@ import PokyhDesign
 struct POKYHWatchWidgets: WidgetBundle {
     var body: some Widget {
         NextLessonComplication()
+        RoomComplication()
     }
 }
 
@@ -223,7 +224,7 @@ struct NextLessonFace: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         } else {
             VStack(alignment: .leading, spacing: 0) {
-                Text(verbatim: "POKYH")
+                Text(AppConfig.appName())
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(.secondary)
                     .widgetAccentable()
@@ -368,9 +369,319 @@ struct NextLessonFace: View {
     private var idleText: String {
         switch entry.moment {
         case .free, .over: texts.free
-        default: "POKYH"
+        default: AppConfig.appName()
         }
     }
+}
+
+// MARK: - Room
+
+/// Which room, and for how long: the one you're in, from ten minutes before the bell the next one.
+struct RoomComplication: Widget {
+    private let texts = WatchTexts.of(LanguageChoice.current(in: .standard))
+
+    var body: some WidgetConfiguration {
+        StaticConfiguration(kind: "RoomComplication", provider: RoomProvider()) { entry in
+            RoomView(entry: entry)
+        }
+        .configurationDisplayName(texts.roomTitle)
+        .description(texts.roomInfo)
+        .supportedFamilies([.accessoryRectangular, .accessoryInline, .accessoryCircular, .accessoryCorner])
+    }
+}
+
+struct RoomEntry: TimelineEntry {
+    let date: Date
+    let call: WatchSnapshot.RoomCall?
+    let moment: WatchSnapshot.Moment
+    let lang: Lang
+    let relevance: TimelineEntryRelevance?
+
+    init(date: Date, snapshot: WatchSnapshot?, until end: Date? = nil) {
+        self.date = date
+        lang = snapshot?.lang ?? LanguageChoice.current(in: .standard)
+        call = snapshot?.roomCall(at: date)
+        moment = snapshot?.moment(at: date) ?? .unknown
+        let score = snapshot?.relevance(at: date) ?? 0
+        relevance = TimelineEntryRelevance(score: Float(score), duration: end?.timeIntervalSince(date) ?? 0)
+    }
+
+    /// For the watch face gallery: what it will look like, nobody's real room.
+    static func sample(at date: Date) -> RoomEntry {
+        let lang = LanguageChoice.current(in: .standard)
+        let lesson = WatchSnapshot.Lesson(
+            id: "sample", subject: Strings.of(lang).home.lesson, teacher: "", room: "1",
+            start: date.addingTimeInterval(-20 * 60), end: date.addingTimeInterval(30 * 60)
+        )
+        return RoomEntry(date: date, call: .init(lesson: lesson, isNow: true, span: lesson.start...lesson.end), lang: lang)
+    }
+
+    private init(date: Date, call: WatchSnapshot.RoomCall, lang: Lang) {
+        self.date = date
+        self.call = call
+        moment = .running(call.lesson)
+        self.lang = lang
+        relevance = nil
+    }
+}
+
+/// The same bells as the lesson complication: the run-up to each one is when the room changes.
+struct RoomProvider: TimelineProvider {
+    private var store: WatchStore { .shared(createsKey: false) }
+
+    func placeholder(in context: Context) -> RoomEntry {
+        .sample(at: .now)
+    }
+
+    func getSnapshot(in context: Context, completion: @escaping (RoomEntry) -> Void) {
+        completion(context.isPreview ? .sample(at: .now) : RoomEntry(date: .now, snapshot: store.snapshot()))
+    }
+
+    func getTimeline(in context: Context, completion: @escaping (Timeline<RoomEntry>) -> Void) {
+        let snapshot = store.snapshot()
+        let dates = snapshot?.timelineDates(from: .now) ?? [.now]
+        let entries = dates.indices.map { index in
+            RoomEntry(date: dates[index], snapshot: snapshot, until: dates.indices.contains(index + 1) ? dates[index + 1] : nil)
+        }
+        completion(Timeline(entries: entries, policy: snapshot == nil ? .never : .atEnd))
+    }
+}
+
+struct RoomView: View {
+    let entry: RoomEntry
+    @Environment(\.widgetFamily) private var family
+
+    var body: some View {
+        RoomFace(entry: entry, family: family)
+            .containerBackground(for: .widget) {
+                if let lesson = entry.call?.lesson {
+                    LinearGradient(colors: [lesson.tone.bar.opacity(0.5), lesson.tone.fill.opacity(0.5)], startPoint: .top, endPoint: .bottom)
+                } else {
+                    Color.clear
+                }
+            }
+    }
+}
+
+struct RoomFace: View {
+    let entry: RoomEntry
+    let family: WidgetFamily
+    @Environment(\.widgetRenderingMode) private var mode
+
+    private var s: Strings { .of(entry.lang) }
+    private var texts: WatchTexts { .of(entry.lang) }
+
+    var body: some View {
+        switch family {
+        case .accessoryRectangular: rectangular
+        case .accessoryCircular: circular
+        case .accessoryCorner: corner
+        default: inline
+        }
+    }
+
+    /// The room alone, for the small faces; the subject when there's no room.
+    private func room(_ lesson: WatchSnapshot.Lesson) -> String {
+        if !lesson.room.isEmpty { return lesson.room }
+        return lesson.subject.isEmpty ? s.home.lesson : lesson.subject
+    }
+
+    /// "Raum 2.05", or the subject.
+    private func roomLabel(_ lesson: WatchSnapshot.Lesson) -> String {
+        lesson.room.isEmpty ? room(lesson) : s.home.room(lesson.room)
+    }
+
+    private func tint(_ lesson: WatchSnapshot.Lesson) -> Color? {
+        mode == .fullColor ? lesson.tone.bar : nil
+    }
+
+    /// A changed room wears its color: that's the news.
+    private func roomInk(_ lesson: WatchSnapshot.Lesson) -> Color {
+        mode == .fullColor && lesson.status == .roomChange ? lesson.tone.ink : .primary
+    }
+
+    /// "noch 26:00" or "in 4:00", the clock counting by itself; the start time while that's
+    /// more than an hour off.
+    private func countdown(_ call: WatchSnapshot.RoomCall) -> Text {
+        guard let span = call.span else { return Text(WatchFormat.clock(call.lesson.start)) }
+        let timer = Text(timerInterval: span, countsDown: true, showsHours: false)
+        // The phrase is the app's own, with the clock where its number goes.
+        let marker = "\u{1}"
+        let parts = (call.isNow ? s.home.left : texts.startsIn)(marker).components(separatedBy: marker)
+        return Text("\(parts.first ?? "")\(timer)\(parts.count > 1 ? parts[1] : "")")
+    }
+
+    /// The top line: the lesson in it, or what comes next.
+    private func heading(_ call: WatchSnapshot.RoomCall) -> String {
+        let title = call.lesson.title.isEmpty ? s.home.lesson : call.lesson.title
+        return call.isNow ? title : "\(s.home.upNext): \(title)"
+    }
+
+    // MARK: Rectangular
+
+    @ViewBuilder private var rectangular: some View {
+        if let call = entry.call {
+            let lesson = call.lesson
+            VStack(alignment: .leading, spacing: 1) {
+                Label(heading(call), systemImage: call.isNow ? "door.left.hand.closed" : "figure.walk")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                HStack(alignment: .firstTextBaseline, spacing: Spacing.xs) {
+                    Text(roomLabel(lesson))
+                        .font(.system(size: 20, weight: .bold, design: .rounded))
+                        .foregroundStyle(roomInk(lesson))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                        .widgetAccentable()
+                    // A changed room says what it was.
+                    if lesson.status == .roomChange, let original = lesson.originalRoom {
+                        Text(texts.instead(original))
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(roomInk(lesson))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                    }
+                    Spacer(minLength: 0)
+                }
+                if let span = call.span {
+                    HStack(spacing: Spacing.xs) {
+                        ProgressView(timerInterval: span, countsDown: true) {
+                            EmptyView()
+                        } currentValueLabel: {
+                            EmptyView()
+                        }
+                        .progressViewStyle(.linear)
+                        .labelsHidden()
+                        .tint(tint(lesson))
+                        .widgetAccentable()
+                        countdown(call)
+                            .font(.system(size: 13, weight: .semibold, design: .rounded))
+                            .monospacedDigit()
+                            .lineLimit(1)
+                            .fixedSize()
+                    }
+                } else {
+                    countdown(call)
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            VStack(alignment: .leading, spacing: 0) {
+                Text(AppConfig.appName())
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .widgetAccentable()
+                Text(idleTitle)
+                    .font(.system(size: 15, weight: .semibold))
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.8)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var idleTitle: String {
+        switch entry.moment {
+        case .free: Calendar.current.isDateInWeekend(entry.date) ? texts.weekend : s.home.noLessonsToday
+        case .over: s.home.dayOver
+        default: s.watch.waitingForPhone
+        }
+    }
+
+    // MARK: Circular
+
+    @ViewBuilder private var circular: some View {
+        if let call = entry.call {
+            ZStack {
+                if let span = call.span {
+                    ProgressView(timerInterval: span, countsDown: true) {
+                        EmptyView()
+                    } currentValueLabel: {
+                        EmptyView()
+                    }
+                    .progressViewStyle(.circular)
+                    .labelsHidden()
+                    .tint(tint(call.lesson))
+                    .widgetAccentable()
+                } else {
+                    AccessoryWidgetBackground()
+                }
+                VStack(spacing: -1) {
+                    Image(systemName: call.isNow ? "door.left.hand.closed" : "figure.walk")
+                        .font(.system(size: 9, weight: .semibold))
+                    Text(room(call.lesson))
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                        .foregroundStyle(roomInk(call.lesson))
+                        .minimumScaleFactor(0.5)
+                    if let span = call.span {
+                        Text(timerInterval: span, countsDown: true, showsHours: false)
+                            .font(.system(size: 10, weight: .medium, design: .rounded))
+                            .monospacedDigit()
+                            .multilineTextAlignment(.center)
+                            .minimumScaleFactor(0.6)
+                    }
+                }
+                .lineLimit(1)
+                .padding(.horizontal, Spacing.sm)
+            }
+        } else {
+            ZStack {
+                AccessoryWidgetBackground()
+                Image(systemName: entry.moment == .free || entry.moment == .over ? "checkmark" : "door.left.hand.closed")
+                    .font(.system(size: 20, weight: .semibold))
+                    .widgetAccentable()
+            }
+        }
+    }
+
+    // MARK: Corner
+
+    @ViewBuilder private var corner: some View {
+        if let call = entry.call {
+            Text(room(call.lesson))
+                .font(.system(size: 18, weight: .bold, design: .rounded))
+                .minimumScaleFactor(0.5)
+                .widgetAccentable()
+                .widgetLabel {
+                    if let span = call.span {
+                        ProgressView(timerInterval: span, countsDown: true) {
+                            EmptyView()
+                        } currentValueLabel: {
+                            EmptyView()
+                        }
+                        .tint(tint(call.lesson))
+                    } else {
+                        Text(WatchFormat.clock(call.lesson.start))
+                    }
+                }
+        } else {
+            Image(systemName: "door.left.hand.closed")
+                .font(.system(size: 20, weight: .semibold))
+                .widgetAccentable()
+                .widgetLabel { Text(entry.moment == .free || entry.moment == .over ? texts.free : AppConfig.appName()) }
+        }
+    }
+
+    // MARK: Inline
+
+    @ViewBuilder private var inline: some View {
+        if let call = entry.call {
+            Text("\(roomLabel(call.lesson)) · \(countdown(call))")
+        } else {
+            Text(entry.moment == .free || entry.moment == .over ? texts.free : AppConfig.appName())
+        }
+    }
+}
+
+#Preview("Room", as: .accessoryRectangular) {
+    RoomComplication()
+} timeline: {
+    RoomEntry.sample(at: .now)
 }
 
 #Preview("Rectangular", as: .accessoryRectangular) {

@@ -80,4 +80,19 @@ public struct AppConfig: Sendable {
     }
 
     public var hasBackendKeys: Bool { !apiKey.isEmpty && !serverKey.isEmpty }
+
+    // The two below are read on their own: the watch and the widgets carry no backend keys,
+    // so they never build a whole AppConfig.
+
+    /// The app's name as the home screen shows it (`POKYH_APP_NAME`).
+    public static func appName(in bundle: Bundle = .main) -> String {
+        let info = bundle.infoDictionary ?? [:]
+        return (info["CFBundleDisplayName"] as? String) ?? (info["CFBundleName"] as? String) ?? ""
+    }
+
+    /// The currency Mensa prices are in (`POKYH_CURRENCY`), nil when the build doesn't say.
+    public static func currencyCode(in bundle: Bundle = .main) -> String? {
+        let code = (bundle.infoDictionary?["POKYHCurrency"] as? String)?.trimmingCharacters(in: .whitespaces) ?? ""
+        return code.count == 3 ? code.uppercased() : nil
+    }
 }

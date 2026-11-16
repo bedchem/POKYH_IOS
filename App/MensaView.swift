@@ -418,6 +418,7 @@ struct DishPlate: View {
 struct DishCard: View {
     let dish: Dish
     let data: DishRatingsData?
+    @Environment(\.strings) private var s
 
     var body: some View {
         BleedCard {
@@ -429,7 +430,7 @@ struct DishCard: View {
                     }
                     Spacer()
                     if let price = dish.price, price > 0 {
-                        Text(String(format: "%.2f €", price)).textStyle(.caption).foregroundStyle(Palette.textSecondary)
+                        Text(DishFormat.price(price, currency: AppConfig.currencyCode(), lang: s.lang)).textStyle(.caption).foregroundStyle(Palette.textSecondary)
                     }
                 }
                 Text(dish.name)
@@ -539,7 +540,7 @@ struct DishDetailView: View {
                 Text("(\(ratings.count))").textStyle(.callout).foregroundStyle(Palette.textSecondary)
                 if let kcal = dish.calories {
                     Text("·").textStyle(.callout).foregroundStyle(Palette.textSecondary)
-                    Text("\(Int(saturating: kcal)) kcal").textStyle(.callout).foregroundStyle(Palette.textSecondary)
+                    Text(DishFormat.energy(kcal, lang: s.lang)).textStyle(.callout).foregroundStyle(Palette.textSecondary)
                 }
             }
             if let desc = dish.description, !desc.isEmpty {
@@ -555,7 +556,7 @@ struct DishDetailView: View {
                 .padding(.top, Spacing.xs)
             }
             if let price = dish.price, price > 0 {
-                TagChip(MensaSchedule.fixed(price, 2, s) + " €", color: Palette.textSecondary, large: true)
+                TagChip(DishFormat.price(price, currency: AppConfig.currencyCode(), lang: s.lang), color: Palette.textSecondary, large: true)
             }
         }
     }

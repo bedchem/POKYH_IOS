@@ -493,6 +493,75 @@ extension WatchSnapshot {
     }
 }
 
+// MARK: The school day and the room
+
+extension WatchSnapshot {
+    /// A day's lessons that take place, from the first bell to the last.
+    public struct DaySpan: Equatable, Sendable {
+        public var start: Date
+        public var end: Date
+        public var lessons: [Lesson]
+
+        /// 0 at the first bell, 1 at the last.
+        public func elapsed(at date: Date) -> Double {
+            let total = end.timeIntervalSince(start)
+            guard total > 0 else { return 0 }
+            return min(1, max(0, date.timeIntervalSince(start) / total))
+        }
+
+        /// Where a lesson sits on the day, 0 to 1.
+        public func share(of lesson: Lesson) -> ClosedRange<Double> {
+            let total = end.timeIntervalSince(start)
+            guard total > 0 else { return 0...0 }
+            let from = min(1, max(0, lesson.start.timeIntervalSince(start) / total))
+            let to = min(1, max(from, lesson.end.timeIntervalSince(start) / total))
+            return from...to
+        }
+    }
+
+    /// nil for a day without a lesson that takes place.
+    public static func daySpan(of lessons: [Lesson]) -> DaySpan? {
+        let taking = lessons.filter { !$0.isCancelled }.sorted { $0.start < $1.start }
+        guard let first = taking.first, let end = taking.map(\.end).max(), end > first.start else { return nil }
+        return DaySpan(start: first.start, end: end, lessons: taking)
+    }
+
+    /// Which room matters and until when.
+    public struct RoomCall: Equatable, Sendable {
+        public var lesson: Lesson
+        /// Sitting in it; otherwise it's where to go next.
+        public var isNow: Bool
+        /// To the bell of the lesson running, or to the start of the next one. nil while that's
+        /// more than an hour off.
+        public var span: ClosedRange<Date>?
+
+        public init(lesson: Lesson, isNow: Bool, span: ClosedRange<Date>?) {
+            self.lesson = lesson
+            self.isNow = isNow
+            self.span = span
+        }
+    }
+
+    /// The room of the lesson running; from ten minutes before its bell, and through breaks,
+    /// the next one's.
+    public func roomCall(at date: Date = .now, calendar: Calendar = .current) -> RoomCall? {
+        let moment = moment(at: date, calendar: calendar)
+        switch moment {
+        case .running(let lesson):
+            if lesson.end.timeIntervalSince(date) <= Self.runUp,
+               let next = next(after: date, calendar: calendar), next.start >= lesson.end {
+                let from = max(lesson.start, lesson.end - Self.runUp)
+                return RoomCall(lesson: next, isNow: false, span: from < next.start ? from...next.start : nil)
+            }
+            return RoomCall(lesson: lesson, isNow: true, span: lesson.start < lesson.end ? lesson.start...lesson.end : nil)
+        case .waiting(let next, _):
+            return RoomCall(lesson: next, isNow: false, span: moment.span(at: date))
+        case .unknown, .free, .over:
+            return nil
+        }
+    }
+}
+
 // MARK: Over WatchConnectivity
 
 extension WatchSnapshot {

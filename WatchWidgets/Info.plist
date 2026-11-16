@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>POKYH</string>
+	<string>$(POKYH_APP_NAME)</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -39,6 +39,8 @@
 	<string>$(POKYH_BACKEND_URL)</string>
 	<key>POKYHBackgroundTask</key>
 	<string>$(POKYH_BACKGROUND_TASK)</string>
+	<key>POKYHCurrency</key>
+	<string>$(POKYH_CURRENCY)</string>
 	<key>POKYHDefaultSchool</key>
 	<string>$(POKYH_DEFAULT_SCHOOL)</string>
 	<key>POKYHDefaultSchoolName</key>

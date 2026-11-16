@@ -70,23 +70,40 @@ private enum Route: Hashable {
     }
 }
 
-/// Where the app opens: the four pages as a list, each row with what matters on it right now.
+/// Where the app opens: the menu, and one crown turn below it the school day as a circle.
+/// A row opens its page.
 struct WatchMenu: View {
     let session: WatchSession
     @Environment(\.strings) private var s
     @State private var path = Route.launch
+    @State private var home = Home.launch
 
-    private var appName: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? ""
+    private enum Home: String, Hashable {
+        case menu, day
+
+        /// The menu, or in debug builds the circle with `-POKYHWatchHome day`, for screenshots.
+        static var launch: Home {
+            #if DEBUG
+            UserDefaults.standard.string(forKey: "POKYHWatchHome").flatMap(Home.init(rawValue:)) ?? .menu
+            #else
+            .menu
+            #endif
+        }
     }
 
     var body: some View {
         NavigationStack(path: $path) {
-            // The timetable row counts in minutes.
-            TimelineView(.everyMinute) { context in
-                MenuList(session: session, snapshot: session.snapshot, now: context.date)
+            TabView(selection: $home) {
+                // The rows count in minutes.
+                TimelineView(.everyMinute) { context in
+                    MenuList(session: session, snapshot: session.snapshot, now: context.date)
+                }
+                .tag(Home.menu)
+                DayPage(session: session)
+                    .tag(Home.day)
+                    .navigationTitle(WatchTexts.of(s.lang).schoolDay)
             }
-            .navigationTitle(appName)
+            .tabViewStyle(.verticalPage)
             .navigationDestination(for: Route.self) { route in
                 switch route {
                 case .page(.today): TodayPage(session: session)
@@ -97,6 +114,28 @@ struct WatchMenu: View {
                 }
             }
         }
+    }
+}
+
+/// The app's name the way the iPhone's lock screen sets it, with the mascot.
+private struct Wordmark: View {
+    @Environment(\.isLuminanceReduced) private var dimmed
+
+    var body: some View {
+        HStack(spacing: Spacing.sm) {
+            MascotView(look: .waving, size: 34)
+                .opacity(dimmed ? 0.55 : 1)
+            Text(AppConfig.appName())
+                .textStyle(TextStyle.numeral(26))
+                .foregroundStyle(Palette.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.leading, Spacing.xs)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(AppConfig.appName())
+        .accessibilityAddTraits(.isHeader)
     }
 }
 
@@ -113,17 +152,12 @@ private struct MenuList: View {
 
     var body: some View {
         List {
+            Wordmark()
+                .listRowBackground(Color.clear)
             NavigationLink(value: Route.page(.today)) {
                 let line = timetableLine
                 MenuRow(symbol: "calendar", tone: Decorative.periwinkle, title: s.nav.timetable, info: line?.text, infoTint: line?.tint) {
                     EmptyView()
-                }
-            }
-            NavigationLink(value: Route.page(.grades)) {
-                MenuRow(symbol: "graduationcap.fill", tone: Decorative.sage, title: s.nav.grades, info: latestGrade, sensitive: true) {
-                    if let average = known?.overallAverage {
-                        MarkChip(value: average, text: WatchFormat.average(average, decimal: s.common.decimal))
-                    }
                 }
             }
             NavigationLink(value: Route.page(.mensa)) {
@@ -143,16 +177,23 @@ private struct MenuList: View {
                     }
                 }
             }
+            NavigationLink(value: Route.page(.grades)) {
+                MenuRow(symbol: "graduationcap.fill", tone: Decorative.sage, title: s.nav.grades, info: latestGrade, sensitive: true) {
+                    if let average = known?.overallAverage {
+                        MarkChip(value: average, text: WatchFormat.average(average, decimal: s.common.decimal))
+                    }
+                }
+            }
             if session.loading || known == nil {
                 MenuFooter(session: session)
                     .listRowBackground(Color.clear)
             }
         }
         .refreshable { await session.reload() }
-        .wash(Brand.accent)
+        .wash(Brand.accent, for: .tabView)
     }
 
-    /// The lesson of the moment, or what stands in for one.
+    /// The lesson of the moment and its room, or what stands in for one.
     private var timetableLine: (text: String, tint: Color?)? {
         guard let snapshot else { return nil }
         let texts = WatchTexts.of(s.lang)
@@ -161,13 +202,14 @@ private struct MenuList: View {
         case .today:
             guard let lesson = moment.lesson else { return nil }
             let tint: Color? = lesson.status == .regular ? nil : lesson.tone.ink
+            let what = [lesson.name(s), lesson.room].filter { !$0.isEmpty }.joined(separator: " · ")
             if case .running = moment {
-                return ("\(lesson.name(s)) · \(s.home.left(minutesLeft(lesson.end.timeIntervalSince(now), s)))", tint)
+                return ("\(what) · \(s.home.left(minutesLeft(lesson.end.timeIntervalSince(now), s)))", tint)
             }
             let when = moment.span(at: now) != nil
                 ? texts.startsIn(minutesLeft(lesson.start.timeIntervalSince(now), s))
                 : WatchFormat.clock(lesson.start)
-            return ("\(lesson.name(s)) · \(when)", tint)
+            return ("\(what) · \(when)", tint)
         case .upcoming(let day):
             guard let first = day.lessons.first else { return nil }
             return ("\(dayTitle(day.date, now: now, s)) · \(WatchFormat.clock(first.start))", nil)
@@ -702,6 +744,194 @@ private struct ProgressBar: View {
     }
 }
 
+// MARK: Schultag
+
+/// The school day as a circle running out, one stretch per lesson in its color.
+private struct DayPage: View {
+    let session: WatchSession
+
+    var body: some View {
+        TimelineView(.everyMinute) { context in
+            DayContent(session: session, snapshot: session.snapshot, now: context.date)
+        }
+    }
+}
+
+private struct DayContent: View {
+    let session: WatchSession
+    let snapshot: WatchSnapshot?
+    let now: Date
+    @Environment(\.strings) private var s
+
+    private var plan: WatchSnapshot.Plan { snapshot?.plan(at: now) ?? .unknown }
+    private var call: WatchSnapshot.RoomCall? { snapshot?.roomCall(at: now) }
+
+    var body: some View {
+        content
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .wash(call?.lesson.tone.bar ?? (plan == .unknown ? nil : Brand.accent), for: .tabView)
+    }
+
+    @ViewBuilder private var content: some View {
+        let texts = WatchTexts.of(s.lang)
+        switch plan {
+        case .today(let lessons):
+            if let span = WatchSnapshot.daySpan(of: lessons) {
+                DayDial(span: span, day: nil, now: now, call: call)
+            } else {
+                MascotLine(look: .waving, title: s.home.noLessonsToday)
+            }
+        case .upcoming(let day):
+            if let span = WatchSnapshot.daySpan(of: day.lessons) {
+                DayDial(span: span, day: day.date, now: now, call: nil)
+            } else {
+                MascotLine(look: .waving, title: s.home.noLessonsToday)
+            }
+        case .over:
+            MascotLine(look: .cheering, title: s.home.dayOver)
+        case .free:
+            MascotLine(look: .dozing, title: Calendar.current.isDateInWeekend(now) ? texts.weekend : s.home.noLessonsToday)
+        case .unknown:
+            NothingYet(session: session, date: snapshot?.lessonsUpdatedAt)
+        }
+    }
+}
+
+/// The circle: what's left of the day bright, what's over faded, a dot at the moment. In the
+/// middle how long school still goes, under it the room that matters now.
+private struct DayDial: View {
+    let span: WatchSnapshot.DaySpan
+    /// The day it shows when that isn't today.
+    let day: Date?
+    let now: Date
+    let call: WatchSnapshot.RoomCall?
+    @Environment(\.strings) private var s
+    @Environment(\.isLuminanceReduced) private var dimmed
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var filled = false
+
+    private var texts: WatchTexts { .of(s.lang) }
+    private var running: Bool { day == nil && span.start <= now && now < span.end }
+    private var elapsed: Double { day == nil ? span.elapsed(at: now) : 0 }
+
+    var body: some View {
+        VStack(spacing: Spacing.xs) {
+            GeometryReader { geo in
+                let side = min(geo.size.width, geo.size.height)
+                let line = (side * 0.085).rounded()
+                ZStack {
+                    ring(side: side, line: line)
+                    middle(side: side)
+                        .padding(.horizontal, line + Spacing.sm)
+                }
+                .frame(width: side, height: side)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            if let room {
+                room
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .padding(.horizontal, Spacing.sm)
+            }
+        }
+        .onAppear {
+            guard !filled else { return }
+            if reduceMotion { filled = true } else { withAnimation(Motion.smooth) { filled = true } }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(texts.schoolDay)
+        .accessibilityValue(accessibilityValue)
+    }
+
+    private func ring(side: CGFloat, line: CGFloat) -> some View {
+        // A sliver between lessons, so back-to-back ones stay apart.
+        let gap = 0.006
+        let style = StrokeStyle(lineWidth: line, lineCap: .butt)
+        return ZStack {
+            ForEach(span.lessons) { lesson in
+                let share = span.share(of: lesson)
+                let from = share.lowerBound + gap
+                let to = max(from, share.upperBound - gap)
+                let left = min(to, max(from, elapsed))
+                Circle()
+                    .trim(from: from, to: to)
+                    .stroke(lesson.tone.bar.opacity(0.22), style: style)
+                Circle()
+                    .trim(from: left, to: filled ? to : left)
+                    .stroke(lesson.tone.bar, style: style)
+            }
+            if running {
+                Circle()
+                    .fill(Palette.textPrimary)
+                    .overlay { Circle().stroke(.black, lineWidth: 2) }
+                    .frame(width: line * 1.2, height: line * 1.2)
+                    .offset(x: (side - line) / 2)
+                    .rotationEffect(.degrees(elapsed * 360))
+            }
+        }
+        .rotationEffect(.degrees(-90))
+        .padding(line / 2)
+        .opacity(dimmed ? 0.55 : 1)
+    }
+
+    @ViewBuilder private func middle(side: CGFloat) -> some View {
+        VStack(spacing: 0) {
+            if let day {
+                caption(dayTitle(day, now: now, s))
+            } else if !running {
+                caption(s.common.today)
+            }
+            big(side: side)
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
+                .foregroundStyle(Palette.textPrimary)
+            caption(texts.until(WatchFormat.clock(span.end)))
+        }
+    }
+
+    private func caption(_ text: String) -> some View {
+        Text(text)
+            .textStyle(.caption)
+            .foregroundStyle(Palette.textSecondary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+    }
+
+    /// While school runs, how long it still goes; before, when it starts.
+    private func big(side: CGFloat) -> Text {
+        let number = Font.system(size: side * (dimmed ? 0.2 : 0.24), weight: .bold, design: .rounded).monospacedDigit()
+        let unit = Font.system(size: side * 0.1, weight: .semibold, design: .rounded)
+        guard running else { return Text(WatchFormat.clock(span.start)).font(number) }
+        let minutes = max(1, Int((span.end.timeIntervalSince(now) / 60).rounded(.up)))
+        if minutes < 60 {
+            return Text("\(Text(verbatim: "\(minutes)").font(number)) \(Text(texts.minuteUnit).font(unit))")
+        }
+        let clock = String(format: "%d:%02d", minutes / 60, minutes % 60)
+        return Text("\(Text(verbatim: clock).font(number)) \(Text(texts.hourUnit).font(unit))")
+    }
+
+    /// The room that matters now, or the first one of a day still to come.
+    private var room: Text? {
+        let lesson = call?.lesson ?? (running ? nil : span.lessons.first)
+        guard let lesson else { return nil }
+        var parts = [lesson.name(s), lesson.room].filter { !$0.isEmpty }
+        if let call, day == nil {
+            parts.append(call.isNow
+                ? s.home.left(minutesLeft(lesson.end.timeIntervalSince(now), s))
+                : texts.startsIn(minutesLeft(lesson.start.timeIntervalSince(now), s)))
+        }
+        return Text(parts.joined(separator: " · "))
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(lesson.status == .regular ? Palette.textPrimary : lesson.tone.ink)
+    }
+
+    private var accessibilityValue: String {
+        let until = texts.until(WatchFormat.clock(span.end))
+        guard running else { return "\(WatchFormat.clock(span.start)), \(until)" }
+        return "\(s.home.left(minutesLeft(span.end.timeIntervalSince(now), s))), \(until)"
+    }
+}
+
 // MARK: Noten
 
 /// Marks run from 4 to 10 here, so that's what the gauge spans.
@@ -1215,10 +1445,8 @@ private struct DishPage: View {
     /// Kilocalories and price, where the Mensa gives them.
     private func facts(_ dish: WatchSnapshot.Dish) -> String? {
         var parts: [String] = []
-        if let calories = dish.calories { parts.append("\(Int(calories.rounded())) kcal") }
-        if let price = dish.price {
-            parts.append(String(format: "%.2f", price).replacingOccurrences(of: ".", with: String(s.common.decimal)) + " €")
-        }
+        if let calories = dish.calories { parts.append(DishFormat.energy(calories, lang: s.lang)) }
+        if let price = dish.price { parts.append(DishFormat.price(price, currency: AppConfig.currencyCode(), lang: s.lang)) }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 

@@ -327,6 +327,42 @@ struct WatchSnapshotTests {
         #expect(WatchSnapshot(payload: ["pokyh.snapshot": Data("nope".utf8)]) == nil)
     }
 
+    @Test func theDayRunsFromTheFirstBellToTheLast() throws {
+        let span = try #require(WatchSnapshot.daySpan(of: day.lessons))
+        // The cancelled lesson doesn't count, the day still ends with the last one.
+        #expect(span.start == at(8) && span.end == at(10, 30))
+        #expect(span.lessons.map(\.subject) == ["MAT", "ENG"])
+        #expect(span.elapsed(at: at(7)) == 0 && span.elapsed(at: at(11)) == 1)
+        #expect(abs(span.elapsed(at: at(9, 15)) - 0.5) < 0.001)
+        #expect(span.share(of: day.lessons[2]) == (100.0 / 150)...1)
+        #expect(WatchSnapshot.daySpan(of: [lesson("X", (8, 0), (8, 50), status: .cancelled)]) == nil)
+    }
+
+    @Test func theRoomIsWhereYouAreThenWhereYouGo() {
+        // In maths: its room, counting down to its bell.
+        let inMaths = day.roomCall(at: at(8, 10), calendar: calendar)
+        #expect(inMaths?.lesson.subject == "MAT" && inMaths?.isNow == true)
+        #expect(inMaths?.span == at(8)...at(8, 50))
+        // Ten minutes before the bell it's the next room; the cancelled lesson is skipped.
+        let leaving = day.roomCall(at: at(8, 41), calendar: calendar)
+        #expect(leaving?.lesson.subject == "ENG" && leaving?.lesson.room == "R7" && leaving?.isNow == false)
+        #expect(leaving?.span == at(8, 40)...at(9, 40))
+        // In the hole the cancelled lesson leaves: still on the way to English.
+        #expect(day.roomCall(at: at(9), calendar: calendar)?.lesson.subject == "ENG")
+        // In the last lesson's run-up there's nowhere to go next.
+        #expect(day.roomCall(at: at(10, 25), calendar: calendar)?.isNow == true)
+        #expect(day.roomCall(at: at(11), calendar: calendar) == nil)
+    }
+
+    @Test func pricesAndEnergyInTheAppsLanguage() {
+        #expect(DishFormat.price(4.5, currency: "EUR", lang: .de).contains("4,50"))
+        #expect(DishFormat.price(4.5, currency: "EUR", lang: .de).contains("€"))
+        #expect(DishFormat.price(4.5, currency: "EUR", lang: .en).contains("4.50"))
+        #expect(DishFormat.price(4.5, currency: nil, lang: .it) == "4,50")
+        #expect(DishFormat.energy(639.6, lang: .de).hasPrefix("640"))
+        #expect(DishFormat.energy(639.6, lang: .de).contains("kcal"))
+    }
+
     @Test func aDishKeepsItsPhotoAndFacts() {
         var snapshot = day
         snapshot.dishes = [WatchSnapshot.Dish(id: "d", name: "Pasta", category: "", photo: URL(string: "https://example.org/d.jpg"),
@@ -387,7 +423,8 @@ struct WatchFormatTests {
             let t = WatchTexts.of(lang)
             #expect(!t.queued.isEmpty && !t.noDataTitle.isEmpty && !t.free.isEmpty)
             #expect(!t.phoneAway.isEmpty && !t.weekend.isEmpty)
-            #expect(t.updated("10:42").contains("10:42") && t.startsIn("5 min").contains("5 min"))
+            #expect(t.updated("10:42").contains("10:42") && t.startsIn("5 min").contains("5 min") && t.until("13:20").contains("13:20"))
+            #expect(!t.schoolDay.isEmpty && !t.roomTitle.isEmpty && !t.roomInfo.isEmpty && !t.hourUnit.isEmpty && !t.minuteUnit.isEmpty)
         }
         #expect(WatchTexts.of(.it).free != WatchTexts.of(.en).free)
     }

@@ -13,6 +13,16 @@ public struct WatchTexts: Sendable {
     public let instead: @Sendable (String) -> String
     /// When the next lesson starts, from a break: "in 5 Min".
     public let startsIn: @Sendable (String) -> String
+    /// The page with the day's circle.
+    public let schoolDay: String
+    /// When the last lesson ends: "bis 13:20".
+    public let until: @Sendable (String) -> String
+    /// Units beside a big number.
+    public let hourUnit: String
+    public let minuteUnit: String
+    /// The room complication.
+    public let roomTitle: String
+    public let roomInfo: String
     public let free: String
     public let weekend: String
 
@@ -33,6 +43,12 @@ public struct WatchTexts: Sendable {
         queued: "Wartet aufs iPhone",
         instead: { "statt \($0)" },
         startsIn: { "in \($0)" },
+        schoolDay: "Schultag",
+        until: { "bis \($0)" },
+        hourUnit: "Std",
+        minuteUnit: "Min",
+        roomTitle: "Raum",
+        roomInfo: "In welchen Raum und wie lange noch.",
         free: "Frei",
         weekend: "Wochenende"
     )
@@ -46,6 +62,12 @@ public struct WatchTexts: Sendable {
         queued: "In attesa dell’iPhone",
         instead: { "invece di \($0)" },
         startsIn: { "tra \($0)" },
+        schoolDay: "Giornata",
+        until: { "fino alle \($0)" },
+        hourUnit: "h",
+        minuteUnit: "min",
+        roomTitle: "Aula",
+        roomInfo: "In quale aula e per quanto ancora.",
         free: "Libero",
         weekend: "Fine settimana"
     )
@@ -59,6 +81,12 @@ public struct WatchTexts: Sendable {
         queued: "Waiting for iPhone",
         instead: { "instead of \($0)" },
         startsIn: { "in \($0)" },
+        schoolDay: "School day",
+        until: { "until \($0)" },
+        hourUnit: "h",
+        minuteUnit: "min",
+        roomTitle: "Room",
+        roomInfo: "Which room, and for how long.",
         free: "Free",
         weekend: "Weekend"
     )

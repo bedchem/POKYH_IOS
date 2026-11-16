@@ -72,7 +72,7 @@ struct LockView: View {
             Spacer().frame(height: Spacing.xl)
 
             VStack(spacing: Spacing.sm) {
-                Text("POKYH")
+                Text(AppConfig.appName())
                     .textStyle(.wordmark)
                     .foregroundStyle(Palette.textPrimary)
                 Text(statusText)
