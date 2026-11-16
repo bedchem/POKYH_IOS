@@ -153,6 +153,7 @@ struct WatchSnapshotTests {
         let snapshot = try #require(WatchSnapshot.decoded(from: Data(json.utf8)))
         #expect(snapshot.subjects.first?.grades == nil)
         #expect(snapshot.dishes.first?.stars == nil)
+        #expect(snapshot.nextDay == nil)
     }
 
     @Test func yesterdaysSnapshotHasNoLessonsToday() {
@@ -214,6 +215,77 @@ struct WatchSnapshotTests {
         // Once the phone has loaded them later still, its lessons count again.
         phone.lessonsUpdatedAt = at(10, 5)
         #expect(own.taking(phone)?.lessons.map(\.subject) == ["MAT", "DEU", "ENG"])
+    }
+
+    // October 30th is a Friday, the 33rd (November 2nd) the Monday after.
+    private func period(_ subject: String, on date: Int, _ hour: Int) -> WatchSnapshot.Lesson {
+        WatchSnapshot.Lesson(id: "\(subject)\(date)", subject: subject, teacher: "T", room: "R1",
+                             start: at(hour, day: date), end: at(hour, 50, day: date))
+    }
+
+    private var friday: WatchSnapshot {
+        let loaded = [period("MAT", on: 30, 8), period("ENG", on: 30, 9), period("BIO", on: 33, 8), period("DEU", on: 33, 9), period("GEO", on: 34, 8)]
+        return day.withLessons(loaded, from: at(7, day: 30), until: at(0, day: 37), studentId: nil, at: at(7), calendar: calendar)
+    }
+
+    @Test func aLoadSplitsIntoTodayAndTheNextSchoolDay() {
+        let snapshot = friday
+        #expect(snapshot.lessons.map(\.subject) == ["MAT", "ENG"])
+        #expect(snapshot.nextDay?.date == at(0, day: 33))
+        #expect(snapshot.nextDay?.lessons.map(\.subject) == ["BIO", "DEU"])
+        #expect(snapshot.day == at(0, day: 30))
+    }
+
+    @Test func thePageShowsTodayThenTheNextSchoolDay() {
+        let snapshot = friday
+        #expect(snapshot.plan(at: at(7), calendar: calendar) == .today(snapshot.lessons))
+        #expect(snapshot.plan(at: at(9, 30), calendar: calendar) == .today(snapshot.lessons))
+        let next = try! #require(snapshot.nextDay)
+        #expect(snapshot.plan(at: at(9, 50), calendar: calendar) == .upcoming(next))
+        // The weekend between is free, and known to be.
+        #expect(snapshot.plan(at: at(11, day: 31), calendar: calendar) == .upcoming(next))
+        #expect(snapshot.knowsToday(at: at(11, day: 31), calendar: calendar))
+        #expect(snapshot.moment(at: at(11, day: 31), calendar: calendar) == .free)
+    }
+
+    @Test func theNextSchoolDayBecomesTodayAtMidnight() {
+        let snapshot = friday
+        let monday = at(8, 10, day: 33)
+        #expect(snapshot.todaysLessons(at: monday, calendar: calendar).map(\.subject) == ["BIO", "DEU"])
+        #expect(snapshot.current(at: monday, calendar: calendar)?.subject == "BIO")
+        // Past Monday the snapshot knows nothing more.
+        #expect(snapshot.plan(at: at(12, day: 33), calendar: calendar) == .over)
+        #expect(snapshot.plan(at: at(8, day: 34), calendar: calendar) == .unknown)
+    }
+
+    @Test func withoutANextDayTheDayIsOverOrFree() {
+        #expect(day.plan(at: at(11), calendar: calendar) == .over)
+        let empty = day.withLessons([], day: day.day, studentId: nil, at: at(7))
+        #expect(empty.plan(at: at(11), calendar: calendar) == .free)
+        #expect(WatchSnapshot.empty(for: "anna", at: at(8), calendar: calendar).plan(at: at(8), calendar: calendar) == .unknown)
+    }
+
+    @Test func aKnownNextDayPastTheLoadStays() {
+        // Today alone loaded again: Monday is still the next school day.
+        let again = friday.withLessons([period("MAT", on: 30, 8)], day: at(0, day: 30), studentId: nil, at: at(8), calendar: calendar)
+        #expect(again.nextDay?.date == at(0, day: 33))
+        // A load that reached Monday and found it empty knows better.
+        let holiday = friday.withLessons([period("MAT", on: 30, 8), period("GEO", on: 34, 8)], from: at(0, day: 30), until: at(0, day: 37),
+                                         studentId: nil, at: at(8), calendar: calendar)
+        #expect(holiday.nextDay?.lessons.map(\.subject) == ["GEO"])
+        // Monday itself loaded: it isn't its own next day.
+        let monday = friday.withLessons([period("BIO", on: 33, 8)], day: at(0, day: 33), studentId: nil, at: at(7, day: 33), calendar: calendar)
+        #expect(monday.nextDay == nil)
+    }
+
+    @Test func theWatchsOwnNextDaySurvivesAPhoneUpdate() {
+        var phone = day
+        phone.updatedAt = at(10, 5)
+        phone.lessonsUpdatedAt = at(6)
+        #expect(friday.taking(phone)?.nextDay == friday.nextDay)
+        // Lessons the phone loaded later bring its own next day, or none.
+        phone.lessonsUpdatedAt = at(10)
+        #expect(friday.taking(phone)?.nextDay == nil)
     }
 
     @Test func lessonProgress() {
@@ -305,7 +377,7 @@ struct WatchFormatTests {
             let t = WatchTexts.of(lang)
             #expect(!t.queued.isEmpty && !t.noDataTitle.isEmpty && !t.free.isEmpty)
             #expect(!t.phoneAway.isEmpty && !t.weekend.isEmpty)
-            #expect(t.updated("10:42").contains("10:42"))
+            #expect(t.updated("10:42").contains("10:42") && t.startsIn("5 min").contains("5 min"))
         }
         #expect(WatchTexts.of(.it).free != WatchTexts.of(.en).free)
     }
@@ -580,6 +652,13 @@ struct UntisDaySignInTests {
         #expect(timetable.value(forHTTPHeaderField: "Cookie")?.hasPrefix("JSESSIONID=SESSION1;") == true)
 
         #expect(body(of: requests[3])["method"] as? String == "logout")
+    }
+
+    @Test func loadsAWeekAhead() async throws {
+        FakeUntis.reset(["/jsonrpc.do": Self.signedIn, "/api/token/new": Self.token, "/timetable/entries": Self.day])
+        _ = try await untis.lessons(for: account(secret: "secret"), studentId: nil, on: at(8), days: 8, calendar: calendar)
+        let query = FakeUntis.requests[2].url?.query ?? ""
+        #expect(query.contains("start=2026-10-30") && query.contains("end=2026-11-06"))
     }
 
     @Test func loadsTheChildThePhoneLoadsForAParent() async throws {

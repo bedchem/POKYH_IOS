@@ -1078,7 +1078,7 @@ struct HomeView: View {
             let this = try await UntisClient.shared.timetable(date: monday, session)
             let next = (try? await UntisClient.shared.timetable(date: nextMonday, session)) ?? []
             weekEntries = this + next
-            WatchSync.timetable(this, week: monday, for: session)
+            WatchSync.timetable(this, week: monday, next: next.isEmpty ? nil : next, for: session)
             if app.isDefaultAccountActive { app.refreshLiveActivity(from: this) }
             hues = Timetable.hues(for: this)
             todayFailed = false

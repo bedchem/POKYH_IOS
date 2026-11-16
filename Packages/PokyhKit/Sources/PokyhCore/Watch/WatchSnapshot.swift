@@ -1,6 +1,6 @@
 import Foundation
 
-/// What the watch shows: today's lessons, grades, the Mensa and the to-dos. The iPhone builds it
+/// What the watch shows: today's lessons and the next school day's, grades, the Mensa and the to-dos. The iPhone builds it
 /// from what it just loaded; the watch keeps the last one sealed on disk, so it opens without
 /// the phone, and can reload the lessons by itself (see `UntisDay`).
 public struct WatchSnapshot: Codable, Sendable, Equatable {
@@ -63,6 +63,17 @@ public struct WatchSnapshot: Codable, Sendable, Equatable {
             let total = end.timeIntervalSince(start)
             guard total > 0 else { return 0 }
             return min(1, max(0, date.timeIntervalSince(start) / total))
+        }
+    }
+
+    /// One school day: midnight and its lessons.
+    public struct SchoolDay: Codable, Sendable, Equatable {
+        public var date: Date
+        public var lessons: [Lesson]
+
+        public init(date: Date, lessons: [Lesson]) {
+            self.date = date
+            self.lessons = lessons.sorted { $0.start < $1.start }
         }
     }
 
@@ -161,6 +172,9 @@ public struct WatchSnapshot: Codable, Sendable, Equatable {
     /// Midnight of the day `lessons` belong to.
     public var day: Date
     public var lessons: [Lesson]
+    /// The first day after `day` with lessons, so the watch has it once today is over. Every day
+    /// in between is free. Older phones don't send it.
+    public var nextDay: SchoolDay?
     /// The WebUntis person whose timetable this is (a parent's child), for the watch's own fetch.
     public var studentId: Int?
     public var overallAverage: Double?
@@ -173,7 +187,7 @@ public struct WatchSnapshot: Codable, Sendable, Equatable {
     public var todos: [Todo]
 
     public init(username: String, lang: Lang? = nil, updatedAt: Date = .now, lessonsUpdatedAt: Date? = nil,
-                source: Source = .phone, day: Date, lessons: [Lesson] = [], studentId: Int? = nil,
+                source: Source = .phone, day: Date, lessons: [Lesson] = [], nextDay: SchoolDay? = nil, studentId: Int? = nil,
                 overallAverage: Double? = nil, gradeCount: Int = 0, subjects: [SubjectAverage] = [],
                 recentGrades: [Grade] = [], mensaDay: Date? = nil, dishes: [Dish] = [], todos: [Todo] = []) {
         self.username = username
@@ -183,6 +197,7 @@ public struct WatchSnapshot: Codable, Sendable, Equatable {
         self.source = source
         self.day = day
         self.lessons = lessons.sorted { $0.start < $1.start }
+        self.nextDay = nextDay
         self.studentId = studentId
         self.overallAverage = overallAverage
         self.gradeCount = gradeCount
@@ -206,14 +221,21 @@ extension WatchSnapshot {
         calendar.isDate(day, inSameDayAs: date)
     }
 
-    /// Whether `lessons` says anything about today. Without it "no lessons" only means "don't know".
+    /// Whether the snapshot says anything about today. Without it "no lessons" only means "don't know".
+    /// A day after the loaded one counts up to the next school day: the ones between are free.
     public func knowsToday(at date: Date = .now, calendar: Calendar = .current) -> Bool {
-        isToday(date, calendar: calendar) && lessonsUpdatedAt > .distantPast
+        guard lessonsUpdatedAt > .distantPast else { return false }
+        if isToday(date, calendar: calendar) { return true }
+        guard let nextDay else { return false }
+        let today = calendar.startOfDay(for: date)
+        return calendar.startOfDay(for: day) < today && today <= calendar.startOfDay(for: nextDay.date)
     }
 
-    /// Today's lessons; yesterday's snapshot has none for today.
+    /// Today's lessons. Yesterday's snapshot has none for today, unless today was its next school day.
     public func todaysLessons(at date: Date = .now, calendar: Calendar = .current) -> [Lesson] {
-        isToday(date, calendar: calendar) ? lessons : []
+        if isToday(date, calendar: calendar) { return lessons }
+        guard let nextDay, calendar.isDate(nextDay.date, inSameDayAs: date), knowsToday(at: date, calendar: calendar) else { return [] }
+        return nextDay.lessons
     }
 
     /// The lesson running at `date`. Cancelled ones don't count.
@@ -306,6 +328,7 @@ extension WatchSnapshot {
         guard lessonsUpdatedAt > incoming.lessonsUpdatedAt else { return incoming }
         var merged = incoming
         merged.lessons = lessons
+        merged.nextDay = nextDay
         merged.day = day
         merged.lessonsUpdatedAt = lessonsUpdatedAt
         merged.source = source
@@ -313,14 +336,41 @@ extension WatchSnapshot {
     }
 
     /// The lessons the watch loaded by itself, everything else as it was.
-    public func withLessons(_ lessons: [Lesson], day: Date, studentId: Int?, at date: Date = .now) -> WatchSnapshot {
+    public func withLessons(_ lessons: [Lesson], day: Date, studentId: Int?, at date: Date = .now,
+                            calendar: Calendar = .current) -> WatchSnapshot {
         var copy = self
         copy.lessons = lessons.sorted { $0.start < $1.start }
         copy.day = day
+        copy.nextDay = keptNextDay(after: day, loadedUntil: calendar.date(byAdding: .day, value: 1, to: day) ?? day, calendar: calendar)
         copy.studentId = studentId ?? self.studentId
         copy.lessonsUpdatedAt = date
         copy.source = .watch
         return copy
+    }
+
+    /// Lessons loaded from `day` up to `end`: that day's become today's, the first later day with
+    /// any becomes the next school day. Past `end` the one already known still counts.
+    public func withLessons(_ loaded: [Lesson], from day: Date, until end: Date, studentId: Int?,
+                            source: Source = .watch, at date: Date = .now, calendar: Calendar = .current) -> WatchSnapshot {
+        let midnight = calendar.startOfDay(for: day)
+        let after = calendar.date(byAdding: .day, value: 1, to: midnight) ?? midnight
+        let later = loaded.filter { $0.start >= after && $0.start < end }.sorted { $0.start < $1.start }
+        var copy = withLessons(loaded.filter { calendar.isDate($0.start, inSameDayAs: midnight) },
+                               day: midnight, studentId: studentId, at: date, calendar: calendar)
+        if let first = later.first {
+            copy.nextDay = SchoolDay(date: calendar.startOfDay(for: first.start),
+                                     lessons: later.filter { calendar.isDate($0.start, inSameDayAs: first.start) })
+        } else {
+            copy.nextDay = keptNextDay(after: midnight, loadedUntil: end, calendar: calendar)
+        }
+        copy.source = source
+        return copy
+    }
+
+    /// What was known about the next school day still holds when nothing loaded reached it.
+    private func keptNextDay(after day: Date, loadedUntil end: Date, calendar: Calendar) -> SchoolDay? {
+        guard let nextDay, nextDay.date >= end, calendar.startOfDay(for: self.day) <= calendar.startOfDay(for: day) else { return nil }
+        return nextDay
     }
 
     /// The to-do list with the watch's not yet sent ticks on top.
@@ -380,6 +430,34 @@ extension WatchSnapshot {
             let total = span.upperBound.timeIntervalSince(span.lowerBound)
             return min(1, max(0, span.upperBound.timeIntervalSince(date) / total))
         }
+    }
+
+    /// What the timetable page shows.
+    public enum Plan: Equatable, Sendable {
+        /// Nothing known about today.
+        case unknown
+        /// Today, while one of its lessons is still ahead or running.
+        case today([Lesson])
+        /// Today is done or free; this is the next school day.
+        case upcoming(SchoolDay)
+        /// Today's lessons are over and nothing is known after them.
+        case over
+        /// No lessons today and nothing known after.
+        case free
+    }
+
+    /// Today until its last lesson ends, then the next school day.
+    public func plan(at date: Date = .now, calendar: Calendar = .current) -> Plan {
+        let knows = knowsToday(at: date, calendar: calendar)
+        let today = todaysLessons(at: date, calendar: calendar)
+        if knows, today.contains(where: { $0.end > date }) { return .today(today) }
+        if lessonsUpdatedAt > .distantPast, let nextDay,
+           calendar.startOfDay(for: day) <= calendar.startOfDay(for: date),
+           calendar.startOfDay(for: nextDay.date) > calendar.startOfDay(for: date) {
+            return .upcoming(nextDay)
+        }
+        guard knows else { return .unknown }
+        return today.isEmpty ? .free : .over
     }
 
     public func moment(at date: Date = .now, calendar: Calendar = .current) -> Moment {

@@ -14,8 +14,8 @@ public enum UntisDayError: Error, Equatable {
     case badAnswer(Int)
 }
 
-/// Today's timetable straight from WebUntis, for when the phone is out of reach: signs in with
-/// the account the phone handed over (password or app key), loads one day, signs out again.
+/// The timetable straight from WebUntis, for when the phone is out of reach: signs in with the
+/// account the phone handed over (password or app key), loads the days asked for, signs out again.
 public struct UntisDay: Sendable {
     /// The client name the phone signs in with, so WebUntis sees one app.
     public static let clientName = "pockyh"
@@ -41,9 +41,9 @@ public struct UntisDay: Sendable {
         var bearer: String
     }
 
-    /// The lessons on `day` and whose they were. `studentId` is the person the phone loads
-    /// (a parent's child); without it the account's own person.
-    public func lessons(for account: StoredAccount, studentId: Int?, on day: Date = .now,
+    /// The lessons of `days` days from `day` on, and whose they were. `studentId` is the person
+    /// the phone loads (a parent's child); without it the account's own person.
+    public func lessons(for account: StoredAccount, studentId: Int?, on day: Date = .now, days: Int = 1,
                         calendar: Calendar = .current) async throws -> (lessons: [WatchSnapshot.Lesson], studentId: Int) {
         let school = account.school
         var signedIn = try await signIn(account)
@@ -52,7 +52,7 @@ public struct UntisDay: Sendable {
         let result: Result<[WatchSnapshot.Lesson], any Error>
         do {
             guard person > 0 else { throw UntisDayError.noPerson }
-            result = .success(try await timetable(person: person, on: day, signedIn, school: school, calendar: calendar))
+            result = .success(try await timetable(person: person, on: day, days: days, signedIn, school: school, calendar: calendar))
         } catch {
             result = .failure(error)
         }
@@ -60,12 +60,12 @@ public struct UntisDay: Sendable {
         return (try result.get(), person)
     }
 
-    func timetable(person: Int, on day: Date, _ signedIn: SignedIn, school: School, calendar: Calendar) async throws -> [WatchSnapshot.Lesson] {
-        let date = Self.isoDay(day, calendar: calendar)
+    func timetable(person: Int, on day: Date, days: Int = 1, _ signedIn: SignedIn, school: School, calendar: Calendar) async throws -> [WatchSnapshot.Lesson] {
+        let last = calendar.date(byAdding: .day, value: max(0, days - 1), to: day) ?? day
         var components = URLComponents(string: Self.base(school) + UntisRoutes.timetable)
         components?.queryItems = [
-            URLQueryItem(name: "start", value: date),
-            URLQueryItem(name: "end", value: date),
+            URLQueryItem(name: "start", value: Self.isoDay(day, calendar: calendar)),
+            URLQueryItem(name: "end", value: Self.isoDay(last, calendar: calendar)),
             URLQueryItem(name: "format", value: "1"),
             URLQueryItem(name: "resourceType", value: "STUDENT"),
             URLQueryItem(name: "resources", value: String(person)),

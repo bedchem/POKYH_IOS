@@ -48,7 +48,7 @@ struct SignInOnPhoneView: View {
 
 // MARK: Pages
 
-private enum Page: String, Hashable {
+private enum Page: String, Hashable, CaseIterable {
     case today, grades, mensa, todos
 
     /// Today, or in debug builds the page `-POKYHWatchPage` names, for screenshots.
@@ -58,10 +58,24 @@ private enum Page: String, Hashable {
         #endif
         return .today
     }
+
+    /// The one a crown turn further down; the last has none.
+    var below: Page? {
+        let all = Self.allCases
+        guard let index = all.firstIndex(of: self), index + 1 < all.count else { return nil }
+        return all[index + 1]
+    }
 }
 
-/// Heute, Noten, Mensa and To-dos, one crown turn apart. Each says what it is beside the clock,
-/// like the system's own apps; a bare "7,50" didn't say it was the grades.
+/// Where the end of a page leads: the next page down, from the last back up to the first.
+private struct Onward {
+    let title: String
+    let up: Bool
+    let go: () -> Void
+}
+
+/// Stundenplan, Noten, Mensa and To-dos, one crown turn apart. Each says what it is beside the
+/// clock, like the system's own apps, and ends on the next one's name, so it's clear there's more.
 struct DayPages: View {
     let session: WatchSession
     @Environment(\.strings) private var s
@@ -69,13 +83,57 @@ struct DayPages: View {
 
     var body: some View {
         TabView(selection: $page) {
-            TodayPage(session: session).tag(Page.today).navigationTitle(s.common.today)
-            GradesPage(session: session).tag(Page.grades).navigationTitle(s.nav.grades)
-            MensaPage(session: session).tag(Page.mensa).navigationTitle(s.nav.mensa)
-            TodosPage(session: session).tag(Page.todos).navigationTitle(s.tasks.todos)
+            TodayPage(session: session, onward: onward(from: .today)).tag(Page.today)
+            GradesPage(session: session, onward: onward(from: .grades)).tag(Page.grades).navigationTitle(title(.grades))
+            MensaPage(session: session, onward: onward(from: .mensa)).tag(Page.mensa).navigationTitle(title(.mensa))
+            TodosPage(session: session, onward: onward(from: .todos)).tag(Page.todos).navigationTitle(title(.todos))
         }
         .tabViewStyle(.verticalPage)
         .sensoryFeedback(.selection, trigger: page)
+    }
+
+    private func title(_ page: Page) -> String {
+        switch page {
+        case .today: s.nav.timetable
+        case .grades: s.nav.grades
+        case .mensa: s.nav.mensa
+        case .todos: s.tasks.todos
+        }
+    }
+
+    private func onward(from page: Page) -> Onward {
+        let target = page.below ?? .today
+        return Onward(title: title(target), up: page.below == nil) {
+            withAnimation(Motion.standardEase) { self.page = target }
+        }
+    }
+}
+
+/// The last thing on a page: the next one by name. The crown goes there too; this says it's there.
+private struct OnwardButton: View {
+    let onward: Onward
+
+    var body: some View {
+        Button(action: onward.go) {
+            HStack(spacing: Spacing.xs) {
+                Text(onward.title)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                Image(systemName: onward.up ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 12, weight: .bold))
+                    .accessibilityHidden(true)
+            }
+            .textStyle(TextStyle.footnote.weight(.semibold))
+            .foregroundStyle(Palette.textPrimary)
+            .padding(.horizontal, Spacing.md)
+            .padding(.vertical, Spacing.sm)
+            .glassEffect(.regular.interactive(), in: .capsule)
+            .contentShape(.capsule)
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .frame(maxWidth: .infinity)
+        .padding(.top, Spacing.sm)
     }
 }
 
@@ -105,12 +163,14 @@ private struct Wash: ViewModifier {
 /// A scrolling page that stops on each thing rather than anywhere in between.
 private struct StoppingScroll<Content: View>: View {
     let session: WatchSession
+    let onward: Onward
     @ViewBuilder let content: Content
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Spacing.xs) {
                 content
+                OnwardButton(onward: onward)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .scrollTargetLayout()
@@ -203,32 +263,50 @@ private struct NothingYet: View {
     }
 }
 
-// MARK: Heute
+// MARK: Stundenplan
 
 private struct TodayPage: View {
     let session: WatchSession
+    let onward: Onward
 
     var body: some View {
-        // Once a second up close, once a minute on the Always-On display: the system slows it down.
-        TimelineView(.periodic(from: .now, by: 1)) { context in
-            TodayContent(session: session, snapshot: session.snapshot, now: context.date)
+        // Bells ring on the minute, and the rows count in minutes. The Always-On display gets
+        // the same, so it never says more than it can keep up with.
+        TimelineView(.everyMinute) { context in
+            TodayContent(session: session, snapshot: session.snapshot, now: context.date, onward: onward)
         }
     }
 }
 
+/// The whole day, the running lesson marked, scrolled to what's next. Once the last one is
+/// over it's the next school day's.
 private struct TodayContent: View {
     let session: WatchSession
     let snapshot: WatchSnapshot?
     let now: Date
+    let onward: Onward
     @Environment(\.strings) private var s
 
+    private var plan: WatchSnapshot.Plan { snapshot?.plan(at: now) ?? .unknown }
     private var moment: WatchSnapshot.Moment { snapshot?.moment(at: now) ?? .unknown }
+
+    /// Beside the clock: which day the list is.
+    private var title: String {
+        guard case .upcoming(let day) = plan else { return s.common.today }
+        let calendar = Calendar.current
+        if calendar.isDateInTomorrow(day.date) { return s.common.tomorrow }
+        // Monday first, like the tables; Calendar counts Sunday as 1.
+        let index = (calendar.component(.weekday, from: day.date) + 5) % 7
+        let ahead = calendar.dateComponents([.day], from: calendar.startOfDay(for: now), to: day.date).day ?? 0
+        if ahead < 7 { return s.common.weekdays[index] }
+        let c = calendar.dateComponents([.day, .month], from: day.date)
+        return "\(s.common.weekdaysShort[index]) \(s.common.dayMonthShort(c.day ?? 1, c.month ?? 1))"
+    }
 
     private var washColor: Color? {
         switch moment {
         case .running(let lesson), .waiting(let lesson, _): lesson.tone.bar
-        case .free, .over: Brand.accent
-        case .unknown: nil
+        case .free, .over, .unknown: plan == .unknown ? nil : Brand.accent
         }
     }
 
@@ -241,21 +319,12 @@ private struct TodayContent: View {
         }
     }
 
-    /// What's still ahead below the big lesson. What's over isn't worth a crown turn, and the
-    /// follower is already on screen unless there's more to say about it.
-    private var rest: [WatchSnapshot.Lesson] {
-        guard let snapshot else { return [] }
-        switch moment {
-        case .unknown, .over:
-            return []
-        case .free:
-            return snapshot.todaysLessons(at: now)
-        case .running, .waiting:
-            let follower = snapshot.follower(at: now)
-            return snapshot.todaysLessons(at: now).filter { lesson in
-                guard lesson.end > now, lesson != moment.lesson else { return false }
-                return lesson != follower || lesson.status == .substitution || lesson.status == .roomChange
-            }
+    /// What the list scrolls to: the first lesson that isn't over.
+    private var focus: String? {
+        switch plan {
+        case .today(let lessons): lessons.first { $0.end > now }?.id
+        case .upcoming(let day): day.lessons.first?.id
+        case .unknown, .over, .free: nil
         }
     }
 
@@ -265,23 +334,40 @@ private struct TodayContent: View {
     }
 
     var body: some View {
-        StoppingScroll(session: session) {
-            first
-                .containerRelativeFrame(.vertical)
-            ForEach(rest) { DayRow(lesson: $0) }
+        ScrollViewReader { proxy in
+            StoppingScroll(session: session, onward: onward) {
+                if isOld, let snapshot {
+                    AgeLine(date: snapshot.lessonsUpdatedAt, away: !session.phoneReachable)
+                }
+                list
+            }
+            .onAppear { jump(proxy) }
+            .onChange(of: focus) { jump(proxy, animated: true) }
         }
+        .navigationTitle(title)
         .wash(washColor)
         .sensoryFeedback(.start, trigger: bell)
     }
 
-    /// The first screen: the lesson, or what stands in for one.
-    @ViewBuilder private var first: some View {
+    private func jump(_ proxy: ScrollViewProxy, animated: Bool = false) {
+        guard let focus else { return }
+        if animated {
+            withAnimation(Motion.standardEase) { proxy.scrollTo(focus, anchor: .top) }
+        } else {
+            proxy.scrollTo(focus, anchor: .top)
+        }
+    }
+
+    @ViewBuilder private var list: some View {
         let texts = WatchTexts.of(s.lang)
-        switch moment {
-        case .running, .waiting:
-            if let snapshot, let lesson = moment.lesson {
-                LessonHero(moment: moment, lesson: lesson, follower: snapshot.follower(at: now),
-                           now: now, oldDate: isOld ? snapshot.lessonsUpdatedAt : nil, away: !session.phoneReachable)
+        switch plan {
+        case .today(let lessons):
+            ForEach(lessons) { lesson in
+                LessonRow(lesson: lesson, phase: phase(of: lesson), now: now).id(lesson.id)
+            }
+        case .upcoming(let day):
+            ForEach(day.lessons) { lesson in
+                LessonRow(lesson: lesson, phase: .later, now: now).id(lesson.id)
             }
         case .over:
             quiet(.cheering, s.home.dayOver)
@@ -296,15 +382,21 @@ private struct TodayContent: View {
         }
     }
 
-    private func quiet(_ look: MascotLook, _ title: String) -> some View {
-        VStack(spacing: Spacing.sm) {
-            Spacer(minLength: 0)
-            MascotLine(look: look, title: title)
-            Spacer(minLength: 0)
-            if isOld, let snapshot {
-                AgeLine(date: snapshot.lessonsUpdatedAt, away: !session.phoneReachable)
-            }
+    private func phase(of lesson: WatchSnapshot.Lesson) -> LessonRow.Phase {
+        if lesson.end <= now { return .done }
+        switch moment {
+        case .running(let running) where running.id == lesson.id:
+            return .running
+        case .waiting(let next, _) where next.id == lesson.id && moment.span(at: now) != nil:
+            return .next
+        default:
+            return .later
         }
+    }
+
+    private func quiet(_ look: MascotLook, _ title: String) -> some View {
+        MascotLine(look: look, title: title)
+            .padding(.vertical, Spacing.md)
     }
 }
 
@@ -346,218 +438,58 @@ extension WatchSnapshot.Lesson {
     }
 }
 
-
-/// Minutes to the bell for the Always-On display and VoiceOver: no seconds there.
+/// Minutes to the bell: the page counts in minutes, not seconds.
 private func minutesLeft(_ seconds: TimeInterval, _ s: Strings) -> String {
     let minutes = max(1, Int((seconds / 60).rounded(.up)))
     if minutes < 60 { return s.home.minutes(minutes) }
     return minutes % 60 == 0 ? s.home.hours(minutes / 60) : s.home.hoursMinutes(minutes / 60, minutes % 60)
 }
 
-/// The lesson as the whole screen: a ring running out at the bell, with the corners left free
-/// for the clock.
-private struct LessonHero: View {
-    let moment: WatchSnapshot.Moment
-    let lesson: WatchSnapshot.Lesson
-    let follower: WatchSnapshot.Lesson?
-    let now: Date
-    let oldDate: Date?
-    let away: Bool
-    @Environment(\.strings) private var s
+/// One lesson of the day. A change fills the row with its color, the running one is outlined
+/// and shows how far it is, the next one after a break when it starts. What's over fades.
+private struct LessonRow: View {
+    enum Phase { case done, running, next, later }
 
-    var body: some View {
-        VStack(spacing: Spacing.xs) {
-            CountdownRing(moment: moment, lesson: lesson, now: now)
-            if let oldDate { AgeLine(date: oldDate, away: away) }
-            if let change = lesson.change(s) {
-                ChangeCapsule(text: change, tone: lesson.tone)
-            }
-            if let follower { FollowerLine(lesson: follower) }
-        }
-    }
-}
-
-private struct CountdownRing: View {
-    let moment: WatchSnapshot.Moment
     let lesson: WatchSnapshot.Lesson
+    let phase: Phase
     let now: Date
     @Environment(\.strings) private var s
     @Environment(\.isLuminanceReduced) private var dimmed
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var filled = false
 
-    private var isRunning: Bool {
-        if case .running = moment { return true }
-        return false
-    }
+    private var changed: Bool { lesson.status != .regular }
 
-    private var bell: Date { isRunning ? lesson.end : lesson.start }
-
-    /// Counting down, unless the first lesson is more than an hour off: then just when it starts.
-    private var big: String {
-        guard moment.span(at: now) != nil else { return WatchFormat.clock(lesson.start) }
-        let left = bell.timeIntervalSince(now)
-        return dimmed ? minutesLeft(left, s) : WatchFormat.countdown(left)
-    }
-
-    var body: some View {
-        GeometryReader { geo in
-            let side = min(geo.size.width, geo.size.height)
-            let line = (side * 0.08).rounded()
-            let tone = lesson.tone
-            ZStack {
-                Dial(value: filled ? moment.remaining(at: now) ?? 0 : 0, color: tone.bar, width: line)
-                    .opacity(dimmed ? 0.5 : 1)
-                VStack(spacing: 0) {
-                    if !isRunning {
-                        Text(s.home.upNext)
-                            .textStyle(.caption2)
-                            .foregroundStyle(Palette.textSecondary)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.7)
-                    }
-                    ViewThatFits(in: .horizontal) {
-                        Text(lesson.name(s))
-                        Text(lesson.subject.isEmpty ? lesson.name(s) : lesson.subject)
-                    }
-                    .textStyle(TextStyle.subheadline.weight(.semibold))
-                    .foregroundStyle(dimmed ? Palette.textSecondary : tone.ink)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                    Text(big)
-                        .font(.system(size: side * (dimmed ? 0.2 : 0.26), weight: .semibold, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(Palette.textPrimary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.6)
-                    // A changed room is in the capsule below.
-                    if lesson.status != .roomChange {
-                        Text(lesson.place(s))
-                            .textStyle(.footnote)
-                            .foregroundStyle(Palette.textSecondary)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.7)
-                    }
-                }
-                .padding(.horizontal, line + Spacing.sm)
-            }
-            .frame(width: side, height: side)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .onAppear {
-            guard !filled else { return }
-            if reduceMotion { filled = true } else { withAnimation(Motion.smooth) { filled = true } }
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(isRunning ? "\(lesson.name(s)), \(lesson.place(s))" : "\(s.home.upNext): \(lesson.name(s)), \(lesson.place(s))")
-        .accessibilityValue(moment.span(at: now) != nil ? s.home.left(minutesLeft(bell.timeIntervalSince(now), s)) : WatchFormat.clock(lesson.start))
-        .accessibilityAddTraits(.updatesFrequently)
-    }
-}
-
-/// A round dial: a full ring by default, a gauge with its gap at the bottom with a smaller sweep.
-private struct Dial: View {
-    /// 0 to 1.
-    let value: Double
-    let color: Color
-    let width: CGFloat
-    var sweep = 1.0
-
-    var body: some View {
-        let style = StrokeStyle(lineWidth: width, lineCap: .round)
-        ZStack {
-            Circle()
-                .trim(from: 0, to: sweep)
-                .stroke(color.opacity(0.22), style: style)
-            Circle()
-                .trim(from: 0, to: sweep * min(1, max(0, value)))
-                .stroke(color, style: style)
-        }
-        .rotationEffect(.degrees(sweep < 1 ? 90 + (1 - sweep) * 180 : -90))
-        .padding(width / 2)
-    }
-}
-
-/// Solid, the one loud thing on the screen.
-private struct ChangeCapsule: View {
-    let text: String
-    let tone: Tone
-    @Environment(\.isLuminanceReduced) private var dimmed
-
-    var body: some View {
-        Text(text)
-            .textStyle(TextStyle.caption.weight(.bold))
-            .foregroundStyle(dimmed ? tone.ink : .black)
-            .lineLimit(1)
-            .minimumScaleFactor(0.7)
-            .padding(.horizontal, Spacing.sm + Spacing.xxs)
-            .padding(.vertical, Spacing.xxs + 1)
-            .background(dimmed ? tone.fill : tone.bar, in: .capsule)
-            .frame(maxWidth: .infinity)
-    }
-}
-
-/// One line under the ring: what comes after.
-private struct FollowerLine: View {
-    let lesson: WatchSnapshot.Lesson
-    @Environment(\.strings) private var s
-    @Environment(\.isLuminanceReduced) private var dimmed
-
-    var body: some View {
-        let tone = lesson.tone
-        HStack(spacing: Spacing.xs + Spacing.xxs) {
-            Text(WatchFormat.clock(lesson.start))
-                .monospacedDigit()
-                .foregroundStyle(lesson.status == .regular ? Palette.textSecondary : tone.ink)
-            Text(lesson.name(s))
-                .fontWeight(.semibold)
-                .foregroundStyle(lesson.status == .regular ? Palette.textPrimary : tone.ink)
-                .strikethrough(lesson.isCancelled)
-            if lesson.status != .regular, let change = lesson.change(s), lesson.status != .substitution, lesson.status != .roomChange {
-                Text(change)
-                    .fontWeight(.bold)
-                    .foregroundStyle(tone.ink)
-            } else if !lesson.room.isEmpty {
-                Text(lesson.room)
-                    .foregroundStyle(lesson.status == .regular ? Palette.textSecondary : tone.ink)
-            }
-        }
-        .textStyle(.footnote)
-        .lineLimit(1)
-        .minimumScaleFactor(0.75)
-        .padding(.horizontal, lesson.status == .regular ? 0 : Spacing.sm + Spacing.xxs)
-        .padding(.vertical, lesson.status == .regular ? 0 : Spacing.xxs + 1)
-        .background(lesson.status == .regular || dimmed ? .clear : tone.fill, in: .capsule)
-        .frame(maxWidth: .infinity)
-        .accessibilityElement(children: .combine)
-    }
-}
-
-/// One lesson of the day. A change fills the whole row with its color.
-private struct DayRow: View {
-    let lesson: WatchSnapshot.Lesson
-    @Environment(\.strings) private var s
-    @Environment(\.isLuminanceReduced) private var dimmed
-
+    /// What's different, or where. The running one says who, too.
     private var detail: String {
-        lesson.change(s) ?? lesson.place(s)
+        if let change = lesson.change(s) { return change }
+        guard phase == .running, !lesson.room.isEmpty, !lesson.teacher.isEmpty else { return lesson.place(s) }
+        return "\(s.home.room(lesson.room)) · \(lesson.teacher)"
     }
+
+    private var left: String { minutesLeft(lesson.end.timeIntervalSince(now), s) }
+    private var startsIn: String { WatchTexts.of(s.lang).startsIn(minutesLeft(lesson.start.timeIntervalSince(now), s)) }
 
     var body: some View {
         let tone = lesson.tone
-        let changed = lesson.status != .regular
         HStack(spacing: Spacing.sm) {
             Capsule()
                 .fill(tone.bar)
                 .frame(width: 4)
                 .padding(.vertical, Spacing.xxs)
-            VStack(alignment: .leading, spacing: 0) {
-                Text(lesson.name(s))
-                    .textStyle(TextStyle.subheadline.weight(.semibold))
-                    .foregroundStyle(changed ? tone.ink : Palette.textPrimary)
-                    .strikethrough(lesson.isCancelled)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+            VStack(alignment: .leading, spacing: Spacing.xxs) {
+                HStack(alignment: .firstTextBaseline, spacing: Spacing.xs) {
+                    Text(lesson.name(s))
+                        .textStyle(TextStyle.subheadline.weight(.semibold))
+                        .foregroundStyle(changed ? tone.ink : Palette.textPrimary)
+                        .strikethrough(lesson.isCancelled)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                    Spacer(minLength: 0)
+                    Text(WatchFormat.clock(lesson.start))
+                        .textStyle(.caption)
+                        .monospacedDigit()
+                        .foregroundStyle(changed ? tone.ink : Palette.textSecondary)
+                        .fixedSize()
+                }
                 if !detail.isEmpty {
                     Text(detail)
                         .textStyle(changed ? TextStyle.caption.weight(.bold) : .caption)
@@ -565,23 +497,74 @@ private struct DayRow: View {
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                switch phase {
+                case .running:
+                    HStack(spacing: Spacing.xs + Spacing.xxs) {
+                        ProgressBar(value: lesson.progress(at: now), color: tone.bar)
+                        Text(left)
+                            .textStyle(TextStyle.caption2.weight(.semibold))
+                            .monospacedDigit()
+                            .foregroundStyle(Palette.textPrimary)
+                            .fixedSize()
+                    }
+                    .padding(.top, Spacing.xxs)
+                case .next:
+                    Text(startsIn)
+                        .textStyle(TextStyle.caption2.weight(.semibold))
+                        .foregroundStyle(tone.ink)
+                        .lineLimit(1)
+                case .done, .later:
+                    EmptyView()
+                }
             }
-            Spacer(minLength: 0)
-            Text(WatchFormat.clock(lesson.start))
-                .textStyle(.caption)
-                .monospacedDigit()
-                .foregroundStyle(changed ? tone.ink : Palette.textSecondary)
-                .fixedSize()
         }
         .padding(.vertical, Spacing.sm)
         .padding(.leading, Spacing.sm)
         .padding(.trailing, Spacing.sm + Spacing.xxs)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background {
-            RoundedRectangle(cornerRadius: Radius.md, style: .continuous)
-                .fill(dimmed ? Color.clear : changed ? tone.fill : Color.white.opacity(0.1))
-        }
+        .background { background(tone) }
+        .opacity(phase == .done ? 0.45 : 1)
         .accessibilityElement(children: .combine)
+        .accessibilityValue(accessibilityValue)
+    }
+
+    private func background(_ tone: Tone) -> some View {
+        let shape = RoundedRectangle(cornerRadius: Radius.md, style: .continuous)
+        return shape
+            .fill(dimmed ? Color.clear : changed || phase == .running ? tone.fill : Color.white.opacity(0.1))
+            .overlay {
+                if phase == .running { shape.strokeBorder(tone.bar, lineWidth: 1.5) }
+            }
+    }
+
+    private var accessibilityValue: String {
+        switch phase {
+        case .running: s.home.left(left)
+        case .next: startsIn
+        case .done, .later: ""
+        }
+    }
+}
+
+/// How far the running lesson is.
+private struct ProgressBar: View {
+    /// 0 to 1.
+    let value: Double
+    let color: Color
+    @Environment(\.isLuminanceReduced) private var dimmed
+
+    var body: some View {
+        Capsule()
+            .fill(color.opacity(0.25))
+            .overlay(alignment: .leading) {
+                GeometryReader { geo in
+                    Capsule()
+                        .fill(color.opacity(dimmed ? 0.6 : 1))
+                        .frame(width: max(geo.size.height, geo.size.width * min(1, max(0, value))))
+                }
+            }
+            .frame(height: 4)
+            .accessibilityHidden(true)
     }
 }
 
@@ -592,6 +575,7 @@ private let gaugeRange = 4.0...10.0
 
 private struct GradesPage: View {
     let session: WatchSession
+    let onward: Onward
     @Environment(\.strings) private var s
 
     private var snapshot: WatchSnapshot? { session.snapshot }
@@ -601,7 +585,7 @@ private struct GradesPage: View {
     }
 
     var body: some View {
-        StoppingScroll(session: session) {
+        StoppingScroll(session: session, onward: onward) {
             if let snapshot, snapshot.updatedAt > .distantPast {
                 if let overall = snapshot.overallAverage {
                     OverallGauge(value: overall, count: snapshot.gradeCount)
@@ -676,6 +660,29 @@ private struct PageAge: View {
             AgeLine(date: date, away: !session.phoneReachable)
                 .padding(.top, Spacing.xs)
         }
+    }
+}
+
+/// A gauge with its gap at the bottom.
+private struct Dial: View {
+    /// 0 to 1.
+    let value: Double
+    let color: Color
+    let width: CGFloat
+    var sweep = 1.0
+
+    var body: some View {
+        let style = StrokeStyle(lineWidth: width, lineCap: .round)
+        ZStack {
+            Circle()
+                .trim(from: 0, to: sweep)
+                .stroke(color.opacity(0.22), style: style)
+            Circle()
+                .trim(from: 0, to: sweep * min(1, max(0, value)))
+                .stroke(color, style: style)
+        }
+        .rotationEffect(.degrees(sweep < 1 ? 90 + (1 - sweep) * 180 : -90))
+        .padding(width / 2)
     }
 }
 
@@ -860,6 +867,7 @@ private struct SubjectPage: View {
 
 private struct MensaPage: View {
     let session: WatchSession
+    let onward: Onward
     @Environment(\.strings) private var s
 
     private var snapshot: WatchSnapshot? { session.snapshot }
@@ -874,7 +882,7 @@ private struct MensaPage: View {
     }
 
     var body: some View {
-        StoppingScroll(session: session) {
+        StoppingScroll(session: session, onward: onward) {
             if let snapshot, snapshot.updatedAt > .distantPast {
                 if let day = snapshot.mensaDay, !snapshot.dishes.isEmpty {
                     if let heading = heading(day) { Heading(heading) }
@@ -969,6 +977,7 @@ private struct Stars: View {
 
 private struct TodosPage: View {
     let session: WatchSession
+    let onward: Onward
     /// Just ticked: they stay a moment to be seen before they go.
     @State private var leaving: [String: UUID] = [:]
     @Environment(\.strings) private var s
@@ -986,6 +995,7 @@ private struct TodosPage: View {
                 ScrollView {
                     NothingYet(session: session)
                         .containerRelativeFrame(.vertical)
+                    OnwardButton(onward: onward)
                 }
             }
         }
@@ -1018,6 +1028,8 @@ private struct TodosPage: View {
                 .listRowBackground(Color.clear)
         }
         PageAge(session: session, date: snapshot.updatedAt)
+            .listRowBackground(Color.clear)
+        OnwardButton(onward: onward)
             .listRowBackground(Color.clear)
     }
 

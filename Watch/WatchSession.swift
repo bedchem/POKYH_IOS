@@ -34,6 +34,8 @@ final class WatchSession: NSObject {
     private static let replyTimeout: Duration = .seconds(6)
     /// WebUntis gets a sign-in from here this often at most, whatever the outcome.
     private static let ownLoadInterval: TimeInterval = 10 * 60
+    /// Today and the week after it, enough to reach the next school day past a weekend.
+    private static let ownLoadDays = 8
     /// The phone said "later" (locked, offline): don't ask again right away.
     private static let queueHold: TimeInterval = 60
 
@@ -281,8 +283,9 @@ final class WatchSession: NSObject {
 
     // MARK: Loading by itself
 
-    /// Only when the phone couldn't help: today's lessons straight from WebUntis, with the
-    /// account the phone handed over. Grades, Mensa and to-dos stay as the phone last sent them.
+    /// Only when the phone couldn't help: the lessons of the coming week straight from WebUntis,
+    /// with the account the phone handed over, so the next school day is there too. Grades, Mensa
+    /// and to-dos stay as the phone last sent them.
     private func loadByItself() async {
         guard let account, !loadingByItself, received?.isStale() ?? true,
               Date().timeIntervalSince(lastOwnLoad) > Self.ownLoadInterval else { return }
@@ -293,12 +296,14 @@ final class WatchSession: NSObject {
             loadingByItself = false
             waitingFor -= 1
         }
-        let day = Calendar.current.startOfDay(for: Date())
+        let calendar = Calendar.current
+        let day = calendar.startOfDay(for: Date())
+        let end = calendar.date(byAdding: .day, value: Self.ownLoadDays, to: day) ?? day
         // No connection, or the school said no: the page keeps saying how old its data is.
-        guard let result = try? await untis.lessons(for: account, studentId: received?.studentId),
+        guard let result = try? await untis.lessons(for: account, studentId: received?.studentId, on: day, days: Self.ownLoadDays),
               let current = self.account, AccountRoster.same(current.username, account.username) else { return }
         let base = received ?? .empty(for: account.username)
-        show(base.withLessons(result.lessons, day: day, studentId: result.studentId))
+        show(base.withLessons(result.lessons, from: day, until: end, studentId: result.studentId))
     }
 }
 

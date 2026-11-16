@@ -450,13 +450,19 @@ enum WatchSync {
     // The screens call these after a successful load, so a failed one never blanks the watch.
     // An offline session has no token and reads the disk cache: nothing new for the watch.
 
-    /// A week of timetable. `week` is its Monday; only the current week says anything about today.
-    static func timetable(_ entries: [TimetableEntry], week: String, for session: UserSession) {
+    /// A week of timetable, and the next one when it was loaded too. `week` is its Monday; only
+    /// the current week says anything about today. The rest of it, or the next week, gives the
+    /// watch the next school day for when today is over.
+    static func timetable(_ entries: [TimetableEntry], week: String, next: [TimetableEntry]? = nil, for session: UserSession) {
         guard !session.bearerToken.isEmpty, week == SchoolDates.mondayISO(of: Date()) else { return }
-        let lessons = WatchSnapshotBuilder.lessons(entries, on: SchoolDates.todayNum())
-        let day = Calendar.current.startOfDay(for: Date())
+        let calendar = Calendar.current
+        let day = calendar.startOfDay(for: Date())
+        let monday = DateFmt.iso.date(from: week).map { calendar.startOfDay(for: $0) } ?? day
+        // Monday to Saturday is what a week load covers.
+        let end = calendar.date(byAdding: .day, value: next == nil ? 6 : 13, to: monday) ?? day
+        let lessons = WatchSnapshotBuilder.lessons(entries + (next ?? []), from: SchoolDates.todayNum())
         link.updateSnapshot(for: session.username) { snapshot in
-            snapshot = snapshot.withLessons(lessons, day: day, studentId: session.studentId)
+            snapshot = snapshot.withLessons(lessons, from: day, until: end, studentId: session.studentId, source: .phone)
         }
     }
 
@@ -533,9 +539,12 @@ enum WatchSync {
 
     private static func loadWeek(_ session: UserSession) async {
         let monday = SchoolDates.mondayISO(of: Date())
-        if let entries = try? await UntisClient.shared.timetable(date: monday, session) {
-            timetable(entries, week: monday, for: session)
-        }
+        let nextMonday = SchoolDates.mondayISO(of: Calendar.current.date(byAdding: .day, value: 7, to: Date()) ?? Date())
+        guard let entries = try? await UntisClient.shared.timetable(date: monday, session) else { return }
+        // Next week only matters when this one has no school day left.
+        let today = SchoolDates.todayNum()
+        let next = entries.contains { $0.date > today } ? nil : try? await UntisClient.shared.timetable(date: nextMonday, session)
+        timetable(entries, week: monday, next: next, for: session)
     }
 
     private static func loadGrades(_ session: UserSession) async {
@@ -553,8 +562,9 @@ enum WatchSnapshotBuilder {
     private static let maxGradesPerSubject = 12
     private static let maxGradeText = 60
 
-    static func lessons(_ entries: [TimetableEntry], on day: Int) -> [WatchSnapshot.Lesson] {
-        entries.filter { $0.date == day }.compactMap { entry in
+    /// Every lesson from `day` on.
+    static func lessons(_ entries: [TimetableEntry], from day: Int) -> [WatchSnapshot.Lesson] {
+        entries.filter { $0.date >= day }.compactMap { entry in
             guard let start = UntisTime.date(entry.date, entry.startTime),
                   let end = UntisTime.date(entry.date, entry.endTime) else { return nil }
             let originalRoom = entry.originalRoom.flatMap { $0.isEmpty ? nil : $0 }

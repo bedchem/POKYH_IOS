@@ -11,6 +11,8 @@ public struct WatchTexts: Sendable {
     public let phoneAway: String
     public let queued: String
     public let instead: @Sendable (String) -> String
+    /// When the next lesson starts, from a break: "in 5 Min".
+    public let startsIn: @Sendable (String) -> String
     public let free: String
     public let weekend: String
 
@@ -30,6 +32,7 @@ public struct WatchTexts: Sendable {
         phoneAway: "iPhone nicht erreichbar",
         queued: "Wartet aufs iPhone",
         instead: { "statt \($0)" },
+        startsIn: { "in \($0)" },
         free: "Frei",
         weekend: "Wochenende"
     )
@@ -42,6 +45,7 @@ public struct WatchTexts: Sendable {
         phoneAway: "iPhone non raggiungibile",
         queued: "In attesa dell’iPhone",
         instead: { "invece di \($0)" },
+        startsIn: { "tra \($0)" },
         free: "Libero",
         weekend: "Fine settimana"
     )
@@ -54,6 +58,7 @@ public struct WatchTexts: Sendable {
         phoneAway: "iPhone out of reach",
         queued: "Waiting for iPhone",
         instead: { "instead of \($0)" },
+        startsIn: { "in \($0)" },
         free: "Free",
         weekend: "Weekend"
     )

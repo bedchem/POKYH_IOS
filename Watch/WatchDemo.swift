@@ -3,9 +3,11 @@ import Foundation
 import PokyhCore
 
 /// A made-up day for screenshots and design work, started with `-POKYHWatchDemo YES`: no phone,
-/// no Keychain, no network. Debug builds only.
+/// no Keychain, no network. `-POKYHWatchDemoLater 300` acts that many minutes later, here past
+/// the last lesson, so the next school day shows. Debug builds only.
 enum WatchDemo {
     static var isOn: Bool { UserDefaults.standard.bool(forKey: "POKYHWatchDemo") }
+    private static var later: Int { UserDefaults.standard.integer(forKey: "POKYHWatchDemoLater") }
 
     static let account = StoredAccount(
         username: "anna",
@@ -16,7 +18,12 @@ enum WatchDemo {
 
     static func snapshot(now: Date = .now, calendar: Calendar = .current) -> WatchSnapshot {
         let day = calendar.startOfDay(for: now)
-        func at(_ minutes: Int) -> Date { now.addingTimeInterval(TimeInterval(minutes * 60)) }
+        let later = later
+        func at(_ minutes: Int) -> Date { now.addingTimeInterval(TimeInterval((minutes - later) * 60)) }
+        let nextDate = calendar.date(byAdding: .day, value: 1, to: day) ?? day
+        func next(_ hour: Int, _ minute: Int) -> Date {
+            calendar.date(bySettingHour: hour, minute: minute, second: 0, of: nextDate) ?? nextDate
+        }
         func dayAgo(_ days: Int) -> Date { calendar.date(byAdding: .day, value: -days, to: now) ?? now }
 
         let lessons = [
@@ -32,6 +39,19 @@ enum WatchDemo {
                                  start: at(150), end: at(200), status: .substitution, originalTeacher: "ROS"),
             WatchSnapshot.Lesson(id: "6", subject: "SPO", subjectLong: "Sport", teacher: "KOF", room: "Halle",
                                  start: at(205), end: at(255), status: .cancelled),
+        ]
+
+        let nextLessons = [
+            WatchSnapshot.Lesson(id: "n1", subject: "D", subjectLong: "Deutsch", teacher: "BER", room: "2.05",
+                                 start: next(7, 50), end: next(8, 40)),
+            WatchSnapshot.Lesson(id: "n2", subject: "M", subjectLong: "Mathematik", teacher: "MUE", room: "2.05",
+                                 start: next(8, 40), end: next(9, 30), status: .exam),
+            WatchSnapshot.Lesson(id: "n3", subject: "GEO", subjectLong: "Geografie", teacher: "PIR", room: "2.05",
+                                 start: next(9, 45), end: next(10, 35)),
+            WatchSnapshot.Lesson(id: "n4", subject: "ENGL", subjectLong: "Englisch", teacher: "SCH", room: "1.12",
+                                 start: next(10, 35), end: next(11, 25)),
+            WatchSnapshot.Lesson(id: "n5", subject: "BIO", subjectLong: "Biologie", teacher: "WAL", room: "Labor",
+                                 start: next(11, 30), end: next(12, 20)),
         ]
 
         let grades = [
@@ -64,6 +84,7 @@ enum WatchDemo {
         ]
 
         return WatchSnapshot(username: account.username, updatedAt: now, day: day, lessons: lessons,
+                             nextDay: WatchSnapshot.SchoolDay(date: nextDate, lessons: nextLessons),
                              overallAverage: 7.5, gradeCount: grades.count, subjects: subjects,
                              recentGrades: grades.sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) },
                              mensaDay: day, dishes: dishes, todos: todos)
