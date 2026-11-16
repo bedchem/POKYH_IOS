@@ -4,7 +4,8 @@ import PokyhCore
 
 /// A made-up day for screenshots and design work, started with `-POKYHWatchDemo YES`: no phone,
 /// no Keychain, no network. `-POKYHWatchDemoLater 300` acts that many minutes later, here past
-/// the last lesson, so the next school day shows. Debug builds only.
+/// the last lesson, so the next school day shows. `-POKYHWatchDemoPhoto <url>` gives the dishes
+/// a photo. Debug builds only.
 enum WatchDemo {
     static var isOn: Bool { UserDefaults.standard.bool(forKey: "POKYHWatchDemo") }
     private static var later: Int { UserDefaults.standard.integer(forKey: "POKYHWatchDemoLater") }
@@ -69,10 +70,13 @@ enum WatchDemo {
             WatchSnapshot.SubjectAverage(name: "Italienisch", average: 5.5, count: 1, grades: grades.filter { $0.subject == "Italienisch" }),
         ]
 
+        let photo = UserDefaults.standard.string(forKey: "POKYHWatchDemoPhoto").flatMap(URL.init(string:))
         let dishes = [
             WatchSnapshot.Dish(id: "d1", name: "Spaghetti mit Tomatensauce", category: "Hauptgericht", tags: ["vegetarisch"],
-                               stars: 4.5, ratings: 12),
-            WatchSnapshot.Dish(id: "d2", name: "Wiener Schnitzel mit Pommes", category: "Hauptgericht", stars: 4, ratings: 9),
+                               stars: 4.5, ratings: 12, photo: photo,
+                               text: "Mit frischem Basilikum und Parmesan.", price: 4.5, calories: 640),
+            WatchSnapshot.Dish(id: "d2", name: "Wiener Schnitzel mit Pommes", category: "Hauptgericht", stars: 4, ratings: 9,
+                               photo: photo, price: 5.2, calories: 890),
             WatchSnapshot.Dish(id: "d3", name: "Gemischter Salat", category: "Beilage", tags: ["vegan"]),
         ]
 

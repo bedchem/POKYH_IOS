@@ -153,6 +153,7 @@ struct WatchSnapshotTests {
         let snapshot = try #require(WatchSnapshot.decoded(from: Data(json.utf8)))
         #expect(snapshot.subjects.first?.grades == nil)
         #expect(snapshot.dishes.first?.stars == nil)
+        #expect(snapshot.dishes.first?.photo == nil)
         #expect(snapshot.nextDay == nil)
     }
 
@@ -324,6 +325,15 @@ struct WatchSnapshotTests {
         #expect(WatchSnapshot(payload: payload) == day)
         #expect(WatchSnapshot(payload: [:]) == nil)
         #expect(WatchSnapshot(payload: ["pokyh.snapshot": Data("nope".utf8)]) == nil)
+    }
+
+    @Test func aDishKeepsItsPhotoAndFacts() {
+        var snapshot = day
+        snapshot.dishes = [WatchSnapshot.Dish(id: "d", name: "Pasta", category: "", photo: URL(string: "https://example.org/d.jpg"),
+                                              text: "Mit Basilikum", price: 4.5, calories: 640)]
+        let back = WatchSnapshot(payload: snapshot.payload)
+        #expect(back?.dishes.first?.photo?.absoluteString == "https://example.org/d.jpg")
+        #expect(back?.dishes.first?.price == 4.5 && back?.dishes.first?.calories == 640 && back?.dishes.first?.text == "Mit Basilikum")
     }
 
     @Test func sharesTheContextWithTheAccountHandoff() {

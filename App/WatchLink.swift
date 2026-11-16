@@ -561,6 +561,7 @@ enum WatchSnapshotBuilder {
     private static let maxRecentGrades = 5
     private static let maxGradesPerSubject = 12
     private static let maxGradeText = 60
+    private static let maxDishText = 160
 
     /// Every lesson from `day` on.
     static func lessons(_ entries: [TimetableEntry], from day: Int) -> [WatchSnapshot.Lesson] {
@@ -611,7 +612,11 @@ enum WatchSnapshotBuilder {
     /// Same date rule as Home: today, or the next day the menu has.
     static func menu(_ dishes: [Dish]) -> (day: Date?, dishes: [WatchSnapshot.Dish]) {
         guard let day = MensaSchedule.days(from: dishes).first(where: { !$0.dishes.isEmpty }) else { return (nil, []) }
-        return (day.date, day.dishes.map { WatchSnapshot.Dish(id: $0.id, name: $0.name, category: $0.category, tags: $0.tags) })
+        return (day.date, day.dishes.map { dish in
+            WatchSnapshot.Dish(id: dish.id, name: dish.name, category: dish.category, tags: dish.tags,
+                               photo: dish.photoURL, text: dish.description.flatMap { $0.isEmpty ? nil : String($0.prefix(maxDishText)) },
+                               price: dish.price.flatMap { $0 > 0 ? $0 : nil }, calories: dish.calories.flatMap { $0 > 0 ? $0 : nil })
+        })
     }
 
     static func todos(_ todos: [ApiTodo]) -> [WatchSnapshot.Todo] {

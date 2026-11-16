@@ -122,14 +122,24 @@ public struct WatchSnapshot: Codable, Sendable, Equatable {
         /// The mean rating, 1 to 5; nil until someone has rated it or the phone has said so.
         public var stars: Double?
         public var ratings: Int?
+        /// The full address of its picture, resolved on the phone. Older phones don't send it.
+        public var photo: URL?
+        public var text: String?
+        public var price: Double?
+        public var calories: Double?
 
-        public init(id: String, name: String, category: String, tags: [String] = [], stars: Double? = nil, ratings: Int? = nil) {
+        public init(id: String, name: String, category: String, tags: [String] = [], stars: Double? = nil, ratings: Int? = nil,
+                    photo: URL? = nil, text: String? = nil, price: Double? = nil, calories: Double? = nil) {
             self.id = id
             self.name = name
             self.category = category
             self.tags = tags
             self.stars = stars
             self.ratings = ratings
+            self.photo = photo
+            self.text = text
+            self.price = price
+            self.calories = calories
         }
 
         /// Vegan before vegetarian, read from the tags like on Home.
