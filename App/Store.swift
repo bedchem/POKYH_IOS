@@ -576,7 +576,7 @@ final class AppState {
             store.save(account, password: password)
         }
         // The watch signs in with the same account and stays signed in.
-        WatchSync.signedIn(username: s.username, displayName: s.personName ?? s.username, password: password)
+        WatchSync.signedIn(s, password: password)
         store.lastActive = s.username
         // The picture on a silent sign-in too, so the list of accounts and the lock screen
         // show it.
@@ -635,7 +635,7 @@ final class AppState {
             accounts = store.accounts
         }
         // What a sign-in on the lock screen does too, now that it can finish behind the app.
-        WatchSync.signedIn(username: s.username, displayName: s.personName ?? s.username, password: password)
+        WatchSync.signedIn(s, password: password)
         store.lastActive = s.username
         store.updateImageUrl(s.imageUrl, for: s.username)
         accounts = store.accounts

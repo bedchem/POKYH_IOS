@@ -7,8 +7,9 @@ public struct WatchTexts: Sendable {
     public let updated: @Sendable (String) -> String
     public let updatedYesterday: @Sendable (String) -> String
     public let noDataTitle: String
-    public let noDataText: String
-    public let phoneAway: String
+    /// With the app's name.
+    public let noDataText: @Sendable (String) -> String
+    /// A tick not yet at the backend.
     public let queued: String
     public let instead: @Sendable (String) -> String
     /// When the next lesson starts, from a break: "in 5 Min".
@@ -38,9 +39,8 @@ public struct WatchTexts: Sendable {
         updated: { "Stand von \($0)" },
         updatedYesterday: { "Stand von gestern, \($0)" },
         noDataTitle: "Noch nichts da",
-        noDataText: "Öffne POKYH auf dem iPhone.",
-        phoneAway: "iPhone nicht erreichbar",
-        queued: "Wartet aufs iPhone",
+        noDataText: { "Öffne \($0) auf dem iPhone." },
+        queued: "Noch nicht gesendet",
         instead: { "statt \($0)" },
         startsIn: { "in \($0)" },
         schoolDay: "Schultag",
@@ -57,9 +57,8 @@ public struct WatchTexts: Sendable {
         updated: { "Aggiornato \($0)" },
         updatedYesterday: { "Aggiornato ieri, \($0)" },
         noDataTitle: "Ancora niente",
-        noDataText: "Apri POKYH sull’iPhone.",
-        phoneAway: "iPhone non raggiungibile",
-        queued: "In attesa dell’iPhone",
+        noDataText: { "Apri \($0) sull’iPhone." },
+        queued: "Non ancora inviato",
         instead: { "invece di \($0)" },
         startsIn: { "tra \($0)" },
         schoolDay: "Giornata",
@@ -76,9 +75,8 @@ public struct WatchTexts: Sendable {
         updated: { "Updated \($0)" },
         updatedYesterday: { "Updated yesterday, \($0)" },
         noDataTitle: "Nothing yet",
-        noDataText: "Open POKYH on your iPhone.",
-        phoneAway: "iPhone out of reach",
-        queued: "Waiting for iPhone",
+        noDataText: { "Open \($0) on your iPhone." },
+        queued: "Not sent yet",
         instead: { "instead of \($0)" },
         startsIn: { "in \($0)" },
         schoolDay: "School day",

@@ -22,6 +22,18 @@ struct LooseJSON {
     var string: String? { raw as? String }
     var bool: Bool? { raw as? Bool }
 
+    /// A number, never NaN or infinity. true and false come as NSNumber too and don't count.
+    var double: Double? {
+        guard let number = raw as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+              number.doubleValue.isFinite else { return nil }
+        return number.doubleValue
+    }
+
+    var int: Int? {
+        if let text = raw as? String { return Int(text) }
+        return double.map { Int(saturating: $0) }
+    }
+
     /// 0 for anything that isn't a number; never negative.
     var count: Int {
         guard let number = raw as? NSNumber else { return 0 }

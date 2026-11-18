@@ -19,7 +19,7 @@ struct POKYHWatchApp: App {
                 if session.account != nil {
                     WatchMenu(session: session)
                 } else {
-                    NavigationStack { SignInOnPhoneView() }
+                    NavigationStack { SignInOnPhoneView(signedOut: session.signedOutHere) }
                 }
             }
             .environment(\.strings, strings)
@@ -35,13 +35,25 @@ struct POKYHWatchApp: App {
     }
 }
 
-/// What the watch shows until the iPhone has handed over a signed-in account.
+/// What the watch shows until the iPhone has handed over a signed-in account, or after the
+/// account's device list signed the watch out.
 struct SignInOnPhoneView: View {
+    var signedOut = false
     @Environment(\.strings) private var s
 
     var body: some View {
         ScrollView {
-            MascotLine(look: .waving, title: s.watch.signInTitle)
+            if signedOut {
+                MascotLine(look: .searching, title: s.watch.signedOutTitle)
+                Text(s.watch.signedOutMessage)
+                    .textStyle(.footnote)
+                    .foregroundStyle(Palette.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, Spacing.xs)
+            } else {
+                MascotLine(look: .waving, title: s.watch.signInTitle)
+            }
         }
     }
 }
@@ -146,7 +158,7 @@ private struct MenuList: View {
     @Environment(\.strings) private var s
 
     private var known: WatchSnapshot? {
-        guard let snapshot, snapshot.updatedAt > .distantPast else { return nil }
+        guard let snapshot, snapshot.knowsAnything else { return nil }
         return snapshot
     }
 
@@ -154,10 +166,12 @@ private struct MenuList: View {
         List {
             Wordmark()
                 .listRowBackground(Color.clear)
-            NavigationLink(value: Route.page(.today)) {
-                let line = timetableLine
-                MenuRow(symbol: "calendar", tone: Decorative.periwinkle, title: s.nav.timetable, info: line?.text, infoTint: line?.tint) {
-                    EmptyView()
+            if session.hasUntis {
+                NavigationLink(value: Route.page(.today)) {
+                    let line = timetableLine
+                    MenuRow(symbol: "calendar", tone: Decorative.periwinkle, title: s.nav.timetable, info: line?.text, infoTint: line?.tint) {
+                        EmptyView()
+                    }
                 }
             }
             NavigationLink(value: Route.page(.mensa)) {
@@ -165,22 +179,26 @@ private struct MenuList: View {
                     EmptyView()
                 }
             }
-            NavigationLink(value: Route.page(.todos)) {
-                let next = nextTodo
-                MenuRow(symbol: "checklist", tone: Decorative.blush, title: s.tasks.todos, info: next?.title,
-                        infoTint: next?.isOverdue(at: now) == true ? Palette.dangerText : nil) {
-                    if let open = known?.openTodos.count, open > 0 {
-                        Text("\(open)")
-                            .textStyle(TextStyle.subheadline.weight(.bold))
-                            .monospacedDigit()
-                            .foregroundStyle(Palette.textPrimary)
+            if session.hasTodos {
+                NavigationLink(value: Route.page(.todos)) {
+                    let next = nextTodo
+                    MenuRow(symbol: "checklist", tone: Decorative.blush, title: s.tasks.todos, info: next?.title,
+                            infoTint: next?.isOverdue(at: now) == true ? Palette.dangerText : nil) {
+                        if let open = known?.openTodos.count, open > 0 {
+                            Text("\(open)")
+                                .textStyle(TextStyle.subheadline.weight(.bold))
+                                .monospacedDigit()
+                                .foregroundStyle(Palette.textPrimary)
+                        }
                     }
                 }
             }
-            NavigationLink(value: Route.page(.grades)) {
-                MenuRow(symbol: "graduationcap.fill", tone: Decorative.sage, title: s.nav.grades, info: latestGrade, sensitive: true) {
-                    if let average = known?.overallAverage {
-                        MarkChip(value: average, text: WatchFormat.average(average, decimal: s.common.decimal))
+            if session.hasUntis {
+                NavigationLink(value: Route.page(.grades)) {
+                    MenuRow(symbol: "graduationcap.fill", tone: Decorative.sage, title: s.nav.grades, info: latestGrade, sensitive: true) {
+                        if let average = known?.overallAverage {
+                            MarkChip(value: average, text: WatchFormat.average(average, decimal: s.common.decimal))
+                        }
                     }
                 }
             }
@@ -298,9 +316,9 @@ private struct MenuFooter: View {
                     .frame(width: 18, height: 18)
                     .accessibilityLabel(s.common.loading)
             } else {
-                Image(systemName: session.phoneReachable ? "iphone" : "iphone.slash")
+                Image(systemName: session.connection.symbol)
                     .accessibilityHidden(true)
-                Text(session.phoneReachable ? texts.noDataText : texts.phoneAway)
+                Text(session.connection == .offline ? s.common.noConnection : texts.noDataText(AppConfig.appName()))
             }
         }
         .textStyle(.caption)
@@ -398,12 +416,16 @@ extension MascotLook {
 /// Says how old what's on screen is, once that matters.
 private struct AgeLine: View {
     let date: Date
-    var away = false
+    /// No way to anything newer right now: says why it's old.
+    var offline = false
     @Environment(\.strings) private var s
 
     var body: some View {
         HStack(spacing: Spacing.xs) {
-            if away { Image(systemName: "iphone.slash") }
+            if offline {
+                Image(systemName: WatchSession.Connection.offline.symbol)
+                    .accessibilityLabel(s.common.noConnection)
+            }
             Text(WatchFormat.stamp(date, texts: WatchTexts.of(s.lang), common: s.common))
         }
         .textStyle(.caption2)
@@ -427,11 +449,11 @@ private struct NothingYet: View {
                 ProgressView()
                     .accessibilityLabel(s.common.loading)
             } else {
-                Image(systemName: session.phoneReachable ? "iphone" : "iphone.slash")
+                Image(systemName: session.connection.symbol)
                     .font(.system(size: 30, weight: .medium))
                     .foregroundStyle(Palette.textSecondary)
                     .accessibilityHidden(true)
-                Text(session.phoneReachable ? texts.noDataText : texts.phoneAway)
+                Text(session.connection == .offline ? s.common.noConnection : texts.noDataText(AppConfig.appName()))
                     .textStyle(.headline)
                     .foregroundStyle(Palette.textPrimary)
                     .multilineTextAlignment(.center)
@@ -513,7 +535,7 @@ private struct TodayContent: View {
         ScrollViewReader { proxy in
             StoppingScroll(session: session) {
                 if isOld, let snapshot {
-                    AgeLine(date: snapshot.lessonsUpdatedAt, away: !session.phoneReachable)
+                    AgeLine(date: snapshot.lessonsUpdatedAt, offline: session.connection == .offline)
                 }
                 list
             }
@@ -949,7 +971,7 @@ private struct GradesPage: View {
 
     var body: some View {
         StoppingScroll(session: session) {
-            if let snapshot, snapshot.updatedAt > .distantPast {
+            if let snapshot, snapshot.knows(.grades) {
                 if let overall = snapshot.overallAverage {
                     OverallGauge(value: overall, count: snapshot.gradeCount)
                         .containerRelativeFrame(.vertical) { height, _ in height * 0.9 }
@@ -970,7 +992,7 @@ private struct GradesPage: View {
                     MascotLine(look: .searching, title: s.grades.noGradesYet)
                         .containerRelativeFrame(.vertical)
                 }
-                PageAge(session: session, date: snapshot.updatedAt)
+                PageAge(session: session, date: snapshot.updated(.grades))
             } else {
                 NothingYet(session: session)
                     .containerRelativeFrame(.vertical)
@@ -1020,7 +1042,7 @@ private struct PageAge: View {
 
     var body: some View {
         if !session.loading, Date.now.timeIntervalSince(date) > 12 * 60 * 60 {
-            AgeLine(date: date, away: !session.phoneReachable)
+            AgeLine(date: date, offline: session.connection == .offline)
                 .padding(.top, Spacing.xs)
         }
     }
@@ -1236,7 +1258,7 @@ private struct MensaPage: View {
 
     var body: some View {
         StoppingScroll(session: session) {
-            if let snapshot, snapshot.updatedAt > .distantPast {
+            if let snapshot, snapshot.knows(.mensa) {
                 if let day = snapshot.mensaDay, !snapshot.dishes.isEmpty {
                     // Only a day that isn't today needs saying.
                     if !Calendar.current.isDateInToday(day) { Heading(dayTitle(day, now: .now, s)) }
@@ -1258,7 +1280,7 @@ private struct MensaPage: View {
                     }
                     .frame(maxWidth: .infinity)
                 }
-                PageAge(session: session, date: snapshot.updatedAt)
+                PageAge(session: session, date: snapshot.updated(.mensa))
             } else {
                 NothingYet(session: session)
                     .containerRelativeFrame(.vertical)
@@ -1562,7 +1584,7 @@ private struct TodosPage: View {
 
     var body: some View {
         Group {
-            if let snapshot, snapshot.updatedAt > .distantPast {
+            if let snapshot, snapshot.knows(.todos) {
                 let open = snapshot.todos.filter { !$0.done || leaving[$0.id] != nil }
                 let done = snapshot.todos.filter { $0.done && leaving[$0.id] == nil }
                 list(open, done, in: snapshot)
@@ -1601,7 +1623,7 @@ private struct TodosPage: View {
                 .minimumScaleFactor(0.8)
                 .listRowBackground(Color.clear)
         }
-        PageAge(session: session, date: snapshot.updatedAt)
+        PageAge(session: session, date: snapshot.updated(.todos))
             .listRowBackground(Color.clear)
     }
 

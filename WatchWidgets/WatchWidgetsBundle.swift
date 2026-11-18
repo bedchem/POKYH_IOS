@@ -262,7 +262,7 @@ struct NextLessonFace: View {
         switch entry.moment {
         case .free: Calendar.current.isDateInWeekend(entry.date) ? texts.weekend : s.home.noLessonsToday
         case .over: s.home.dayOver
-        default: s.watch.waitingForPhone
+        default: texts.noDataTitle
         }
     }
 
@@ -589,7 +589,7 @@ struct RoomFace: View {
         switch entry.moment {
         case .free: Calendar.current.isDateInWeekend(entry.date) ? texts.weekend : s.home.noLessonsToday
         case .over: s.home.dayOver
-        default: s.watch.waitingForPhone
+        default: texts.noDataTitle
         }
     }
 

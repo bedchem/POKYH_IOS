@@ -1,8 +1,9 @@
 import Foundation
 
 /// What the watch shows: today's lessons and the next school day's, grades, the Mensa and the to-dos. The iPhone builds it
-/// from what it just loaded; the watch keeps the last one sealed on disk, so it opens without
-/// the phone, and can reload the lessons by itself (see `UntisDay`).
+/// from what it just loaded, the watch loads the same over its own connection when the phone
+/// can't (see `UntisDay`, `WatchBackend`). Each part keeps when it was loaded, so the fresher
+/// one wins whichever side it came from. The last one stays sealed on disk.
 public struct WatchSnapshot: Codable, Sendable, Equatable {
     public enum Source: String, Codable, Sendable {
         case phone, watch
@@ -171,13 +172,24 @@ public struct WatchSnapshot: Codable, Sendable, Equatable {
         }
     }
 
+    /// The parts that are loaded on their own.
+    public enum Part: String, CaseIterable, Sendable {
+        case lessons, grades, mensa, todos
+    }
+
     /// Whose data this is; the watch drops a snapshot for any other account.
     public var username: String
     /// The language picked in the iPhone app, so the watch speaks the same one.
     public var lang: Lang?
+    /// When the phone last changed it. The watch's own loads leave it alone.
     public var updatedAt: Date
     /// When the lessons were last loaded, by the phone or by the watch itself.
     public var lessonsUpdatedAt: Date
+    /// The same for the other parts. nil means `updatedAt`, as older phones sent it.
+    public var gradesUpdatedAt: Date?
+    public var mensaUpdatedAt: Date?
+    public var todosUpdatedAt: Date?
+    /// Who loaded the lessons.
     public var source: Source
     /// Midnight of the day `lessons` belong to.
     public var day: Date
@@ -197,6 +209,7 @@ public struct WatchSnapshot: Codable, Sendable, Equatable {
     public var todos: [Todo]
 
     public init(username: String, lang: Lang? = nil, updatedAt: Date = .now, lessonsUpdatedAt: Date? = nil,
+                gradesUpdatedAt: Date? = nil, mensaUpdatedAt: Date? = nil, todosUpdatedAt: Date? = nil,
                 source: Source = .phone, day: Date, lessons: [Lesson] = [], nextDay: SchoolDay? = nil, studentId: Int? = nil,
                 overallAverage: Double? = nil, gradeCount: Int = 0, subjects: [SubjectAverage] = [],
                 recentGrades: [Grade] = [], mensaDay: Date? = nil, dishes: [Dish] = [], todos: [Todo] = []) {
@@ -204,6 +217,9 @@ public struct WatchSnapshot: Codable, Sendable, Equatable {
         self.lang = lang
         self.updatedAt = updatedAt
         self.lessonsUpdatedAt = lessonsUpdatedAt ?? updatedAt
+        self.gradesUpdatedAt = gradesUpdatedAt
+        self.mensaUpdatedAt = mensaUpdatedAt
+        self.todosUpdatedAt = todosUpdatedAt
         self.source = source
         self.day = day
         self.lessons = lessons.sorted { $0.start < $1.start }
@@ -286,6 +302,50 @@ extension WatchSnapshot {
         !isToday(date, calendar: calendar) || date.timeIntervalSince(lessonsUpdatedAt) > maxAge
     }
 
+    /// When a part was last loaded; `.distantPast` for never.
+    public func updated(_ part: Part) -> Date {
+        switch part {
+        case .lessons: lessonsUpdatedAt
+        case .grades: gradesUpdatedAt ?? updatedAt
+        case .mensa: mensaUpdatedAt ?? updatedAt
+        case .todos: todosUpdatedAt ?? updatedAt
+        }
+    }
+
+    /// Whether the part was ever loaded. Without it "nothing there" only means "don't know".
+    public func knows(_ part: Part) -> Bool {
+        updated(part) > .distantPast
+    }
+
+    public var knowsAnything: Bool {
+        Part.allCases.contains { knows($0) }
+    }
+
+    /// Whether a part should be loaded again. Grades change rarely and cost a request per
+    /// subject; to-dos are cheap and get ticked on the phone too.
+    public func isStale(_ part: Part, at date: Date = .now, calendar: Calendar = .current) -> Bool {
+        let age = date.timeIntervalSince(updated(part))
+        switch part {
+        case .lessons:
+            return isStale(at: date, calendar: calendar)
+        case .grades:
+            return age > 60 * 60
+        case .mensa:
+            // A menu for a day that's over says nothing about today's.
+            let over = mensaDay.map { calendar.startOfDay(for: $0) < calendar.startOfDay(for: date) } ?? false
+            return over || age > 60 * 60
+        case .todos:
+            return age > 5 * 60
+        }
+    }
+
+    /// Writes down what nil stands for, before `updatedAt` moves on and nil would mean the new time.
+    public mutating func settleStamps() {
+        gradesUpdatedAt = updated(.grades)
+        mensaUpdatedAt = updated(.mensa)
+        todosUpdatedAt = updated(.todos)
+    }
+
     /// When a complication has to change: every bell left today, the run-up to each one, the
     /// hour before school, and midnight, when what it shows stops being true.
     public func timelineDates(from date: Date = .now, calendar: Calendar = .current) -> [Date] {
@@ -330,19 +390,86 @@ extension WatchSnapshot {
         return next <= evening ? next : calendar.date(byAdding: .day, value: 1, to: morning) ?? next
     }
 
-    /// What to keep when `incoming` arrives: nothing if it's older (a reply can overtake a
-    /// context update), otherwise it, with the fresher lessons of the two. The watch may have
-    /// loaded those itself while the phone only sent a new to-do.
+    /// What to keep when `incoming` arrives: part by part the fresher of the two. The watch may
+    /// have loaded the grades itself while the phone only sent a new to-do, and a reply can
+    /// overtake a context update. nil when nothing of it is newer.
     public func taking(_ incoming: WatchSnapshot) -> WatchSnapshot? {
-        guard incoming.updatedAt >= updatedAt else { return nil }
-        guard lessonsUpdatedAt > incoming.lessonsUpdatedAt else { return incoming }
-        var merged = incoming
-        merged.lessons = lessons
-        merged.nextDay = nextDay
-        merged.day = day
-        merged.lessonsUpdatedAt = lessonsUpdatedAt
-        merged.source = source
-        return merged
+        var merged = self
+        merged.updatedAt = max(updatedAt, incoming.updatedAt)
+        if incoming.updatedAt >= updatedAt {
+            merged.lang = incoming.lang ?? lang
+            merged.studentId = incoming.studentId ?? studentId
+        }
+        if incoming.lessonsUpdatedAt >= lessonsUpdatedAt {
+            merged.lessons = incoming.lessons
+            merged.nextDay = incoming.nextDay
+            merged.day = incoming.day
+            merged.lessonsUpdatedAt = incoming.lessonsUpdatedAt
+            merged.source = incoming.source
+        }
+        let gradesFrom = incoming.updated(.grades) >= updated(.grades) ? incoming : self
+        merged.overallAverage = gradesFrom.overallAverage
+        merged.gradeCount = gradesFrom.gradeCount
+        merged.subjects = gradesFrom.subjects
+        merged.recentGrades = gradesFrom.recentGrades
+        merged.gradesUpdatedAt = merged.stamp(gradesFrom.updated(.grades))
+
+        let mensaFrom = incoming.updated(.mensa) >= updated(.mensa) ? incoming : self
+        merged.mensaDay = mensaFrom.mensaDay
+        merged.dishes = mensaFrom.dishes
+        merged.mensaUpdatedAt = merged.stamp(mensaFrom.updated(.mensa))
+
+        let todosFrom = incoming.updated(.todos) >= updated(.todos) ? incoming : self
+        merged.todos = todosFrom.todos
+        merged.todosUpdatedAt = merged.stamp(todosFrom.updated(.todos))
+        return merged == self ? nil : merged
+    }
+
+    /// nil when it's `updatedAt` anyway, so a snapshot taken whole stays equal to what came.
+    private func stamp(_ date: Date) -> Date? {
+        date == updatedAt ? nil : date
+    }
+
+    /// The grades the watch loaded by itself.
+    public func withGrades(_ grades: WatchGrades, at date: Date = .now) -> WatchSnapshot {
+        var copy = self
+        copy.overallAverage = grades.overall
+        copy.gradeCount = grades.count
+        copy.subjects = grades.subjects
+        copy.recentGrades = grades.recent
+        copy.gradesUpdatedAt = date
+        return copy
+    }
+
+    /// The menu the watch loaded by itself. `ratings` nil keeps the stars known so far.
+    public func withMenu(day: Date?, dishes: [Dish], at date: Date = .now) -> WatchSnapshot {
+        var copy = self
+        let known = Dictionary(self.dishes.map { ($0.id, $0) }) { first, _ in first }
+        copy.mensaDay = day
+        copy.dishes = dishes.map { dish in
+            guard dish.ratings == nil, let old = known[dish.id] else { return dish }
+            var dish = dish
+            dish.stars = old.stars
+            dish.ratings = old.ratings
+            return dish
+        }
+        copy.mensaUpdatedAt = date
+        return copy
+    }
+
+    /// The to-dos the watch loaded by itself.
+    public func withTodos(_ todos: [Todo], at date: Date = .now) -> WatchSnapshot {
+        var copy = self
+        copy.todos = todos
+        copy.todosUpdatedAt = date
+        return copy
+    }
+
+    /// A tick the backend took from the watch, before the list is loaded again.
+    public func withTodo(_ id: String, done: Bool) -> WatchSnapshot {
+        var copy = self
+        if let index = copy.todos.firstIndex(where: { $0.id == id }) { copy.todos[index].done = done }
+        return copy
     }
 
     /// The lessons the watch loaded by itself, everything else as it was.

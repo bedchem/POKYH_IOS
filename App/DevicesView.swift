@@ -169,12 +169,14 @@ struct DevicesView: View {
     }
 }
 
-/// Phone or computer, in the page's one quiet tone.
+/// Watch, phone or computer, in the page's one quiet tone.
 private struct DeviceGlyph: View {
     let client: String
     let platform: String
+    var os = ""
 
     private var symbol: String {
+        if os.lowercased().hasPrefix("watchos") { return "applewatch" }
         if platform == "ios" { return "iphone" }
         return client == "app" || platform == "android" ? "smartphone" : "laptopcomputer"
     }
@@ -197,7 +199,7 @@ private struct DeviceRow: View {
 
     var body: some View {
         HStack(spacing: Spacing.iconText) {
-            DeviceGlyph(client: device.client, platform: device.platform)
+            DeviceGlyph(client: device.client, platform: device.platform, os: device.os)
             VStack(alignment: .leading, spacing: 2) {
                 Text(DeviceLabels.name(model: device.model, os: device.os, browser: device.browser, unknown: s.settings.unknownDevice))
                     .textStyle(.callout.weight(.semibold))
@@ -231,7 +233,7 @@ private struct LoginRow: View {
 
     var body: some View {
         HStack(spacing: Spacing.iconText) {
-            DeviceGlyph(client: entry.client, platform: entry.platform)
+            DeviceGlyph(client: entry.client, platform: entry.platform, os: entry.os)
             VStack(alignment: .leading, spacing: 2) {
                 Text(DeviceLabels.name(model: entry.model, os: entry.os, browser: entry.browser, unknown: s.settings.unknownDevice))
                     .textStyle(.callout.weight(.semibold))

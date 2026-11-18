@@ -12,6 +12,8 @@ the disk.
 | --- | --- | --- |
 | WebUntis password (or app key) per account | Keychain, one item per account | `WhenPasscodeSetThisDeviceOnly` + `.userPresence`: opens only with Face ID, Touch ID or the passcode, only while unlocked, deleted if the passcode is turned off. Never synced, never backed up. Without a passcode nothing is saved and the account asks again. |
 | Copy of the watch account | Keychain | `WhenUnlockedThisDeviceOnly`, no biometry (the watch asks in the background). Only the one account handed to the watch. |
+| On the watch: its account, its own POKYH access and refresh token | Watch Keychain | `AfterFirstUnlockThisDeviceOnly`, so complications and background refreshes work on the wrist. |
+| On the watch: the last snapshot and unsent ticks | Watch app group `Sealed/watch` | AES-GCM with the watch's own vault key, file protection until first unlock. |
 | WebUntis session, POKYH access and refresh tokens | Memory only | Gone on lock, sign-out and quit. |
 | Vault key (seals all files below) | Keychain, app group shared with the widgets | `AfterFirstUnlockThisDeviceOnly`, so widgets can read their data on a locked phone. |
 | Offline copies: timetable weeks, grades, absences, class register, messages, to-dos, reminders, class, exams, homework, menu, a token-free session snapshot | `Application Support/Sealed/offline`, one folder per account | AES-GCM with the vault key, file names are keyed hashes, file protection `complete` (unreadable while locked), excluded from backup. |
@@ -63,6 +65,17 @@ hands it over through WatchConnectivity, which Apple encrypts end to end between
 devices, and keeps one copy to answer the watch later. That copy has no Face ID in front of it,
 since the watch asks while the app is in the background; it only opens while the phone is
 unlocked, and a locked phone doesn't answer at all rather than telling the watch "signed out".
+
+When the phone can't answer (away, locked, or with nothing newer), the watch loads by itself over
+Wi-Fi or cellular: timetable and grades from WebUntis with one sign-in, to-dos and the menu from
+the backend. At the backend it is a device of its own (own `X-Pokyh-Device`, user agent
+`POKYH-iOS/<version> (watchOS <version>; <model>)`): refresh tokens rotate on every use, so
+sharing the phone's would sign one of them out. It signs in with its own WebUntis session as a
+renewal, so the sign-in history only shows the person's own sign-ins. A watch signed out from
+Devices & sign-ins gets `session_revoked`, forgets the account and takes it again only after a
+"Connect" on the phone that is newer than the sign-out (`AccountHandoff.connectedAt`); the phone
+signing itself in again doesn't count. Sign-out on the phone, "Not now" and another account end
+the watch's POKYH session too (`POST /auth/logout`).
 
 Open point: WatchConnectivity keeps the last application context on disk itself, and that
 context carries the account. Moving the secret out of it changes the hand-off on both sides and

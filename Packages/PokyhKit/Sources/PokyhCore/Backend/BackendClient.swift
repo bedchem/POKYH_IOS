@@ -42,6 +42,8 @@ public enum UntisSignIn: Sendable, Equatable {
     case untisSessionExpired
     /// The backend could not reach WebUntis to check the session.
     case untisUnavailable(String)
+    /// The backend itself couldn't be reached.
+    case noConnection
     case failed(String)
 }
 
@@ -49,6 +51,22 @@ public enum UntisSignIn: Sendable, Equatable {
 public struct LoginOptions: Codable, Sendable, Equatable {
     public var office365: Bool = false
     public var password: Bool = true
+}
+
+/// The backend's routes the core clients use, in one place like Android's Config.Routes.
+public enum BackendRoutes {
+    public static let schools = "/webuntis/schools"
+    public static let loginOptions = "/webuntis/login-options"
+    public static let login = "/auth/login"
+    public static let me = "/auth/me"
+    public static let refresh = "/auth/refresh"
+    public static let logout = "/auth/logout"
+    public static let dishes = "/dishes"
+    public static let dishRatingsBatch = "/dish-ratings/batch"
+
+    // Unencoded: `send` encodes the path once.
+    public static func todos(_ username: String) -> String { "/users/\(username)/todos" }
+    public static func todo(_ username: String, id: String) -> String { "\(todos(username))/\(id)" }
 }
 
 /// The POKYH backend. Every request carries the API key, this install's device id and the
@@ -74,7 +92,7 @@ public final class BackendClient: Sendable {
         guard q.count >= 3 else { return .tooShort }
         struct Answer: Decodable { let schools: [School]? }
         do {
-            let answer: Answer = try await get("/webuntis/schools", query: ["q": q])
+            let answer: Answer = try await get(BackendRoutes.schools, query: ["q": q])
             return answer.schools.map(SchoolSearch.found) ?? .failed
         } catch let error as BackendError {
             switch error.status {
@@ -89,18 +107,19 @@ public final class BackendClient: Sendable {
     }
 
     public func loginOptions(for school: School) async -> LoginOptions? {
-        try? await get("/webuntis/login-options", query: ["school": school.loginName, "server": school.server])
+        try? await get(BackendRoutes.loginOptions, query: ["school": school.loginName, "server": school.server])
     }
 
     /// After the WebUntis sign-in: the backend sign-in with the app's WebUntis session, which the
     /// backend checks with WebUntis itself (whose it is, which class). `renewal` marks the app
     /// signing itself in again (launch, Face ID), which doesn't count as a sign-in by the person.
+    /// `school` nil for the build's own school, which the backend knows as its default.
     public func signInWithUntis(
         username: String,
         untisSessionId: String,
         role: String = "student",
         renewal: Bool = false,
-        school: School,
+        school: School?,
         method: String? = nil
     ) async -> UntisSignIn {
         guard !untisSessionId.isEmpty else { return .untisSessionExpired }
@@ -109,17 +128,20 @@ public final class BackendClient: Sendable {
             "untisSessionId": untisSessionId,
             "role": role,
             "renewal": renewal,
-            "school": school.loginName,
-            "schoolName": school.name,
-            "schoolServer": school.server,
         ]
+        if let school {
+            body["school"] = school.loginName
+            body["schoolName"] = school.name
+            body["schoolServer"] = school.server
+        }
         if let method { body["method"] = method }
         do {
-            let data = try await send("/auth/login", method: "POST", json: body, headers: ["X-Server-Key": config.serverKey])
+            let data = try await send(BackendRoutes.login, method: "POST", json: body, headers: ["X-Server-Key": config.serverKey])
             let tokens = try JSONDecoder().decode(AuthTokens.self, from: data)
             return .ok(tokens)
         } catch let error as BackendError {
             switch error.code {
+            case "no_connection": return .noConnection
             case "session_revoked": return .revoked(error.message)
             case "untis_session_invalid": return .untisSessionExpired
             case "webuntis_unavailable": return .untisUnavailable(error.message)
@@ -133,13 +155,28 @@ public final class BackendClient: Sendable {
     /// Accounts without WebUntis: username and password at the backend itself.
     public func signIn(username: String, password: String) async throws -> (AuthTokens, APIUser) {
         struct Answer: Decodable { let token: String; let refreshToken: String; let user: APIUser }
-        let data = try await send("/auth/login", method: "POST", json: ["username": username.lowercased(), "password": password])
+        let data = try await send(BackendRoutes.login, method: "POST", json: ["username": username.lowercased(), "password": password])
         let answer = try JSONDecoder().decode(Answer.self, from: data)
         return (AuthTokens(token: answer.token, refreshToken: answer.refreshToken), answer.user)
     }
 
     public func me(token: String) async throws -> APIUser {
-        try await get("/auth/me", token: token)
+        try await get(BackendRoutes.me, token: token)
+    }
+
+    /// A new access token for the refresh token, which the backend rotates on the way.
+    public func refresh(refreshToken: String) async throws -> AuthTokens {
+        let data = try await send(BackendRoutes.refresh, method: "POST", json: ["refreshToken": refreshToken])
+        do {
+            return try JSONDecoder().decode(AuthTokens.self, from: data)
+        } catch {
+            throw BackendError(message: errors.badAnswer, status: nil, code: "bad_answer")
+        }
+    }
+
+    /// Ends this device's session, so it leaves the account's device list.
+    public func signOut(refreshToken: String, token: String) async throws {
+        try await send(BackendRoutes.logout, method: "POST", token: token, json: ["refreshToken": refreshToken])
     }
 
     // MARK: Plumbing

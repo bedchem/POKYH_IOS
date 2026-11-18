@@ -65,13 +65,13 @@ final class WatchLink: NSObject {
 
     func signedIn(_ account: StoredAccount) {
         if let snapshot, !AccountRoster.same(snapshot.username, account.username) { self.snapshot = nil }
-        send(AccountHandoff(account: account))
+        send(AccountHandoff(account: account, connectedAt: WatchSync.connectedAt))
     }
 
     func signedOut() {
         snapshot = nil
         pendingSend?.cancel()
-        send(AccountHandoff(account: nil))
+        send(AccountHandoff(account: nil, connectedAt: WatchSync.connectedAt))
     }
 
     /// "Not now": the watch forgets whatever it was given before, whatever the consent says.
@@ -127,6 +127,8 @@ final class WatchLink: NSObject {
     func updateSnapshot(for username: String, _ change: (inout WatchSnapshot) -> Void) {
         guard let account = store.load(), AccountRoster.same(account.username, username) else { return }
         var next = snapshot.flatMap { AccountRoster.same($0.username, username) ? $0 : nil } ?? .empty(for: account.username)
+        // Each part keeps when it was loaded; the watch weighs them against its own loads.
+        next.settleStamps()
         change(&next)
         next.updatedAt = .now
         next.source = .phone
@@ -181,9 +183,7 @@ final class WatchLink: NSObject {
         do {
             try await BackendClient.shared.updateTodo(username: live.username, id: toggle.id, done: toggle.done, doneAt: toggle.doneAt, token: token)
             result = .applied
-            updateSnapshot(for: live.username) { snapshot in
-                if let i = snapshot.todos.firstIndex(where: { $0.id == toggle.id }) { snapshot.todos[i].done = toggle.done }
-            }
+            updateSnapshot(for: live.username) { $0 = $0.withTodo(toggle.id, done: toggle.done) }
         } catch let error as AppError where (400..<500).contains(error.status ?? 0) && error.status != 401 {
             // Gone or not this account's: what the backend has is what counts.
             result = .rejected
@@ -199,7 +199,7 @@ final class WatchLink: NSObject {
 
     /// What the watch gets when it asks.
     fileprivate func currentHandoff() -> AccountHandoff {
-        AccountHandoff(account: store.load(), sentAt: store.changedAt ?? .now)
+        AccountHandoff(account: store.load(), sentAt: store.changedAt ?? .now, connectedAt: WatchSync.connectedAt)
     }
 
     fileprivate func refreshPairing() {
@@ -249,7 +249,11 @@ extension WatchLink: WCSessionDelegate {
         let reply = ReplyHandler(replyHandler)
         if AccountHandoff.isRequest(message) {
             // Locked phone: no answer at all. "Nothing stored" would sign the watch out.
-            Task { @MainActor in reply.call(self.allowed ? (try? self.store.handoff())?.payload ?? [:] : [:]) }
+            Task { @MainActor in
+                guard self.allowed, var handoff = try? self.store.handoff() else { return reply.call([:]) }
+                handoff.connectedAt = WatchSync.connectedAt
+                reply.call(handoff.payload)
+            }
         } else if WatchRequest.isSnapshotRequest(message) {
             // What we have right away; anything newer follows as applicationContext.
             Task { @MainActor in
@@ -312,10 +316,18 @@ enum WatchSync {
 
     private static let consentKey = "pokyh_watch_consent"
     private static let installHintKey = "pokyh_watch_install_hint"
+    private static let connectedAtKey = "pokyh_watch_connected_at"
 
     static var consent: Consent? {
         get { UserDefaults.standard.string(forKey: consentKey).flatMap(Consent.init(rawValue:)) }
         set { UserDefaults.standard.set(newValue?.rawValue, forKey: consentKey) }
+    }
+
+    /// When the person last chose to connect the watch. A watch signed out from the device list
+    /// takes the account again only after a newer choice than its sign-out.
+    static var connectedAt: Date? {
+        get { UserDefaults.standard.object(forKey: connectedAtKey) as? Date }
+        set { UserDefaults.standard.set(newValue, forKey: connectedAtKey) }
     }
 
     /// What to ask about the watch right now, if anything.
@@ -366,9 +378,23 @@ enum WatchSync {
     @discardableResult
     static func connect(_ session: UserSession?) -> PairResult {
         guard let session else { return pairNow() }
-        if let stored = accounts.load(), AccountRoster.same(stored.username, session.username) { return pairNow() }
+        if let stored = accounts.load(), AccountRoster.same(stored.username, session.username) {
+            return pairNow(session: session)
+        }
         return pairNow(username: session.username, displayName: session.personName ?? session.username,
-                       password: Keychain.password(for: session.username))
+                       password: Keychain.password(for: session.username), session: session)
+    }
+
+    /// How the watch gets its own POKYH session for this account (see `BackendAccess`).
+    static func access(of session: UserSession) -> BackendAccess {
+        if !session.hasUntis { return .password }
+        if session.isParent { return .parent }
+        return session.isStudent ? .student : .untisOnly
+    }
+
+    /// Whose timetable the watch loads by itself: the child for a guardian.
+    private static func studentId(of session: UserSession) -> Int? {
+        session.studentId > 0 ? session.studentId : nil
     }
 
     enum PairResult {
@@ -397,8 +423,10 @@ enum WatchSync {
         link.activate()
     }
 
-    static func signedIn(username: String, displayName: String, password: String) {
-        let account = StoredAccount(username: username, displayName: displayName, school: school(of: username), secret: password)
+    static func signedIn(_ session: UserSession, password: String) {
+        let account = StoredAccount(username: session.username, displayName: session.personName ?? session.username,
+                                    school: school(of: session.username), secret: password,
+                                    backend: access(of: session), studentId: studentId(of: session))
         try? accounts.save(account)
         link.signedIn(account)
     }
@@ -425,14 +453,23 @@ enum WatchSync {
     /// "Connect now" in the settings: hands the signed-in account to the watch again. Accounts
     /// signed in before the watch existed have nothing stored yet, so the caller may pass one.
     @discardableResult
-    static func pairNow(username: String? = nil, displayName: String? = nil, password: String? = nil) -> PairResult {
+    static func pairNow(username: String? = nil, displayName: String? = nil, password: String? = nil,
+                        session: UserSession? = nil) -> PairResult {
         var account = accounts.load()
         if let username, let password, !password.isEmpty, account?.username != username {
             account = StoredAccount(username: username, displayName: displayName ?? username, school: school(of: username), secret: password)
         }
+        // What the phone knows now about how the watch signs in by itself.
+        if let session, var stored = account, AccountRoster.same(stored.username, session.username) {
+            stored.backend = access(of: session)
+            stored.studentId = studentId(of: session)
+            account = stored
+        }
         guard let account else { return .noAccount }
-        // Tapping "connect" is the yes, whatever was answered before.
+        // Tapping "connect" is the yes, whatever was answered before, and a watch signed out
+        // from the device list takes the account again.
         consent = .yes
+        connectedAt = .now
         // A fresh timestamp, so the watch takes it even over a sign-out it heard earlier.
         try? accounts.save(account)
         return link.resend() ? .sent : .noWatch
@@ -469,12 +506,7 @@ enum WatchSync {
     static func grades(_ subjects: [SubjectGrades], for session: UserSession) {
         guard !session.bearerToken.isEmpty else { return }
         let grades = WatchSnapshotBuilder.grades(subjects)
-        link.updateSnapshot(for: session.username) { snapshot in
-            snapshot.overallAverage = grades.overall
-            snapshot.gradeCount = grades.count
-            snapshot.subjects = grades.subjects
-            snapshot.recentGrades = grades.recent
-        }
+        link.updateSnapshot(for: session.username) { $0 = $0.withGrades(grades) }
     }
 
     static func mensa(_ dishes: [Dish]) {
@@ -490,6 +522,7 @@ enum WatchSync {
                 dish.ratings = known[dish.id]?.ratings
                 return dish
             }
+            snapshot.mensaUpdatedAt = .now
         }
     }
 
@@ -501,12 +534,13 @@ enum WatchSync {
                 snapshot.dishes[index].stars = data.count > 0 ? data.average : nil
                 snapshot.dishes[index].ratings = data.count
             }
+            snapshot.mensaUpdatedAt = .now
         }
     }
 
     static func todos(_ todos: [ApiTodo], for session: UserSession) {
         let list = WatchSnapshotBuilder.todos(todos)
-        link.updateSnapshot(for: session.username) { $0.todos = list }
+        link.updateSnapshot(for: session.username) { $0 = $0.withTodos(list) }
     }
 
     /// Everything at once, when the watch asks. The clients keep what the screens just loaded
@@ -554,13 +588,10 @@ enum WatchSync {
     }
 }
 
-/// The app's models into the watch's small ones, picked the way Home picks them.
+/// The app's models into the watch's small ones, picked the way Home picks them. Grades and
+/// to-dos go through the same rules the watch uses for its own loads (PokyhCore).
 enum WatchSnapshotBuilder {
     /// Keeps the context small; nobody scrolls further on a wrist.
-    private static let maxTodos = 30
-    private static let maxRecentGrades = 5
-    private static let maxGradesPerSubject = 12
-    private static let maxGradeText = 60
     private static let maxDishText = 160
 
     /// Every lesson from `day` on.
@@ -586,27 +617,12 @@ enum WatchSnapshotBuilder {
         }
     }
 
-    /// A flat mean over every single grade, like Home and the Grades tab; newest by id, as the web does.
-    static func grades(_ subjects: [SubjectGrades]) -> (overall: Double?, count: Int, subjects: [WatchSnapshot.SubjectAverage], recent: [WatchSnapshot.Grade]) {
-        let values = subjects.flatMap { $0.grades.map(\.markDisplayValue) }.filter { $0 > 0 }
-        let averages = subjects.compactMap { subject -> WatchSnapshot.SubjectAverage? in
-            let marked = subject.grades.filter { $0.markDisplayValue > 0 }
-            guard !marked.isEmpty else { return nil }
-            let newest = marked.sorted { $0.id > $1.id }.prefix(maxGradesPerSubject).map { grade($0, in: subject.subjectName) }
-            return WatchSnapshot.SubjectAverage(name: subject.subjectName, average: GradeMath.averageOf(marked.map(\.markDisplayValue)),
-                                                count: marked.count, grades: newest)
-        }
-        let recent = subjects
-            .flatMap { subject in subject.grades.filter { $0.markDisplayValue > 0 }.map { (subject.subjectName, $0) } }
-            .sorted { $0.1.id > $1.1.id }
-            .prefix(maxRecentGrades)
-            .map { grade($0.1, in: $0.0) }
-        return (values.isEmpty ? nil : GradeMath.averageOf(values), values.count, averages, Array(recent))
-    }
-
-    private static func grade(_ entry: GradeEntry, in subject: String) -> WatchSnapshot.Grade {
-        WatchSnapshot.Grade(id: entry.id, subject: subject, value: entry.markDisplayValue,
-                            date: UntisTime.date(entry.date, 0), text: String(entry.text.prefix(maxGradeText)))
+    static func grades(_ subjects: [SubjectGrades]) -> WatchGrades {
+        WatchGrades(subjects.map { subject in
+            WatchGrades.Subject(name: subject.subjectName, marks: subject.grades.map {
+                WatchGrades.Mark(id: $0.id, value: $0.markDisplayValue, date: $0.date, text: $0.text)
+            })
+        })
     }
 
     /// Same date rule as Home: today, or the next day the menu has.
@@ -620,8 +636,8 @@ enum WatchSnapshotBuilder {
     }
 
     static func todos(_ todos: [ApiTodo]) -> [WatchSnapshot.Todo] {
-        TodoOrder.arranged(todos).prefix(maxTodos).map {
-            WatchSnapshot.Todo(id: $0.id, title: String($0.title.prefix(120)), due: $0.dueAt.flatMap(MessageFormat.parse), done: $0.done)
-        }
+        WatchTodos.build(todos.map {
+            WatchTodos.Item(id: $0.id, title: $0.title, dueAt: $0.dueAt, done: $0.done, doneAt: $0.doneAt, createdAt: $0.createdAt)
+        })
     }
 }

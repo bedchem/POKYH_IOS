@@ -6,16 +6,30 @@ public enum UntisRoutes {
     public static let jsonRpcIntern = "/jsonrpc_intern.do"
     public static let token = "/api/token/new"
     public static let timetable = "/api/rest/view/v1/timetable/entries"
+    public static let gradingList = "/api/classreg/grade/grading/list"
+    public static let gradingLesson = "/api/classreg/grade/grading/lesson"
 }
 
 public enum UntisDayError: Error, Equatable {
     case signInFailed(String?)
     case noPerson
+    case noSchoolYear
     case badAnswer(Int)
 }
 
-/// The timetable straight from WebUntis, for when the phone is out of reach: signs in with the
-/// account the phone handed over (password or app key), loads the days asked for, signs out again.
+/// What one visit to WebUntis brought back. A part that failed has its error; the visit only
+/// throws when the sign-in does.
+public struct UntisVisit: Sendable {
+    /// Whose timetable and grades these are.
+    public var studentId: Int
+    /// nil when not asked for.
+    public var lessons: Result<[WatchSnapshot.Lesson], any Error>?
+    public var grades: Result<WatchGrades, any Error>?
+}
+
+/// Timetable and grades straight from WebUntis, for when the phone is out of reach: signs in
+/// with the account the phone handed over (password or app key), loads what's asked for, signs
+/// out again.
 public struct UntisDay: Sendable {
     /// The client name the phone signs in with, so WebUntis sees one app.
     public static let clientName = "pockyh"
@@ -45,19 +59,46 @@ public struct UntisDay: Sendable {
     /// the phone loads (a parent's child); without it the account's own person.
     public func lessons(for account: StoredAccount, studentId: Int?, on day: Date = .now, days: Int = 1,
                         calendar: Calendar = .current) async throws -> (lessons: [WatchSnapshot.Lesson], studentId: Int) {
+        let visit = try await visit(account, studentId: studentId, lessonsFrom: day, days: days, grades: false, calendar: calendar)
+        guard let lessons = visit.lessons else { throw UntisDayError.noPerson }
+        return (try lessons.get(), visit.studentId)
+    }
+
+    /// One sign-in for everything: the lessons of `days` days from `lessonsFrom` on (none
+    /// without a day), the grades of the school year if asked. `whileSignedIn` gets the session
+    /// id while it's still valid, for the POKYH sign-in, which WebUntis has to confirm.
+    public func visit(_ account: StoredAccount, studentId: Int?, lessonsFrom day: Date?, days: Int = 1, grades: Bool,
+                      calendar: Calendar = .current,
+                      whileSignedIn: @escaping @Sendable (String) async -> Void = { _ in }) async throws -> UntisVisit {
         let school = account.school
         var signedIn = try await signIn(account)
         signedIn.bearer = (try? await token(signedIn, school: school)) ?? ""
         let person = studentId.flatMap { $0 > 0 ? $0 : nil } ?? signedIn.personId
-        let result: Result<[WatchSnapshot.Lesson], any Error>
-        do {
-            guard person > 0 else { throw UntisDayError.noPerson }
-            result = .success(try await timetable(person: person, on: day, days: days, signedIn, school: school, calendar: calendar))
-        } catch {
-            result = .failure(error)
-        }
+        let session = signedIn
+
+        async let hook: Void = whileSignedIn(session.sessionId)
+        async let lessons: Result<[WatchSnapshot.Lesson], any Error>? = {
+            guard let day else { return nil }
+            guard person > 0 else { return .failure(UntisDayError.noPerson) }
+            do {
+                return .success(try await timetable(person: person, on: day, days: days, session, school: school, calendar: calendar))
+            } catch {
+                return .failure(error)
+            }
+        }()
+        async let marks: Result<WatchGrades, any Error>? = {
+            guard grades else { return nil }
+            guard person > 0 else { return .failure(UntisDayError.noPerson) }
+            do {
+                return .success(try await self.grades(person: person, session, school: school, calendar: calendar))
+            } catch {
+                return .failure(error)
+            }
+        }()
+        let visit = UntisVisit(studentId: person, lessons: await lessons, grades: await marks)
+        await hook
         await signOut(signedIn, school: school)
-        return (try result.get(), person)
+        return visit
     }
 
     func timetable(person: Int, on day: Date, days: Int = 1, _ signedIn: SignedIn, school: School, calendar: Calendar) async throws -> [WatchSnapshot.Lesson] {
@@ -82,6 +123,95 @@ public struct UntisDay: Sendable {
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard status == 200, data.first != UInt8(ascii: "<") else { throw UntisDayError.badAnswer(status) }
         return try Self.parse(data, calendar: calendar)
+    }
+
+    // MARK: Grades
+
+    /// Fewer at a time than the phone: the watch's radio is slow and its battery small.
+    static let parallelLessons = 4
+
+    /// The grades of the current school year, read the way the phone reads them.
+    func grades(person: Int, _ signedIn: SignedIn, school: School, calendar: Calendar) async throws -> WatchGrades {
+        guard let year = try await schoolYear(signedIn, school: school) else { throw UntisDayError.noSchoolYear }
+        let list = LooseJSON(data: try await get(Self.base(school) + UntisRoutes.gradingList,
+                                                 query: ["studentId": String(person), "schoolyearId": String(year)], signedIn, school: school))
+        var lessons = list["data"]["lessons"].array
+        if lessons.isEmpty { lessons = list["data"]["lesson"].array }
+        let wanted: [(id: Int, name: String)] = lessons.compactMap { lesson in
+            guard let id = lesson["id"].int else { return nil }
+            return (id, lesson["subjects"].string ?? lesson["subject"].string ?? "")
+        }
+        var subjects: [WatchGrades.Subject] = []
+        for start in stride(from: 0, to: wanted.count, by: Self.parallelLessons) {
+            let batch = wanted[start..<min(start + Self.parallelLessons, wanted.count)]
+            await withTaskGroup(of: WatchGrades.Subject?.self) { group in
+                for lesson in batch {
+                    group.addTask {
+                        // One subject failing leaves the others, as on the phone.
+                        guard let data = try? await self.get(Self.base(school) + UntisRoutes.gradingLesson,
+                                                             query: ["studentId": String(person), "lessonId": String(lesson.id)],
+                                                             signedIn, school: school) else { return nil }
+                        return WatchGrades.Subject(name: lesson.name, marks: Self.marks(data))
+                    }
+                }
+                for await subject in group {
+                    if let subject, !subject.name.isEmpty, !subject.marks.isEmpty { subjects.append(subject) }
+                }
+            }
+        }
+        return WatchGrades(subjects.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }, calendar: calendar)
+    }
+
+    /// A subject's answer into marks. What can't be a grade would break every sum after this.
+    static func marks(_ data: Data) -> [WatchGrades.Mark] {
+        LooseJSON(data: data)["data"]["grades"].array.compactMap { grade in
+            let value = grade["mark"]["markValue"].double ?? 0
+            let display = grade["mark"]["markDisplayValue"].double ?? value
+            guard value > 0, MarkText.isUsable(value), MarkText.isUsable(display) else { return nil }
+            return WatchGrades.Mark(id: grade["id"].int ?? 0, value: display, date: grade["date"].int ?? 0, text: grade["text"].string ?? "")
+        }
+    }
+
+    /// The current school year, else the one today falls in, else the latest.
+    func schoolYear(_ signedIn: SignedIn, school: School, at date: Date = .now, calendar: Calendar = .current) async throws -> Int? {
+        let current = try await rpc("getCurrentSchoolyear", signedIn, school: school)
+        if Self.isSignedOut(current) { throw UntisDayError.signInFailed(Self.errorMessage(current)) }
+        if let id = LooseJSON(raw: current?["result"])["id"].int { return id }
+        let all = try await rpc("getSchoolyears", signedIn, school: school)
+        if Self.isSignedOut(all) { throw UntisDayError.signInFailed(Self.errorMessage(all)) }
+        let years = LooseJSON(raw: all?["result"]).array
+        let today = Int(Self.isoDay(date, calendar: calendar).replacingOccurrences(of: "-", with: "")) ?? 0
+        if let now = years.first(where: { ($0["startDate"].int ?? 0) <= today && today <= ($0["endDate"].int ?? 0) }) {
+            return now["id"].int
+        }
+        return years.max { ($0["startDate"].int ?? 0) < ($1["startDate"].int ?? 0) }?["id"].int
+    }
+
+    /// WebUntis' "not authenticated" codes.
+    static func isSignedOut(_ json: [String: Any]?) -> Bool {
+        let code = LooseJSON(raw: json?["error"])["code"].int ?? 0
+        return [-8500, -8501, -8520].contains(code)
+    }
+
+    private func rpc(_ method: String, _ signedIn: SignedIn, school: School) async throws -> [String: Any]? {
+        let body: [String: Any] = ["id": "pokyh-watch", "method": method, "params": [:], "jsonrpc": "2.0"]
+        return try await post(Self.base(school) + UntisRoutes.jsonRpc + "?school=" + Self.query(school), body: body,
+                              cookie: Self.cookie(signedIn.sessionId, school: school)).0
+    }
+
+    /// A REST read with the session and the bearer token. A login page instead of JSON is no answer.
+    private func get(_ address: String, query: [String: String], _ signedIn: SignedIn, school: School) async throws -> Data {
+        var components = URLComponents(string: address)
+        components?.queryItems = query.sorted { $0.key < $1.key }.map { URLQueryItem(name: $0.key, value: $0.value) }
+        guard let url = components?.url else { throw UntisDayError.badAnswer(0) }
+        var request = URLRequest(url: url)
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(Self.cookie(signedIn.sessionId, school: school), forHTTPHeaderField: "Cookie")
+        if !signedIn.bearer.isEmpty { request.setValue("Bearer \(signedIn.bearer)", forHTTPHeaderField: "Authorization") }
+        let (data, response) = try await session.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard status == 200, data.first != UInt8(ascii: "<") else { throw UntisDayError.badAnswer(status) }
+        return data
     }
 
     // MARK: Sign-in
@@ -138,11 +268,12 @@ public struct UntisDay: Sendable {
         _ = try? await session.data(for: request)
     }
 
-    private func post(_ address: String, body: [String: Any]) async throws -> ([String: Any]?, URLResponse) {
+    private func post(_ address: String, body: [String: Any], cookie: String? = nil) async throws -> ([String: Any]?, URLResponse) {
         guard let url = URL(string: address) else { throw UntisDayError.badAnswer(0) }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let cookie { request.setValue(cookie, forHTTPHeaderField: "Cookie") }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, response) = try await session.data(for: request)
         return (try? JSONSerialization.jsonObject(with: data) as? [String: Any], response)

@@ -22,6 +22,13 @@ public struct School: Codable, Sendable, Hashable, Identifiable {
     public var base: URL? { URL(string: "https://\(server)/WebUntis") }
 }
 
+/// How an account gets its POKYH session: with its WebUntis session as a pupil or a guardian,
+/// with a password of its own at POKYH (no WebUntis behind it), or not at all (teachers have
+/// WebUntis only).
+public enum BackendAccess: String, Codable, Sendable {
+    case student, parent, password, untisOnly
+}
+
 /// What it takes to sign an account in again without asking: the iPhone keeps it after the
 /// first sign-in and hands it to the watch, so neither asks twice.
 public struct StoredAccount: Codable, Sendable, Hashable {
@@ -31,13 +38,20 @@ public struct StoredAccount: Codable, Sendable, Hashable {
     /// The WebUntis password, or "appkey:<KEY>" for app key accounts (see `AppKey`).
     public var secret: String
     public var signedInAt: Date
+    /// nil from phones before the watch signed in to POKYH by itself.
+    public var backend: BackendAccess?
+    /// Whose timetable and grades the phone shows: a guardian's child. nil for the account's own.
+    public var studentId: Int?
 
-    public init(username: String, displayName: String, school: School, secret: String, signedInAt: Date = .now) {
+    public init(username: String, displayName: String, school: School, secret: String, signedInAt: Date = .now,
+                backend: BackendAccess? = nil, studentId: Int? = nil) {
         self.username = username
         self.displayName = displayName
         self.school = school
         self.secret = secret
         self.signedInAt = signedInAt
+        self.backend = backend
+        self.studentId = studentId
     }
 }
 

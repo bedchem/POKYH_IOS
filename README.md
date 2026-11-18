@@ -21,7 +21,8 @@ This repository is the native app for iPhone, iPad and Apple Watch, written in S
 - **Widgets and Live Activity:** the next lesson, today's schedule, grades and messages on the
   Home Screen and Lock Screen, the current lesson in the Dynamic Island.
 - **Apple Watch:** today's lessons, grades, the Mensa and your to-dos, with complications.
-  Works with the iPhone nearby and on its own.
+  Takes what the iPhone has when it's near, and loads by itself over Wi-Fi or cellular when
+  it isn't.
 - **Offline:** the app keeps working with the last loaded data and shows how old it is.
 - **Accounts and sign-in:** any WebUntis school, several accounts, Face ID, two-factor codes,
   and signing in on a computer by scanning a QR code.

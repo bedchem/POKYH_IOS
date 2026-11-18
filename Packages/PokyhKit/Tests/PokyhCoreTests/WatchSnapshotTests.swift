@@ -422,7 +422,9 @@ struct WatchFormatTests {
         for lang in Lang.allCases {
             let t = WatchTexts.of(lang)
             #expect(!t.queued.isEmpty && !t.noDataTitle.isEmpty && !t.free.isEmpty)
-            #expect(!t.phoneAway.isEmpty && !t.weekend.isEmpty)
+            #expect(!t.weekend.isEmpty && t.noDataText("App").contains("App"))
+            let w = Strings.of(lang).watch
+            #expect(!w.signInTitle.isEmpty && !w.signedOutTitle.isEmpty && !w.signedOutMessage.isEmpty)
             #expect(t.updated("10:42").contains("10:42") && t.startsIn("5 min").contains("5 min") && t.until("13:20").contains("13:20"))
             #expect(!t.schoolDay.isEmpty && !t.roomTitle.isEmpty && !t.roomInfo.isEmpty && !t.hourUnit.isEmpty && !t.minuteUnit.isEmpty)
         }

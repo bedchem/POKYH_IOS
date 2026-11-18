@@ -2,30 +2,31 @@
 
 public struct WatchStrings: Sendable {
     public let signInTitle: String
-    public let signInMessage: String
-    public let waitingForPhone: String
+    /// The watch was signed out from the account's device list.
+    public let signedOutTitle: String
+    public let signedOutMessage: String
     public let hello: @Sendable (String) -> String
 }
 
 extension WatchStrings {
     static let de = WatchStrings(
         signInTitle: "Auf dem iPhone anmelden",
-        signInMessage: "Öffne POKYH auf deinem iPhone und melde dich an. Danach siehst du hier deinen Tag.",
-        waitingForPhone: "Wartet auf das iPhone …",
+        signedOutTitle: "Abgemeldet",
+        signedOutMessage: "Verbinde die Watch in den Einstellungen auf dem iPhone wieder.",
         hello: { "Hallo, \($0)" }
     )
 
     static let it = WatchStrings(
         signInTitle: "Accedi sull’iPhone",
-        signInMessage: "Apri POKYH sul tuo iPhone ed effettua l’accesso. Poi qui vedrai la tua giornata.",
-        waitingForPhone: "In attesa dell’iPhone …",
+        signedOutTitle: "Disconnesso",
+        signedOutMessage: "Ricollega l’orologio nelle impostazioni sull’iPhone.",
         hello: { "Ciao, \($0)" }
     )
 
     static let en = WatchStrings(
         signInTitle: "Sign in on your iPhone",
-        signInMessage: "Open POKYH on your iPhone and sign in. Your day shows up here after that.",
-        waitingForPhone: "Waiting for the iPhone …",
+        signedOutTitle: "Signed out",
+        signedOutMessage: "Connect the watch again in the settings on your iPhone.",
         hello: { "Hi, \($0)" }
     )
 }

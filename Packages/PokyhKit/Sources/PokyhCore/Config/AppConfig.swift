@@ -81,13 +81,24 @@ public struct AppConfig: Sendable {
 
     public var hasBackendKeys: Bool { !apiKey.isEmpty && !serverKey.isEmpty }
 
-    // The two below are read on their own: the watch and the widgets carry no backend keys,
-    // so they never build a whole AppConfig.
+    // The two below are read on their own: the widgets carry no backend keys, so they never
+    // build a whole AppConfig.
 
     /// The app's name as the home screen shows it (`POKYH_APP_NAME`).
     public static func appName(in bundle: Bundle = .main) -> String {
         let info = bundle.infoDictionary ?? [:]
         return (info["CFBundleDisplayName"] as? String) ?? (info["CFBundleName"] as? String) ?? ""
+    }
+
+    /// The build's own school (`POKYH_DEFAULT_SCHOOL`…), which the backend signs in to without
+    /// being told. nil when the build names none.
+    public static func defaultSchool(in bundle: Bundle = .main) -> School? {
+        let info = bundle.infoDictionary ?? [:]
+        func value(_ key: String) -> String { (info[key] as? String)?.trimmingCharacters(in: .whitespaces) ?? "" }
+        let loginName = value("POKYHDefaultSchool"), server = value("POKYHDefaultUntisServer")
+        guard !loginName.isEmpty, !server.isEmpty else { return nil }
+        let name = value("POKYHDefaultSchoolName")
+        return School(loginName: loginName, server: server, name: name.isEmpty ? loginName : name)
     }
 
     /// The currency Mensa prices are in (`POKYH_CURRENCY`), nil when the build doesn't say.

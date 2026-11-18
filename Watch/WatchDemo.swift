@@ -8,6 +8,15 @@ import PokyhCore
 /// a photo. Debug builds only.
 enum WatchDemo {
     static var isOn: Bool { UserDefaults.standard.bool(forKey: "POKYHWatchDemo") }
+
+    /// Checks of the watch on its own: `POKYH_WATCH_TEST_ACCOUNT` (a `StoredAccount` as JSON)
+    /// stands in for a hand-off the phone made earlier. Only while the watch has no account.
+    static func seed(_ accounts: AccountStore) {
+        guard accounts.load() == nil,
+              let json = ProcessInfo.processInfo.environment["POKYH_WATCH_TEST_ACCOUNT"],
+              let account = try? JSONDecoder().decode(StoredAccount.self, from: Data(json.utf8)) else { return }
+        try? accounts.save(account)
+    }
     private static var later: Int { UserDefaults.standard.integer(forKey: "POKYHWatchDemoLater") }
 
     static let account = StoredAccount(

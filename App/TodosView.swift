@@ -248,19 +248,11 @@ struct TodosView: View {
 /// As on the web: the open ones by due date (none last), then newest first; the done ones after
 /// them, last ticked off first, each gone a day after it was ticked off.
 enum TodoOrder {
+    /// The watch orders its list with the same rule (PokyhCore).
     static func arranged(_ todos: [ApiTodo], now: Date = Date()) -> [ApiTodo] {
         func at(_ raw: String?) -> Date? { raw.flatMap(MessageFormat.parse) }
-        let kept = todos.filter { t in
-            guard t.done, let done = at(t.doneAt) else { return true }
-            return now.timeIntervalSince(done) < 86_400
-        }
-        let open = kept.filter { !$0.done }.sorted { a, b in
-            let da = at(a.dueAt) ?? .distantFuture, db = at(b.dueAt) ?? .distantFuture
-            if da != db { return da < db }
-            return (at(a.createdAt) ?? .distantPast) > (at(b.createdAt) ?? .distantPast)
-        }
-        let done = kept.filter(\.done).sorted { (at($0.doneAt) ?? .distantPast) > (at($1.doneAt) ?? .distantPast) }
-        return open + done
+        return TodoArrangement.arranged(todos, now: now, done: \.done, dueAt: { at($0.dueAt) },
+                                        doneAt: { at($0.doneAt) }, createdAt: { at($0.createdAt) })
     }
 }
 
